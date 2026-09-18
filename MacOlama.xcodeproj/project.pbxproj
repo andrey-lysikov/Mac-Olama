@@ -1,0 +1,852 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		7F42628D305DD11C00005A57 /* Changelog.md in Resources */ = {isa = PBXBuildFile; fileRef = 7F42628A305DD11C00005A57 /* Changelog.md */; };
+		7F42628E305DD11C00005A57 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 7F42628B305DD11C00005A57 /* LICENSE */; };
+		7F42628F305DD11C00005A57 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 7F42628C305DD11C00005A57 /* README.md */; };
+		A100000000000000000000B1 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = D100000000000000000000E1 /* MLXLLM */; };
+		A100000000000000000000B2 /* MLXVLM in Frameworks */ = {isa = PBXBuildFile; productRef = D100000000000000000000E2 /* MLXVLM */; };
+		A100000000000000000000B3 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = D100000000000000000000E3 /* MLXLMCommon */; };
+		A100000000000000000000B4 /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = D100000000000000000000E4 /* Tokenizers */; };
+		A100000000000000000000B5 /* MacOlamaSafari.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B100000000000000000000B3 /* MacOlamaSafari.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A100000000000000000000C1 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000C1 /* SafariWebExtensionHandler.swift */; };
+		A100000000000000000000C2 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000C3 /* manifest.json */; };
+		A100000000000000000000C3 /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000C4 /* background.js */; };
+		A100000000000000000000C4 /* _locales in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000C5 /* _locales */; };
+		A100000000000000000000C5 /* images in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000C6 /* images */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		6100000000000000000000A1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 8100000000000000000000A1 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E100000000000000000000E1;
+			remoteInfo = MacOlama;
+		};
+		6100000000000000000000A3 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 8100000000000000000000A1 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E300000000000000000000E1;
+			remoteInfo = MacOlamaSafari;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		E100000000000000000000E5 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A100000000000000000000B5 /* MacOlamaSafari.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		7F4261FD305DCD5100005A57 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		7F4261FE305DCD5100005A57 /* MacOlama.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MacOlama.entitlements; sourceTree = "<group>"; };
+		7F42628A305DD11C00005A57 /* Changelog.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = Changelog.md; sourceTree = "<group>"; };
+		7F42628B305DD11C00005A57 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
+		7F42628C305DD11C00005A57 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		B100000000000000000000B1 /* Mac-Olama.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Mac-Olama.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B100000000000000000000B2 /* MacOlamaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MacOlamaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B100000000000000000000B3 /* MacOlamaSafari.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MacOlamaSafari.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B100000000000000000000C1 /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
+		B100000000000000000000C2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B100000000000000000000C3 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
+		B100000000000000000000C4 /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = background.js; sourceTree = "<group>"; };
+		B100000000000000000000C5 /* _locales */ = {isa = PBXFileReference; lastKnownFileType = folder; path = _locales; sourceTree = "<group>"; };
+		B100000000000000000000C6 /* images */ = {isa = PBXFileReference; lastKnownFileType = folder; path = images; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		7F42627D305DD08300005A57 /* Exceptions for "App" folder in "MacOlama" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				AppContainer.swift,
+				MacOlamaApp.swift,
+				SwiftDataChatStore.swift,
+			);
+			target = E100000000000000000000E1 /* MacOlama */;
+		};
+		7F42627E305DD08300005A57 /* Exceptions for "Engine" folder in "MacOlama" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				MLXEngine.swift,
+				OllamaImport.swift,
+				TokenizerBridge.swift,
+			);
+			target = E100000000000000000000E1 /* MacOlama */;
+		};
+		7F42627F305DD08300005A57 /* Exceptions for "LLMCore" folder in "MacOlama" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				APIModels.swift,
+				APIServer.swift,
+				Chat.swift,
+				Conversation.swift,
+				Engine.swift,
+				HTTPServer.swift,
+				Models.swift,
+				Settings.swift,
+			);
+			target = E100000000000000000000E1 /* MacOlama */;
+		};
+		7F426280305DD08300005A57 /* Exceptions for "LLMHub" folder in "MacOlama" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				CheckHardwareList.swift,
+				HubClient.swift,
+				ModelDownloader.swift,
+				OllamaRegistry.swift,
+				SHA256.swift,
+			);
+			target = E100000000000000000000E1 /* MacOlama */;
+		};
+		7F426281305DD08300005A57 /* Exceptions for "Resources" folder in "MacOlama" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				AppIcon.icon,
+				AppShortcuts.xcstrings,
+				Assets.xcassets,
+				InfoPlist.xcstrings,
+				Localizable.xcstrings,
+			);
+			target = E100000000000000000000E1 /* MacOlama */;
+		};
+		7F426282305DD08300005A57 /* Exceptions for "Support" folder in "MacOlama" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				DocumentExtractor.swift,
+				LocalTools.swift,
+				SystemServices.swift,
+				Updates.swift,
+				WebTools.swift,
+				WindowManager.swift,
+			);
+			target = E100000000000000000000E1 /* MacOlama */;
+		};
+		7F426283305DD08300005A57 /* Exceptions for "UI" folder in "MacOlama" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				AppIntents.swift,
+				ChatsWindow.swift,
+				DownloadWindow.swift,
+				MarkdownView.swift,
+				QuickPanel.swift,
+				QuickPanelView.swift,
+				StatusItem.swift,
+			);
+			target = E100000000000000000000E1 /* MacOlama */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		7F42622D305DD08200005A57 /* App */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7F42627D305DD08300005A57 /* Exceptions for "App" folder in "MacOlama" target */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		7F426233305DD08200005A57 /* Engine */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7F42627E305DD08300005A57 /* Exceptions for "Engine" folder in "MacOlama" target */,
+			);
+			path = Engine;
+			sourceTree = "<group>";
+		};
+		7F42623C305DD08200005A57 /* LLMCore */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7F42627F305DD08300005A57 /* Exceptions for "LLMCore" folder in "MacOlama" target */,
+			);
+			path = LLMCore;
+			sourceTree = "<group>";
+		};
+		7F426242305DD08200005A57 /* LLMHub */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7F426280305DD08300005A57 /* Exceptions for "LLMHub" folder in "MacOlama" target */,
+			);
+			path = LLMHub;
+			sourceTree = "<group>";
+		};
+		7F426248305DD08200005A57 /* Resources */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7F426281305DD08300005A57 /* Exceptions for "Resources" folder in "MacOlama" target */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		7F42624F305DD08200005A57 /* Support */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7F426282305DD08300005A57 /* Exceptions for "Support" folder in "MacOlama" target */,
+			);
+			path = Support;
+			sourceTree = "<group>";
+		};
+		7F426257305DD08200005A57 /* UI */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7F426283305DD08300005A57 /* Exceptions for "UI" folder in "MacOlama" target */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+		C100000000000000000000C3 /* MacOlamaTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = MacOlamaTests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		E100000000000000000000E3 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A100000000000000000000B1 /* MLXLLM in Frameworks */,
+				A100000000000000000000B2 /* MLXVLM in Frameworks */,
+				A100000000000000000000B3 /* MLXLMCommon in Frameworks */,
+				A100000000000000000000B4 /* Tokenizers in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E200000000000000000000E3 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E300000000000000000000E3 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		C100000000000000000000C6 /* MacOlamaSafari */ = {
+			isa = PBXGroup;
+			children = (
+				B100000000000000000000C1 /* SafariWebExtensionHandler.swift */,
+				B100000000000000000000C3 /* manifest.json */,
+				B100000000000000000000C4 /* background.js */,
+				B100000000000000000000C5 /* _locales */,
+				B100000000000000000000C6 /* images */,
+				B100000000000000000000C2 /* Info.plist */,
+			);
+			path = MacOlamaSafari;
+			sourceTree = "<group>";
+		};
+		F100000000000000000000F1 = {
+			isa = PBXGroup;
+			children = (
+				7F42622D305DD08200005A57 /* App */,
+				7F426233305DD08200005A57 /* Engine */,
+				7F42623C305DD08200005A57 /* LLMCore */,
+				7F426242305DD08200005A57 /* LLMHub */,
+				7F426248305DD08200005A57 /* Resources */,
+				7F42624F305DD08200005A57 /* Support */,
+				7F426257305DD08200005A57 /* UI */,
+				7F42628A305DD11C00005A57 /* Changelog.md */,
+				7F42628B305DD11C00005A57 /* LICENSE */,
+				7F42628C305DD11C00005A57 /* README.md */,
+				7F4261FD305DCD5100005A57 /* Info.plist */,
+				7F4261FE305DCD5100005A57 /* MacOlama.entitlements */,
+				C100000000000000000000C6 /* MacOlamaSafari */,
+				C100000000000000000000C3 /* MacOlamaTests */,
+				F100000000000000000000F2 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		F100000000000000000000F2 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B100000000000000000000B1 /* Mac-Olama.app */,
+				B100000000000000000000B2 /* MacOlamaTests.xctest */,
+				B100000000000000000000B3 /* MacOlamaSafari.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		E100000000000000000000E1 /* MacOlama */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9100000000000000000000A1 /* Build configuration list for PBXNativeTarget "MacOlama" */;
+			buildPhases = (
+				E100000000000000000000E2 /* Sources */,
+				E100000000000000000000E3 /* Frameworks */,
+				E100000000000000000000E4 /* Resources */,
+				E100000000000000000000E5 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6100000000000000000000A4 /* PBXTargetDependency */,
+			);
+			name = MacOlama;
+			packageProductDependencies = (
+				D100000000000000000000E1 /* MLXLLM */,
+				D100000000000000000000E2 /* MLXVLM */,
+				D100000000000000000000E3 /* MLXLMCommon */,
+				D100000000000000000000E4 /* Tokenizers */,
+			);
+			productName = MacOlama;
+			productReference = B100000000000000000000B1 /* Mac-Olama.app */;
+			productType = "com.apple.product-type.application";
+		};
+		E200000000000000000000E1 /* MacOlamaTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9100000000000000000000A2 /* Build configuration list for PBXNativeTarget "MacOlamaTests" */;
+			buildPhases = (
+				E200000000000000000000E2 /* Sources */,
+				E200000000000000000000E3 /* Frameworks */,
+				E200000000000000000000E4 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6100000000000000000000A2 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				C100000000000000000000C3 /* MacOlamaTests */,
+			);
+			name = MacOlamaTests;
+			packageProductDependencies = (
+			);
+			productName = MacOlamaTests;
+			productReference = B100000000000000000000B2 /* MacOlamaTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		E300000000000000000000E1 /* MacOlamaSafari */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9100000000000000000000A3 /* Build configuration list for PBXNativeTarget "MacOlamaSafari" */;
+			buildPhases = (
+				E300000000000000000000E2 /* Sources */,
+				E300000000000000000000E3 /* Frameworks */,
+				E300000000000000000000E4 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MacOlamaSafari;
+			packageProductDependencies = (
+			);
+			productName = MacOlamaSafari;
+			productReference = B100000000000000000000B3 /* MacOlamaSafari.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		8100000000000000000000A1 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					E100000000000000000000E1 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					E200000000000000000000E1 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = E100000000000000000000E1;
+					};
+					E300000000000000000000E1 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+				};
+			};
+			buildConfigurationList = 9100000000000000000000A0 /* Build configuration list for PBXProject "MacOlama" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				ru,
+				Base,
+			);
+			mainGroup = F100000000000000000000F1;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				7100000000000000000000B1 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
+				7100000000000000000000B2 /* XCRemoteSwiftPackageReference "swift-transformers" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = F100000000000000000000F2 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				E100000000000000000000E1 /* MacOlama */,
+				E200000000000000000000E1 /* MacOlamaTests */,
+				E300000000000000000000E1 /* MacOlamaSafari */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		E100000000000000000000E4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7F42628D305DD11C00005A57 /* Changelog.md in Resources */,
+				7F42628E305DD11C00005A57 /* LICENSE in Resources */,
+				7F42628F305DD11C00005A57 /* README.md in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E200000000000000000000E4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E300000000000000000000E4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A100000000000000000000C2 /* manifest.json in Resources */,
+				A100000000000000000000C3 /* background.js in Resources */,
+				A100000000000000000000C4 /* _locales in Resources */,
+				A100000000000000000000C5 /* images in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		E100000000000000000000E2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E200000000000000000000E2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E300000000000000000000E2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A100000000000000000000C1 /* SafariWebExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		6100000000000000000000A2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E100000000000000000000E1 /* MacOlama */;
+			targetProxy = 6100000000000000000000A1 /* PBXContainerItemProxy */;
+		};
+		6100000000000000000000A4 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E300000000000000000000E1 /* MacOlamaSafari */;
+			targetProxy = 6100000000000000000000A3 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		9100000000000000000000B1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = D2GKV4ZUT5;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		9100000000000000000000B2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = D2GKV4ZUT5;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		9100000000000000000000C1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = MacOlama.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Mac-Olama";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.macolama.app;
+				PRODUCT_MODULE_NAME = MacOlama;
+				PRODUCT_NAME = "Mac-Olama";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Debug;
+		};
+		9100000000000000000000C2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = MacOlama.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Mac-Olama";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.macolama.app;
+				PRODUCT_MODULE_NAME = MacOlama;
+				PRODUCT_NAME = "Mac-Olama";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Release;
+		};
+		9100000000000000000000D1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.macolama.app.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mac-Olama.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mac-Olama";
+			};
+			name = Debug;
+		};
+		9100000000000000000000D2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.macolama.app.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mac-Olama.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mac-Olama";
+			};
+			name = Release;
+		};
+		9100000000000000000000E1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MacOlamaSafari/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Mac-Olama Safari Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.macolama.app.safari;
+				PRODUCT_MODULE_NAME = MacOlamaSafari;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Debug;
+		};
+		9100000000000000000000E2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MacOlamaSafari/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Mac-Olama Safari Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.macolama.app.safari;
+				PRODUCT_MODULE_NAME = MacOlamaSafari;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		9100000000000000000000A0 /* Build configuration list for PBXProject "MacOlama" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9100000000000000000000B1 /* Debug */,
+				9100000000000000000000B2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		9100000000000000000000A1 /* Build configuration list for PBXNativeTarget "MacOlama" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9100000000000000000000C1 /* Debug */,
+				9100000000000000000000C2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		9100000000000000000000A2 /* Build configuration list for PBXNativeTarget "MacOlamaTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9100000000000000000000D1 /* Debug */,
+				9100000000000000000000D2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		9100000000000000000000A3 /* Build configuration list for PBXNativeTarget "MacOlamaSafari" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9100000000000000000000E1 /* Debug */,
+				9100000000000000000000E2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		7100000000000000000000B1 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm.git";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+		7100000000000000000000B2 /* XCRemoteSwiftPackageReference "swift-transformers" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/huggingface/swift-transformers.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.3.4;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		D100000000000000000000E1 /* MLXLLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7100000000000000000000B1 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLLM;
+		};
+		D100000000000000000000E2 /* MLXVLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7100000000000000000000B1 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXVLM;
+		};
+		D100000000000000000000E3 /* MLXLMCommon */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7100000000000000000000B1 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLMCommon;
+		};
+		D100000000000000000000E4 /* Tokenizers */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7100000000000000000000B2 /* XCRemoteSwiftPackageReference "swift-transformers" */;
+			productName = Tokenizers;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 8100000000000000000000A1 /* Project object */;
+}

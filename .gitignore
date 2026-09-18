@@ -1,0 +1,17 @@
+# tooling (Swift toolchain для Linux живёт внутри проекта)
+.tools/
+# SwiftPM / Xcode
+.build/
+.swiftpm/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+xcuserdata/
+DerivedData/
+Package.resolved
+# macOS
+.DS_Store
+# build products
+build/
+*.dmg
+notes.md
+__pycache__/

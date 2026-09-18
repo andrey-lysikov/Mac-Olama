@@ -1,0 +1,23 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: xcode-27
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Unit tests
+        run: |
+          xcodebuild -downloadComponent MetalToolchain || true
+          # -skipMacroValidation: mlx-swift-lm ships a macro target and CI cannot answer "Trust & Enable"
+          xcodebuild test -skipMacroValidation -skipPackagePluginValidation \
+                     -project MacOlama.xcodeproj -scheme MacOlama \
+                     -destination 'platform=macOS,arch=arm64' \
+                     CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=

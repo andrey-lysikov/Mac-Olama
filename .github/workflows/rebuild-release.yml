@@ -1,0 +1,72 @@
+name: Rebuild release dmg
+
+# Replaces the dmg of an existing release with a fresh build of the current main.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release to rebuild (empty — the latest one)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  rebuild:
+    needs: test
+    runs-on: xcode-27
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Target release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          tag="$INPUT_TAG"
+          if [ -z "$tag" ]; then tag=$(gh release view --json tagName -q .tagName); fi
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release \"$tag\" not found" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Build and export the app
+        run: |
+          xcodebuild -downloadComponent MetalToolchain || true
+
+          # -skipMacroValidation: mlx-swift-lm ships a macro target and CI cannot answer "Trust & Enable"
+          xcodebuild -skipMacroValidation -skipPackagePluginValidation \
+                     -project MacOlama.xcodeproj -scheme MacOlama -configuration Release \
+                     -destination 'platform=macOS,arch=arm64' -archivePath build/Mac-Olama.xcarchive \
+                     CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= archive
+
+          xcodebuild -exportArchive -archivePath build/Mac-Olama.xcarchive \
+                     -exportPath build -exportOptionsPlist ExportOptions.plist
+
+      - name: Package dmg
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          brew untap aws/tap >/dev/null 2>&1 || true
+          brew list graphicsmagick >/dev/null 2>&1 || brew install graphicsmagick
+          brew list imagemagick >/dev/null 2>&1 || brew install imagemagick
+
+          cd build
+          npx --yes create-dmg "Mac-Olama.app" . --overwrite --no-code-sign
+
+          built=$(ls -t *.dmg | head -1)
+          mv "$built" "../Mac-Olama-$TAG.dmg"
+
+      - name: Replace the dmg
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          gh release upload "$TAG" "Mac-Olama-$TAG.dmg" --clobber

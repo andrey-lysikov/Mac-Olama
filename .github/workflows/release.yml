@@ -1,0 +1,112 @@
+name: Release
+
+# Builds on every project change; publishes a dmg only when MARKETING_VERSION is higher than the latest release.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'MacOlama.xcodeproj/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  build:
+    needs: test
+    runs-on: xcode-27
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Build environment
+        run: |
+          xcodebuild -version
+          xcodebuild -downloadComponent MetalToolchain || true
+
+      - name: Project version and latest release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(xcodebuild -project MacOlama.xcodeproj -target MacOlama -configuration Release \
+                               -showBuildSettings 2>/dev/null \
+                    | awk '$1 == "MARKETING_VERSION" { print $3; exit }')
+          if [ -z "$version" ]; then
+            echo "MARKETING_VERSION for the MacOlama target not found" >&2
+            exit 1
+          fi
+
+          latest=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "previous=$latest" >> "$GITHUB_OUTPUT"
+          echo "Project: $version, latest release: ${latest:-none}"
+
+          released="${latest:-0.0}"
+          highest=$(printf '%s\n%s\n' "$released" "$version" | sort -V | tail -1)
+          if [ "$version" != "$released" ] && [ "$highest" = "$version" ]; then
+            echo "release=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=no" >> "$GITHUB_OUTPUT"
+            echo "Version was not raised — skipping publication"
+          fi
+
+      - name: Build and export the app
+        run: |
+          # -skipMacroValidation: mlx-swift-lm ships a macro target and CI cannot answer "Trust & Enable"
+          xcodebuild -skipMacroValidation -skipPackagePluginValidation \
+                     -project MacOlama.xcodeproj -scheme MacOlama -configuration Release \
+                     -destination 'platform=macOS,arch=arm64' -archivePath build/Mac-Olama.xcarchive \
+                     CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= archive
+
+          xcodebuild -exportArchive -archivePath build/Mac-Olama.xcarchive \
+                     -exportPath build -exportOptionsPlist ExportOptions.plist
+
+      - name: Package dmg
+        if: steps.version.outputs.release == 'yes'
+        run: |
+          version="${{ steps.version.outputs.version }}"
+
+          brew untap aws/tap >/dev/null 2>&1 || true
+          brew list graphicsmagick >/dev/null 2>&1 || brew install graphicsmagick
+          brew list imagemagick >/dev/null 2>&1 || brew install imagemagick
+
+          cd build
+          npx --yes create-dmg "Mac-Olama.app" . --overwrite --no-code-sign
+          mv "Mac-Olama $version.dmg" "../Mac-Olama-$version.dmg"
+
+      - name: Release notes
+        if: steps.version.outputs.release == 'yes'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          awk -v v="## $VERSION" '
+            $0 == v { found = 1; next }
+            /^## / { found = 0 }
+            found { print }
+          ' Changelog.md | awk '
+            /^[[:space:]]*$/ { blank = blank $0 "\n"; next }
+            { if (started) printf "%s", blank; blank = ""; started = 1; print }
+          ' > notes.md
+
+          if [ -n "$PREVIOUS" ]; then
+            if [ -s notes.md ]; then echo >> notes.md; fi
+            echo "**Full list of changes**: $REPO_URL/compare/$PREVIOUS...$VERSION" >> notes.md
+          fi
+
+      - name: Publish
+        if: steps.version.outputs.release == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          gh release create "$version" "Mac-Olama-$version.dmg" \
+             --title "Version $version" \
+             --notes-file notes.md

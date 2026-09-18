@@ -1,0 +1,784 @@
+//  Copyright © AndreyLysikov
+//  SPDX-License-Identifier: Apache-2.0
+
+import AppKit
+import Observation
+import SwiftUI
+
+// DownloadViewModel
+
+/// Search across hubs for the models window. Downloads themselves are owned by AppContainer.
+@MainActor
+@Observable
+final class DownloadViewModel {
+    enum Hub: String, CaseIterable, Identifiable {
+        case huggingFace, ollama, link
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .huggingFace: ModelSource.huggingFace.displayName
+            case .ollama: ModelSource.ollama.displayName
+            case .link: String(localized: "By Link")
+            }
+        }
+        /// Black-and-white mark shown next to the title in the hub picker.
+        @MainActor var icon: Image {
+            switch self {
+            case .huggingFace: Image(nsImage: GlyphImage.monochrome(ModelSource.huggingFace.glyph, pointSize: 14))
+            case .ollama: Image(nsImage: GlyphImage.monochrome(ModelSource.ollama.glyph, pointSize: 14))
+            case .link: Image(systemName: "link")
+            }
+        }
+        /// The search hubs stay bare: the dropdown of recommended models is the hint. A link has to be typed exactly.
+        var prompt: String {
+            switch self {
+            case .huggingFace, .ollama: ""
+            case .link: String(localized: "Repository, name:tag or link")
+            }
+        }
+    }
+
+    /// One result line; the same shape for Hugging Face repositories and Ollama tags.
+    struct Row: Identifiable, Equatable {
+        var id: String { repoID }
+        var repoID: String  // `org/repo` or `name:tag`
+        var source: ModelSource
+        var title: String
+        var sizeBytes: Int64?
+        var quantization: String?
+        var kind: ModelKind?
+        var contextLength: Int?
+        var isGated = false
+        var detailsLoaded = false
+        var isMLX = true
+        var lastModified: Date?
+        /// Set when the row is listed but cannot be downloaded at all (e.g. a GGUF tag).
+        var blockedReason: String?
+    }
+
+    enum Verdict: Equatable {
+        /// `tooLarge` is the red verdict: the model will likely not fit, or cannot run here at all. Only the latter blocks the download.
+        case fits(String), unknown(String), tooLarge(String)
+        var symbol: String {
+            switch self {
+            case .fits: "checkmark.circle.fill"
+            case .unknown: "questionmark.circle.fill"
+            case .tooLarge: "exclamationmark.triangle.fill"
+            }
+        }
+        var detail: String {
+            switch self {
+            case .fits(let s), .unknown(let s), .tooLarge(let s): s
+            }
+        }
+    }
+
+    private let container: AppContainer
+    var hub: Hub = .huggingFace
+    var query = ""
+    /// On by default: only MLX builds are listed. Off widens the search to every repository or tag.
+    var mlxOnly = true { didSet { if mlxOnly != oldValue, hasSearched { search() } } }
+    private(set) var rows: [Row] = []
+    private(set) var isSearching = false
+    private(set) var searchError: String?
+    private(set) var hasSearched = false
+    private var searchTask: Task<Void, Never>?
+    private var detailTasks: [String: Task<Void, Never>] = [:]
+
+    init(container: AppContainer) {
+        self.container = container
+    }
+
+    /// Names offered by the empty search field. "By Link" needs an exact identifier, so it offers nothing.
+    var suggestions: [String] { hub == .link ? [] : RecommendedModels.names }
+
+    /// A suggestion was taken from the dropdown: swap the family name for this hub's search text and search right away.
+    func queryChanged() {
+        let source: ModelSource = hub == .ollama ? .ollama : .huggingFace
+        guard hub != .link, let text = RecommendedModels.query(for: query, in: source) else { return }
+        query = text
+        search()
+    }
+
+    func search() {
+        searchTask?.cancel()
+        detailTasks.values.forEach { $0.cancel() }
+        detailTasks = [:]
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        searchError = nil
+        guard !q.isEmpty else {
+            rows = []
+            hasSearched = false
+            isSearching = false
+            return
+        }
+        isSearching = true
+        hasSearched = true
+        rows = []
+        let hub = hub
+        searchTask = Task {
+            do {
+                switch hub {
+                case .huggingFace: try await searchHuggingFace(q)
+                case .ollama: try await searchOllama(q)
+                case .link: try await resolveLink(q)
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                // A gated repository hit while searching or checking a link asks for the token the same way a download does.
+                if case HubError.gatedRepositoryRequiresToken = error, container.hubClient.token == nil {
+                    container.tokenPromptRequested = true
+                } else {
+                    searchError = AppContainer.describe(error)
+                }
+            }
+            guard !Task.isCancelled else { return }
+            isSearching = false
+        }
+    }
+
+    // `org/name` narrows the search to that author, so a recommended repository comes back first.
+    private func searchHuggingFace(_ q: String) async throws {
+        let parts = q.split(separator: "/", maxSplits: 1).map(String.init)
+        let found =
+            parts.count == 2
+            ? try await container.hubClient.search(query: parts[1], author: parts[0], limit: 40, mlxOnly: mlxOnly)
+            : try await container.hubClient.search(query: q, limit: 40, mlxOnly: mlxOnly)
+        try Task.checkCancellation()
+        rows = found.filter { !mlxOnly || $0.isMLX }.map {
+            Row(
+                repoID: $0.id, source: .huggingFace, title: $0.displayName, isGated: $0.isGated, isMLX: $0.isMLX,
+                lastModified: $0.lastModified)
+        }
+        // The order depends on every row's verdict, so details are fetched for all rows up front (URLSession queues them per host).
+        for row in rows { loadDetails(for: row.repoID) }
+    }
+
+    // Ollama lists tags per library entry; every MLX tag becomes its own row.
+    private func searchOllama(_ q: String) async throws {
+        let parts = q.split(separator: ":", maxSplits: 1).map(String.init)
+        let wantedTag = parts.count == 2 ? parts[1] : nil
+        let entries = try await container.ollamaClient.search(parts[0])
+        try Task.checkCancellation()
+        for entry in entries.prefix(8) {
+            let tags = ((try? await container.ollamaClient.tags(name: entry.name)) ?? []).filter { !mlxOnly || $0.isMLX }
+            try Task.checkCancellation()
+            let matching = wantedTag.map { wanted in tags.filter { $0.tag == wanted } } ?? tags
+            rows += matching.map { Self.row(name: entry.name, tag: $0.tag, sizeBytes: $0.sizeBytes, isMLX: $0.isMLX) }
+        }
+    }
+
+    /// "By link": checks that the model exists and reports its name and size as a single row.
+    private func resolveLink(_ q: String) async throws {
+        guard let reference = ModelReference.parse(q) else {
+            searchError = String(
+                localized: "Enter mlx-community/Qwen3.5-9B-MLX-4bit, gemma4:12b-mlx, or a huggingface.co / ollama.com link")
+            return
+        }
+        switch reference {
+        case .huggingFace(let repoID):
+            let info = try await container.hubClient.info(repoID: repoID)
+            try Task.checkCancellation()
+            var row = Row(
+                repoID: info.id, source: .huggingFace, title: info.id.split(separator: "/").last.map(String.init) ?? info.id,
+                isGated: info.gated?.isGated ?? false)
+            apply(info: info, classification: try? await container.hubClient.classify(repoID: repoID), to: &row)
+            rows = [row]
+        case .ollama(let name, let tag):
+            let manifest = try await container.ollamaClient.manifest(name: name, tag: tag)
+            try Task.checkCancellation()
+            guard manifest.isSafetensors else {
+                searchError = String(localized: "\(name):\(tag) is a GGUF tag. Only MLX (safetensors) tags can be downloaded.")
+                return
+            }
+            rows = [Self.row(name: name, tag: tag, sizeBytes: manifest.totalBytes)]
+        }
+    }
+
+    // The search page gives only the tag text and size, so the format shown is the one the tag itself spells out
+    // (…-bf16, …-mxfp8, …-nvfp4); a tag that names none shows none rather than an assumed default.
+    private static func row(name: String, tag: String, sizeBytes: Int64?, isMLX: Bool = true) -> Row {
+        let spelledOut = tag.split(whereSeparator: { $0 == "-" || $0 == "_" }).last { part in
+            let p = part.lowercased()
+            return p.hasSuffix("16") || p.hasSuffix("fp8") || p.hasSuffix("fp4") || p.hasPrefix("q")
+        }
+        return Row(
+            repoID: "\(name):\(tag)", source: .ollama, title: "\(name):\(tag)", sizeBytes: sizeBytes,
+            quantization: isMLX ? spelledOut.map { $0.uppercased() } : "GGUF", detailsLoaded: true, isMLX: isMLX,
+            blockedReason: isMLX ? nil : String(localized: "GGUF tag: the MLX engine cannot run it. Pick an MLX tag instead."))
+    }
+
+    /// Lazily fetches size and classification for a row to avoid flooding HF with requests.
+    func loadDetails(for repoID: String) {
+        guard detailTasks[repoID] == nil, let row = rows.first(where: { $0.repoID == repoID }), !row.detailsLoaded,
+            row.source == .huggingFace
+        else { return }
+        detailTasks[repoID] = Task {
+            defer { detailTasks[repoID] = nil }
+            async let info = container.hubClient.info(repoID: repoID)
+            async let cls = container.hubClient.classify(repoID: repoID)
+            let loadedInfo = try? await info
+            let classification = try? await cls
+            guard !Task.isCancelled, let i = rows.firstIndex(where: { $0.repoID == repoID }) else { return }
+            if let loadedInfo {
+                apply(info: loadedInfo, classification: classification, to: &rows[i])
+            } else {
+                rows[i].detailsLoaded = true
+            }
+        }
+    }
+
+    private func apply(info: HubModelInfo, classification: HubModelClassification?, to row: inout Row) {
+        row.sizeBytes = info.totalBytes
+        row.quantization = classification?.quantization
+        row.kind = classification?.kind
+        row.contextLength = classification?.contextLength
+        row.detailsLoaded = true
+    }
+
+    // Order: models that fit first, then the uncertain ones, then those that will not run; newest first inside each group.
+
+    var sortedRows: [Row] {
+        func rank(_ row: Row) -> Int {
+            switch verdict(for: row) {
+            case .fits: 0
+            case .unknown: 1
+            case .tooLarge: 2
+            }
+        }
+        return rows.enumerated().sorted { a, b in
+            let (ra, rb) = (rank(a.element), rank(b.element))
+            if ra != rb { return ra < rb }
+            let (da, db) = (a.element.lastModified ?? .distantPast, b.element.lastModified ?? .distantPast)
+            return da != db ? da > db : a.offset < b.offset
+        }
+        .map(\.element)
+    }
+
+    // Verdict
+
+    func verdict(for row: Row) -> Verdict {
+        if let reason = row.blockedReason { return .tooLarge(reason) }
+        guard row.detailsLoaded else { return .unknown(String(localized: "Checking size and architecture…")) }
+        guard let bytes = row.sizeBytes, bytes > 0 else { return .unknown(String(localized: "Model size is unknown.")) }
+        let hardware = container.hardware
+        let fit = ModelFitReport.evaluate(modelBytes: bytes, contextLength: row.contextLength, hardware: hardware)
+        let machine = "\(hardware.chipName), \(hardware.memoryGB) GB"
+        let needed = ByteCountFormatter.string(fromByteCount: Int64(hardware.memoryBytes) - fit.memoryAfterLoadBytes, countStyle: .memory)
+        let limit = ByteCountFormatter.string(fromByteCount: Int64(hardware.wiredLimitBytes), countStyle: .memory)
+        if fit.fit == .no {
+            return .tooLarge(String(localized: "Won't fit: needs about \(needed), but \(machine) can give a model at most \(limit)."))
+        }
+        if row.isGated, container.hubClient.token == nil {
+            return .unknown(
+                String(localized: "Gated repository: add a Hugging Face access token (key button in the toolbar) to download it."))
+        }
+        if !row.isMLX {
+            return .unknown(
+                String(localized: "Not an MLX build: it may be large and may fail to load. Prefer an MLX conversion of this model."))
+        }
+        let speed = Int(fit.estimatedTokensPerSecond)
+        if fit.fit == .tight {
+            return .unknown(
+                String(localized: "Fits, but tightly: needs about \(needed) of \(limit); expect ~\(speed) tok/s and little memory left."))
+        }
+        let left = ByteCountFormatter.string(fromByteCount: max(0, fit.memoryAfterLoadBytes), countStyle: .memory)
+        return .fits(String(localized: "Fits \(machine): ~\(speed) tok/s, about \(left) left for the system."))
+    }
+
+    func destination(for repoID: String) -> String {
+        guard let reference = ModelReference.parse(repoID) else { return "" }
+        return (container.paths.models.appendingPathComponent(reference.directoryName).path as NSString).abbreviatingWithTildeInPath
+    }
+}
+
+// ModelLibraryView
+
+/// Model library, shown in the detail area of the chats window: hub search in the toolbar, results on top,
+/// and a permanent list of downloaded models at the bottom with running downloads above them.
+struct ModelLibraryView: View {
+    @Environment(AppContainer.self) private var container
+    @State private var viewModel: DownloadViewModel?
+    @State private var showsSettings = false
+
+    var body: some View {
+        Group {
+            if let viewModel { content(viewModel) } else { ProgressView().onAppear { viewModel = DownloadViewModel(container: container) } }
+        }
+    }
+
+    private func content(_ vm: DownloadViewModel) -> some View {
+        @Bindable var vm = vm
+        return VStack(spacing: 0) {
+            if let error = vm.searchError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .symbolRenderingMode(.multicolor).font(.callout)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.vertical, 8)
+            }
+            if vm.hasSearched {
+                ScrollView {
+                    LazyVStack(spacing: 0) { results(vm) }.padding(.horizontal, 16).padding(.vertical, 4)
+                }
+                .frame(minHeight: 80, maxHeight: .infinity)
+            } else {
+                Spacer(minLength: 0)
+            }
+            // Laid out first: the card takes what its rows need and the results list above shrinks to what is left.
+            library.layoutPriority(1)
+        }
+        // Any action that hits a gated repository opens the token popover, exactly as if the key button had been pressed.
+        .onChange(of: container.tokenPromptRequested, initial: true) { _, requested in
+            guard requested else { return }
+            showsSettings = true
+            container.tokenPromptRequested = false
+        }
+        // No window title here: the search group starts at the left edge of the detail column.
+        .toolbar(removing: .title)
+        .toolbar {
+            // Fixed spacers keep every control in its own glass capsule; without them macOS 26 merges neighbours into one.
+            ToolbarItem(placement: .navigation) {
+                Picker(String(localized: "Hub"), selection: $vm.hub) {
+                    ForEach(DownloadViewModel.Hub.allCases) { hub in
+                        Label {
+                            Text(verbatim: hub.title)
+                        } icon: {
+                            hub.icon
+                        }
+                        // Toolbars default to icon-only labels; the hub names must stay visible.
+                        .labelStyle(.titleAndIcon)
+                        .tag(hub)
+                    }
+                }
+                .labelsHidden().fixedSize()
+            }
+            ToolbarSpacer(.fixed, placement: .navigation)
+            // The search capsule holds the field and, inside it on the right, the magnifier that runs the search.
+            ToolbarItem(placement: .navigation) {
+                HStack(spacing: 6) {
+                    // VERIFY(macOS26): suggestions are expected to drop down as soon as the empty field gets focus.
+                    TextField(vm.hub.prompt, text: $vm.query)
+                        .textFieldStyle(.plain).frame(minWidth: 120, idealWidth: 280, maxWidth: 280)
+                        // Without a placeholder the field would reach VoiceOver unlabelled.
+                        .accessibilityLabel(String(localized: "Search"))
+                        .textInputSuggestions {
+                            if vm.query.isEmpty {
+                                ForEach(vm.suggestions, id: \.self) { name in
+                                    Text(verbatim: name).textInputCompletion(name)
+                                }
+                            }
+                        }
+                        .onChange(of: vm.query) { _, _ in vm.queryChanged() }
+                        .onSubmit { vm.search() }
+                    Button {
+                        vm.search()
+                    } label: {
+                        Image(systemName: "magnifyingglass")
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                    .help(
+                        vm.hub == .link ? String(localized: "Check that the model exists and show its size") : String(localized: "Search")
+                    )
+                    .accessibilityLabel(String(localized: "Search"))
+                }
+                .padding(.horizontal, 8)
+            }
+            ToolbarSpacer(.fixed, placement: .navigation)
+            // A bare checkbox: no glass capsule of its own, and therefore nothing for the search capsule to merge with.
+            ToolbarItem(placement: .navigation) {
+                Toggle(String(localized: "MLX models only"), isOn: $vm.mlxOnly)
+                    .toggleStyle(.checkbox)
+                    .disabled(vm.hub == .link)
+                    .help(String(localized: "Show only models built for MLX. Turn off to search every repository or tag."))
+            }
+            .sharedBackgroundVisibility(.hidden)
+            // With the title removed nothing stretches between the groups, so the push to the right edge is explicit.
+            ToolbarSpacer(.flexible)
+            // The token button is the only control at the right edge.
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showsSettings.toggle()
+                } label: {
+                    Label(String(localized: "Hugging Face Token"), systemImage: "key")
+                }
+                .help(String(localized: "Access token for gated Hugging Face repositories"))
+                .popover(isPresented: $showsSettings, arrowEdge: .bottom) {
+                    TokenSettingsView(isPresented: $showsSettings).environment(container)
+                }
+            }
+        }
+    }
+
+    // Results
+
+    @ViewBuilder
+    private func results(_ vm: DownloadViewModel) -> some View {
+        // A row that is downloading lives at the top of the library list instead.
+        let visible = vm.sortedRows.filter { row in !container.downloads.contains { $0.repoID == row.repoID } }
+        ForEach(visible) { row in
+            resultRow(row, vm)
+            Divider()
+        }
+        if vm.isSearching {
+            ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(12)
+        } else if visible.isEmpty, vm.searchError == nil {
+            Text(
+                vm.hub == .ollama
+                    ? String(localized: "No MLX tags found. Only MLX tags can be downloaded.") : String(localized: "Nothing found.")
+            )
+            .foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(24)
+        }
+    }
+
+    private func resultRow(_ row: DownloadViewModel.Row, _ vm: DownloadViewModel) -> some View {
+        let verdict = vm.verdict(for: row)
+        let installed = container.models.contains { $0.repoID.lowercased() == row.repoID.lowercased() }
+        return HStack(spacing: 14) {
+            rowText(
+                source: row.source, repoID: row.repoID, sizeBytes: row.sizeBytes, quantization: row.quantization,
+                detail: detail(repoID: row.repoID, kind: row.kind, contextLength: row.contextLength), gated: row.isGated)
+            Spacer(minLength: 8)
+            // The reason is a plain tooltip; the app shortens the system tooltip delay so it appears as soon as the pointer stops.
+            Image(systemName: verdict.symbol)
+                .font(.system(size: Self.pictogramSize))
+                .foregroundStyle(.secondary)  // monochrome: the shape (check, question mark, triangle) carries the verdict
+                .help(verdict.detail)
+                .accessibilityLabel(verdict.detail)
+            if installed {
+                Image(systemName: "checkmark").font(.system(size: Self.pictogramSize)).foregroundStyle(.secondary).frame(width: 36)
+                    .help(String(localized: "Installed"))
+            } else {
+                symbolButton("arrow.down.circle", String(localized: "Download")) {
+                    container.download(repoID: row.repoID, title: row.title, quantization: row.quantization, sizeBytes: row.sizeBytes)
+                }
+                .disabled(row.blockedReason != nil)
+            }
+        }
+        .padding(.vertical, 12)
+    }
+
+    /// Left: the hub mark, two lines tall. Line 1: model name (large), size and quantization. Line 2: full identifier with its owner, input → output, maximum context.
+    /// The first line is a single attributed Text so every part shares one baseline.
+    private func rowText(
+        source: ModelSource?, repoID: String, sizeBytes: Int64?, quantization: String?, detail: String, gated: Bool = false
+    ) -> some View {
+        var line = AttributedString()
+        var name = AttributedString(repoID.split(separator: "/").last.map(String.init) ?? repoID)
+        name.font = .title3.weight(.semibold)
+        var facts: [String] = []
+        if let sizeBytes, sizeBytes > 0 { facts.append(ByteCountFormatter.string(fromByteCount: sizeBytes, countStyle: .file)) }
+        if let quantization, !quantization.isEmpty { facts.append(quantization) }
+        var tail = AttributedString(facts.isEmpty ? "" : "   " + facts.joined(separator: "   "))
+        tail.font = .body
+        tail.foregroundColor = .secondary
+        line.append(name)
+        line.append(tail)
+        // The hub mark stands to the left, as tall as both text lines together.
+        return HStack(alignment: .center, spacing: 12) {
+            if let source {
+                // Emoji marks are drawn in greyscale so the lists stay monochrome like the rest of the pictograms.
+                Text(verbatim: source.glyph).font(.system(size: 32)).grayscale(1).frame(width: 40).help(source.displayName)
+            }
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Text(line).font(.title3).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                    if gated { Image(systemName: "lock.fill").foregroundStyle(.secondary).help(String(localized: "Gated: requires token")) }
+                }
+                if !detail.isEmpty {
+                    Text(verbatim: detail).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    /// "lmstudio-community/Qwen3-8B-MLX-4bit · text, images → text · up to 32k context".
+    private func detail(repoID: String, kind: ModelKind?, contextLength: Int?) -> String {
+        var parts = [repoID]
+        if let kind { parts.append(kind == .vlm ? String(localized: "text, images → text") : String(localized: "text → text")) }
+        if let contextLength, contextLength > 0 { parts.append(String(localized: "up to \(contextLength / 1024)k context")) }
+        return parts.joined(separator: " · ")
+    }
+
+    // Library: always visible. Running and waiting downloads come first, then the downloaded models.
+
+    /// One rounded glass card anchored at the bottom, the same shape as the chat composer. Downloaded and downloading models
+    /// are always shown in full; it scrolls only if they cannot fit in the window at all.
+    private var library: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Downloaded Models").font(.headline).padding(.bottom, 4)
+            ViewThatFits(in: .vertical) {
+                libraryRows
+                ScrollView { libraryRows }
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 16)
+    }
+
+    /// Downloads of models that are not installed yet get rows of their own; an update of an installed model is shown
+    /// inside that model's row instead.
+    private var newDownloads: [AppContainer.ActiveDownload] {
+        let installed = Set(container.models.map { $0.repoID.lowercased() })
+        return container.orderedDownloads.filter { !installed.contains($0.repoID.lowercased()) }
+    }
+
+    private var libraryRows: some View {
+        VStack(spacing: 0) {
+            let downloads = newDownloads
+            ForEach(Array(downloads.enumerated()), id: \.element.id) { index, download in
+                if index > 0 { Divider() }
+                downloadRow(download)
+            }
+            ForEach(Array(container.models.enumerated()), id: \.element.id) { index, model in
+                if index > 0 || !downloads.isEmpty { Divider() }
+                installedRow(model)
+            }
+            if container.models.isEmpty, downloads.isEmpty {
+                Text("No models yet. Click the empty search field to see recommended models, or search a hub.")
+                    .foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 16)
+            }
+        }
+    }
+
+    private func installedRow(_ model: ModelDescriptor) -> some View {
+        let update = container.downloads.first { $0.repoID.lowercased() == model.repoID.lowercased() }
+        return HStack(alignment: .center, spacing: 14) {
+            rowText(
+                source: model.source, repoID: model.repoID, sizeBytes: model.sizeBytes, quantization: model.quantization,
+                detail: detail(repoID: model.repoID, kind: model.kind, contextLength: model.contextLength))
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 6) {
+                HStack(spacing: 14) {
+                    contextPicker(model)
+                    if let update {
+                        // While the new revision downloads, the update pictogram turns into pause/continue and "cancel the update".
+                        transferControls(update)
+                        symbolButton("xmark.circle", String(localized: "Cancel Update")) { container.cancelDownload(repoID: update.repoID) }
+                    } else {
+                        // Always there: checks the hub for a newer revision of this model and downloads it when there is one.
+                        let checking = container.updates.checkingModels.contains(model.repoID)
+                        symbolButton(
+                            "arrow.triangle.2.circlepath",
+                            container.updates.pendingModelUpdates[model.repoID] != nil
+                                ? String(localized: "Update available: click to download")
+                                : String(localized: "Check for an update and download it")
+                        ) {
+                            container.updates.checkAndUpdate(model)
+                        }
+                        .symbolEffect(.rotate, isActive: checking)
+                        .disabled(checking)
+                    }
+                    symbolButton("trash", String(localized: "Delete Model"), role: .destructive) { container.deleteModel(model) }
+                        .disabled(update != nil)
+                }
+                if let update { updateProgress(update) }
+            }
+        }
+        .padding(.vertical, 12)
+    }
+
+    /// Small progress line at the bottom right of an installed model's row while its update downloads.
+    @ViewBuilder
+    private func updateProgress(_ update: AppContainer.ActiveDownload) -> some View {
+        HStack(spacing: 8) {
+            switch update.phase {
+            case .running:
+                Text(
+                    update.progress.map { $0.fraction.formatted(.percent.precision(.fractionLength(0))) } ?? String(localized: "Starting…"))
+                ProgressView(value: update.progress?.fraction ?? 0).frame(width: 160)
+            case .queued:
+                Text("Waiting for the current download to finish")
+            case .paused:
+                Text("Paused")
+                ProgressView(value: update.progress?.fraction ?? 0).frame(width: 160)
+            case .failed(let message):
+                Text(message).foregroundStyle(.red).lineLimit(1).truncationMode(.middle)
+            case .needsToken, .needsAccess:
+                Text("Waiting for a Hugging Face access token")
+            case .finished:
+                EmptyView()
+            }
+        }
+        .font(.caption.monospacedDigit()).foregroundStyle(.secondary).controlSize(.small)
+    }
+
+    /// Context window saved for this model; sizes the model cannot reach are not offered.
+    private func contextPicker(_ model: ModelDescriptor) -> some View {
+        let maximum = model.contextLength
+        let sizes = [131_072, 65536, 32768, 16384, 8192, 4096].filter { size in maximum.map { size < $0 } ?? true }
+        let selection = Binding<Int>(
+            get: {
+                let saved = container.settings.modelContextTokens[model.id] ?? 0
+                return sizes.contains(saved) ? saved : 0
+            },
+            set: { container.setContextTokens($0, for: model) })
+        return Picker(String(localized: "Context"), selection: selection) {
+            Text(maximum.map { String(localized: "Maximum (\($0 / 1024)k)") } ?? String(localized: "Maximum")).tag(0)
+            ForEach(sizes, id: \.self) { Text(verbatim: "\($0 / 1024)k").tag($0) }
+        }
+        .labelsHidden().fixedSize()
+        .help(String(localized: "Context window for this model"))
+    }
+
+    /// Top line: the model and, at the right, its controls. Below: the progress bar across the full width, then the status text.
+    private func downloadRow(_ download: AppContainer.ActiveDownload) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 14) {
+                // While downloading, the second line says where the files are going.
+                rowText(
+                    source: ModelReference.parse(download.repoID)?.source, repoID: download.repoID,
+                    sizeBytes: download.sizeBytes ?? download.progress?.bytesTotal, quantization: download.quantization,
+                    detail: viewModel?.destination(for: download.repoID) ?? "")
+                Spacer(minLength: 8)
+                downloadControls(download)
+            }
+            downloadStatus(download)
+        }
+        .padding(.vertical, 12)
+    }
+
+    /// Pictogram controls: pause/continue for the transfer, cancel for anything not finished.
+    @ViewBuilder
+    private func downloadControls(_ download: AppContainer.ActiveDownload) -> some View {
+        HStack(spacing: 12) {
+            transferControls(download)
+            switch download.phase {
+            case .failed, .needsToken, .needsAccess:
+                symbolButton("arrow.clockwise.circle", String(localized: "Try Again")) {
+                    container.download(
+                        repoID: download.repoID, title: download.title, quantization: download.quantization, sizeBytes: download.sizeBytes)
+                }
+            case .running, .paused, .queued, .finished:
+                EmptyView()
+            }
+            symbolButton("xmark.circle", String(localized: "Cancel")) { container.cancelDownload(repoID: download.repoID) }
+        }
+    }
+
+    /// Pause and continue for a transfer in flight. A model still waiting its turn gets them too: Continue pushes it ahead
+    /// of whatever is running, Pause takes it out of the queue until it is asked for again.
+    @ViewBuilder
+    private func transferControls(_ download: AppContainer.ActiveDownload) -> some View {
+        switch download.phase {
+        case .running:
+            symbolButton("pause.circle", String(localized: "Pause")) { container.pauseDownload(repoID: download.repoID) }
+        case .paused:
+            symbolButton("play.circle", String(localized: "Continue")) { container.resumeDownload(repoID: download.repoID) }
+        case .queued:
+            symbolButton("play.circle", String(localized: "Download this one first")) { container.resumeDownload(repoID: download.repoID) }
+            symbolButton("pause.circle", String(localized: "Pause")) { container.pauseDownload(repoID: download.repoID) }
+        case .failed, .needsToken, .needsAccess, .finished:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func downloadStatus(_ download: AppContainer.ActiveDownload) -> some View {
+        switch download.phase {
+        case .failed(let message):
+            Text(message).font(.caption).foregroundStyle(.red)
+        case .needsToken:
+            Text("Waiting for a Hugging Face access token").font(.caption).foregroundStyle(.secondary)
+        case .needsAccess:
+            redLink(
+                String(localized: "Your Hugging Face account has no access to this model yet. Click to open its page and request access.")
+            ) {
+                if let url = URL(string: "https://huggingface.co/\(download.repoID)") { NSWorkspace.shared.open(url) }
+            }
+        case .finished:
+            Text("Done").font(.caption).foregroundStyle(.green)
+        case .queued:
+            Text("Waiting for the current download to finish").font(.caption).foregroundStyle(.secondary)
+        case .paused:
+            ProgressView(value: download.progress?.fraction ?? 0)
+            Text("Paused").font(.caption).foregroundStyle(.secondary)
+        case .running:
+            if let p = download.progress {
+                ProgressView(value: p.fraction)
+                Text(
+                    verbatim:
+                        "\(p.fraction.formatted(.percent.precision(.fractionLength(0)))) · \(ByteCountFormatter.string(fromByteCount: p.bytesReceived, countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: p.bytesTotal, countStyle: .file)) · \(ByteCountFormatter.string(fromByteCount: Int64(p.bytesPerSecond), countStyle: .file))/s · \(p.currentFile)"
+                )
+                .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            } else {
+                ProgressView().progressViewStyle(.linear)
+                Text("Starting…").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func redLink(_ text: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(text).font(.caption).foregroundStyle(.red).underline().multilineTextAlignment(.leading)
+        }
+        .buttonStyle(.plain)
+        .pointerStyle(.link)
+    }
+
+    /// Twice the body text size, shared by every pictogram in the lists (actions, verdicts, marks).
+    private static let pictogramSize: CGFloat = 28
+
+    /// List actions are bare pictograms, not framed buttons.
+    private func symbolButton(_ symbol: String, _ help: String, role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
+        Button(role: role, action: action) {
+            Image(systemName: symbol).font(.system(size: Self.pictogramSize)).frame(width: 36, height: 36).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
+// TokenSettingsView
+
+/// The Hugging Face access token is a secret and cannot live in a menu, so it stays in a popover of the models section.
+/// The popover also opens by itself whenever a download needs the token; saving it resumes those downloads.
+struct TokenSettingsView: View {
+    @Binding var isPresented: Bool
+    @Environment(AppContainer.self) private var container
+    @State private var hfToken = KeychainStore.get(.huggingFaceToken) ?? ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("Hugging Face Access Token").font(.headline)
+                Spacer()
+                // The globe opens the page where a token is created.
+                Button {
+                    if let url = URL(string: "https://huggingface.co/settings/tokens") { NSWorkspace.shared.open(url) }
+                } label: {
+                    Image(systemName: "globe").font(.title3)
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary).pointerStyle(.link)
+                .help(String(localized: "Get a token on huggingface.co"))
+                .accessibilityLabel(String(localized: "Get a token on huggingface.co"))
+            }
+            Text("Needed only for gated models. Create a token with the Read role and paste it here; it is stored in the Keychain.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            SecureField(String(localized: "Access token"), text: $hfToken, prompt: Text(verbatim: "hf_…"))
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(save)
+            HStack {
+                Spacer()
+                Button(String(localized: "Save Token"), action: save).buttonStyle(.glass)
+            }
+        }
+        .padding(16)
+        .frame(width: 380)
+        // Coming back from the browser with a copied token: offer it right away.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if hfToken.isEmpty, let copied = NSPasteboard.general.string(forType: .string), copied.hasPrefix("hf_") {
+                hfToken = copied.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+    }
+
+    private func save() {
+        container.saveHuggingFaceTokenAndRetry(hfToken)
+        isPresented = false
+    }
+}
