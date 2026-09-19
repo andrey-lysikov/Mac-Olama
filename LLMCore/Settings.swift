@@ -45,7 +45,6 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case activeModelID = "activeModelID"
     case activeChatID = "activeChatID"
     case idleUnloadSeconds = "idleUnloadSeconds"  // Double, default 300
-    case spotlightTimeoutSeconds = "spotlightTimeoutSeconds"  // Double, default 8
     case launchAtLogin = "launchAtLogin"  // Bool, default false
     case apiServerPort = "apiServerPort"  // Int, default 11434; auto-advanced when the port is taken
     case toolsEnabled = "toolsEnabled"  // Bool, default false
@@ -59,12 +58,12 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case pendingDownloads = "pendingDownloads"  // Data: JSON list of unfinished downloads, restored at launch
     case lastAppUpdateCheck = "lastAppUpdateCheck"  // Date?
     case lastModelUpdateCheck = "lastModelUpdateCheck"  // Date?
+    case extraTools = "extraTools"  // [String]: `ExtraTool` raw values the user switched on (calculator, macInfo, …)
     case huggingFaceToken = "huggingFaceToken"  // String?: Hugging Face access token for gated models
 }
 
 public enum SettingsDefaults {
     public static let idleUnloadSeconds: TimeInterval = 300
-    public static let spotlightTimeoutSeconds: TimeInterval = 8
     public static let apiServerPort = 11434
     public static let searchProvider = "duckduckgo"
 
@@ -72,7 +71,6 @@ public enum SettingsDefaults {
     public static var registration: [String: Any] {
         [
             SettingsKey.idleUnloadSeconds.rawValue: idleUnloadSeconds,
-            SettingsKey.spotlightTimeoutSeconds.rawValue: spotlightTimeoutSeconds,
             SettingsKey.launchAtLogin.rawValue: false,
             SettingsKey.apiServerPort.rawValue: apiServerPort,
             SettingsKey.toolsEnabled.rawValue: false,
@@ -81,6 +79,7 @@ public enum SettingsDefaults {
             SettingsKey.fileToolsEnabled.rawValue: false,
             SettingsKey.shortcutsToolEnabled.rawValue: false,
             SettingsKey.allowedFolders.rawValue: [String](),
+            SettingsKey.extraTools.rawValue: [String](),
         ]
     }
 }

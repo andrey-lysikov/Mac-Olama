@@ -13,7 +13,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: StatusItemController!
     private var panel: QuickPanelController!
     private var servicesProvider: ServicesProvider!
-    private var spotlightIndexer: SpotlightIndexer!
 
     static func main() {
         let app = NSApplication.shared
@@ -37,9 +36,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel = QuickPanelController(container: container)
         WindowManager.shared.hidePanel = { [weak panel] in panel?.hide() }
         statusItem = StatusItemController(container: container, panel: panel)
-        IntentBridge.shared.configure(container: container, panel: panel)
-        spotlightIndexer = SpotlightIndexer(store: container.chatStore)
-        spotlightIndexer.start()
 
         servicesProvider = ServicesProvider(panel: panel)
         NSApp.servicesProvider = servicesProvider
@@ -47,7 +43,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         LaunchAtLogin.sync(enabled: container.settings.launchAtLogin)
         container.start()
-        MacOlamaShortcuts.updateAppShortcutParameters()
     }
 
     /// An agent app gets no main menu for free, and without an Edit menu text fields lose ⌘A/⌘C/⌘V/⌘X/⌘Z.
@@ -103,7 +98,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         // Both are nil when the app only hosts unit tests.
-        spotlightIndexer?.stop()
         container?.shutdown()
     }
 }

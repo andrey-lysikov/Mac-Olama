@@ -6,7 +6,7 @@ import Foundation
 
 // ToolProvider
 
-/// Tool provider for tool calling. Empty in phase 1; OlamaTools adds web_search / fetch_url.
+/// Tool provider for tool calling: web search, files, Shortcuts, the calculator, this Mac, the network, the weather.
 public protocol ToolProvider: Sendable {
     var specs: [ToolSpec] { get }
     /// Executes a call and returns the result text for the model.
@@ -84,7 +84,7 @@ public actor ConversationService {
 
     // Chats
 
-    /// Active chat for panel/Spotlight; creates one if missing or deleted.
+    /// Active chat of the panel; creates one if missing or deleted.
     public func activeChat(origin: ChatOrigin) async throws -> Chat {
         if let id = activeChatID, let chat = try await store.chat(id: id) { return chat }
         return try await newChat(origin: origin)
@@ -275,8 +275,34 @@ public actor ConversationService {
             lines.append("Never paste raw search results or page text into the answer; write the answer in your own words.")
         }
         if names.contains("search_files") || names.contains("read_file") {
+            var files =
+                "You can look into the user's allowed folders with search_files and read_file when the question is about their files."
+            if names.contains("recognize_text") { files += " recognize_text reads an image or a scanned PDF." }
+            if names.contains("write_file") {
+                files += " write_file saves text there and open_item opens a file or a link; the user approves both."
+            }
+            lines.append(files)
+        }
+        if names.contains("run_javascript") {
             lines.append(
-                "You can look into the user's allowed folders with search_files and read_file when the question is about their files.")
+                "Do not calculate in your head: use run_javascript for arithmetic, percentages, statistics, dates and unit conversions, and answer with what it returned."
+            )
+        }
+        if names.contains("mac_info") {
+            lines.append(
+                "Questions about this Mac (battery, free disk space, memory, what is loading it, macOS version) are answered from mac_info, never guessed."
+            )
+        }
+        if names.contains("network_check") {
+            lines.append(
+                "Measure the network with network_check (ping, traceroute, dns, http, port, speed) instead of estimating; report the numbers it returned and say they are measured from this Mac."
+            )
+        }
+        if names.contains("get_weather") {
+            lines.append(
+                "For weather call get_weather with the place the user means; ask which city when it is not clear."
+                    + (names.contains("web_search")
+                        ? " You may add local detail or check a warning with web_search afterwards, naming both sources." : ""))
         }
         if names.contains("run_shortcut") {
             lines.append(

@@ -15,13 +15,6 @@ public enum HTMLText {
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// All text nodes joined with spaces, so adjacent inline elements never glue together (`<a>x</a><b>y</b>` → "x y").
-    static func spacedText(of node: Node) -> String {
-        var parts: [String] = []
-        collectText(node, into: &parts)
-        return parts.joined(separator: " ")
-    }
-
     private static func collectText(_ node: Node, into parts: inout [String]) {
         if let text = node as? TextNode {
             let collapsed = collapse(text.getWholeText()).trimmingCharacters(in: .whitespaces)

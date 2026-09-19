@@ -7,7 +7,7 @@ import Foundation
 
 /// Where the chat was created; used for grouping only.
 public enum ChatOrigin: String, Codable, Sendable {
-    case panel, spotlight, window, api
+    case panel, window, api
 }
 
 public struct Chat: Codable, Sendable, Identifiable, Hashable {
@@ -143,7 +143,7 @@ public protocol ChatStore: Sendable {
 }
 
 /// Fans store changes out to every listener. An `AsyncStream` hands each element to one consumer only, and the panel, the
-/// chats window and the Spotlight indexer all listen: with one shared stream each saw only part of the changes.
+/// chats window and the panel all listen: with one shared stream each saw only part of the changes.
 public final class ChatStoreBroadcast: @unchecked Sendable {
     private let lock = NSLock()
     private var listeners: [UUID: AsyncStream<ChatStoreChange>.Continuation] = [:]

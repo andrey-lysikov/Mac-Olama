@@ -114,7 +114,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     private var answerIsVisible: Bool { panel.isVisible || WindowManager.shared.isOnScreen(.chats) }
 
-    /// Opening the panel or the chats window some other way (shortcut, Spotlight, Dock) also counts as seeing the answer.
+    /// Opening the panel or the chats window some other way (shortcut, Dock) also counts as seeing the answer.
     /// A soft shimmer, not a blink: the icon fades smoothly down to half and back, once every 1.6 s.
     private func blink() {
         guard let button = item.button, !answerIsVisible else { return stopBlinking() }
@@ -258,7 +258,41 @@ struct StatusMenuBuilder {
                 String(localized: "Shortcuts"), "square.2.layers.3d", container.settings.shortcutsToolEnabled,
                 #selector(MenuActions.toggleShortcutsTool), actions,
                 help: String(localized: "The model may run your shortcuts; it asks before each run")))
+        sub.addItem(.separator())
+        for tool in ExtraTool.allCases {
+            sub.addItem(
+                toggle(
+                    Self.title(of: tool), Self.symbol(of: tool), container.isToolEnabled(tool), #selector(MenuActions.toggleExtraTool(_:)),
+                    actions, help: Self.help(of: tool), object: tool.rawValue))
+        }
         return sub
+    }
+
+    private static func title(of tool: ExtraTool) -> String {
+        switch tool {
+        case .calculator: String(localized: "Calculator")
+        case .macInfo: String(localized: "About This Mac")
+        case .network: String(localized: "Network Diagnostics")
+        case .weather: String(localized: "Weather")
+        }
+    }
+
+    private static func symbol(of tool: ExtraTool) -> String {
+        switch tool {
+        case .calculator: "x.squareroot"
+        case .macInfo: "laptopcomputer"
+        case .network: "network"
+        case .weather: "cloud.sun"
+        }
+    }
+
+    private static func help(of tool: ExtraTool) -> String {
+        switch tool {
+        case .calculator: String(localized: "The model computes in JavaScript instead of doing arithmetic in its head")
+        case .macInfo: String(localized: "The model may read this Mac's state: battery, disk space, memory, processes")
+        case .network: String(localized: "The model may run ping, traceroute, DNS and port checks from this Mac")
+        case .weather: String(localized: "The model may look up the weather (Open-Meteo)")
+        }
     }
 
     // Picking a provider turns search on; "Off" turns it off.
@@ -327,11 +361,13 @@ struct StatusMenuBuilder {
     }
 
     private func toggle(
-        _ title: String, _ symbol: String, _ on: Bool, _ action: Selector, _ target: AnyObject, help: String? = nil
+        _ title: String, _ symbol: String, _ on: Bool, _ action: Selector, _ target: AnyObject, help: String? = nil,
+        object: Any? = nil
     ) -> NSMenuItem {
         let mi = item(title, symbol, action, target)
         mi.state = on ? .on : .off
         mi.toolTip = help
+        if let object { mi.representedObject = object }
         return mi
     }
 
@@ -420,6 +456,10 @@ final class MenuActions: NSObject {
     }
     @objc func setFileAccess(_ sender: NSMenuItem) {
         if let enabled = sender.representedObject as? Bool { container.setFileToolsEnabled(enabled) }
+    }
+    @objc func toggleExtraTool(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let tool = ExtraTool(rawValue: raw) else { return }
+        container.setToolEnabled(tool, !container.isToolEnabled(tool))
     }
     @objc func toggleShortcutsTool() { container.setShortcutsToolEnabled(!container.settings.shortcutsToolEnabled) }
     @objc func removeAllowedFolder(_ sender: NSMenuItem) {

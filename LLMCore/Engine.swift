@@ -5,7 +5,7 @@ import Foundation
 
 // InferenceEngine
 
-/// Engine state: the single source for every indicator (menu bar icon, panel badge, Spotlight progress).
+/// Engine state: the single source for every indicator (menu bar icon, panel and chats window spinners).
 public enum EngineState: Sendable, Equatable {
     case unloaded
     case loading(modelID: String, progress: Double)

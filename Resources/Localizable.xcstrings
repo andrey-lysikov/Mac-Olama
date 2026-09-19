@@ -127,16 +127,6 @@
         }
       }
     },
-    "Active model: %@" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Активная модель: %@"
-          }
-        }
-      }
-    },
     "Add" : {
       "localizations" : {
         "ru" : {
@@ -207,42 +197,12 @@
         }
       }
     },
-    "Ask ${prompt}" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Спросить ${prompt}"
-          }
-        }
-      }
-    },
-    "Ask Mac-Olama" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Спросить Mac-Olama"
-          }
-        }
-      }
-    },
     "Ask a question…" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Задайте вопрос…"
-          }
-        }
-      }
-    },
-    "Ask the local model and continue the current chat." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Спросить локальную модель и продолжить текущий чат."
           }
         }
       }
@@ -303,26 +263,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Отменено."
-          }
-        }
-      }
-    },
-    "Cannot read %@. Attach an image, PDF or text file." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось прочитать %@. Прикрепите изображение, PDF или текстовый файл."
-          }
-        }
-      }
-    },
-    "Chat" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Чат"
           }
         }
       }
@@ -757,26 +697,6 @@
         }
       }
     },
-    "Generating…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Генерирую…"
-          }
-        }
-      }
-    },
-    "Generating… open Mac-Olama for the full answer" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Генерирую… откройте Mac-Olama для полного ответа"
-          }
-        }
-      }
-    },
     "Generation failed: %@" : {
       "localizations" : {
         "ru" : {
@@ -847,32 +767,12 @@
         }
       }
     },
-    "LLM Model" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Модель LLM"
-          }
-        }
-      }
-    },
     "Loading model %@… %@" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Загружаю модель %1$@… %2$@"
-          }
-        }
-      }
-    },
-    "Loading model…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Загружаю модель…"
           }
         }
       }
@@ -917,16 +817,6 @@
         }
       }
     },
-    "Mac-Olama is still starting. Try again in a moment." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mac-Olama ещё запускается. Повторите через мгновение."
-          }
-        }
-      }
-    },
     "Mac-Olama update" : {
       "localizations" : {
         "ru" : {
@@ -963,16 +853,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Модель"
-          }
-        }
-      }
-    },
-    "Model %@ does not accept images. Pick a VLM model." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Модель %@ не принимает изображения. Выберите VLM-модель."
           }
         }
       }
@@ -1087,26 +967,6 @@
         }
       }
     },
-    "New Chat in Mac-Olama" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Новый чат в Mac-Olama"
-          }
-        }
-      }
-    },
-    "New chat started." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Начат новый чат."
-          }
-        }
-      }
-    },
     "No folders yet" : {
       "localizations" : {
         "ru" : {
@@ -1123,16 +983,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Нет модели"
-          }
-        }
-      }
-    },
-    "No model is installed. Open Mac-Olama and download one." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Модели не установлены. Откройте Mac-Olama и загрузите модель."
           }
         }
       }
@@ -1257,36 +1107,6 @@
         }
       }
     },
-    "Open Mac-Olama Chats" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Открыть Чаты Mac-Olama"
-          }
-        }
-      }
-    },
-    "Open Mac-Olama Panel" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Открыть панель Mac-Olama"
-          }
-        }
-      }
-    },
-    "Open Panel" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Открыть панель"
-          }
-        }
-      }
-    },
     "Open in Chats" : {
       "localizations" : {
         "ru" : {
@@ -1363,16 +1183,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Последние 7 дней"
-          }
-        }
-      }
-    },
-    "Prompt" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Запрос"
           }
         }
       }
@@ -1483,16 +1293,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Репозиторий не найден."
-          }
-        }
-      }
-    },
-    "Run “Ask Mac-Olama” again to continue" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Запустите «Спросить Mac-Olama» ещё раз, чтобы продолжить"
           }
         }
       }
@@ -1627,16 +1427,6 @@
         }
       }
     },
-    "Set Mac-Olama Model" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выбрать модель Mac-Olama"
-          }
-        }
-      }
-    },
     "Shortcuts" : {
       "localizations" : {
         "ru" : {
@@ -1647,52 +1437,12 @@
         }
       }
     },
-    "Shows the quick panel, optionally with a specific chat." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Показывает быструю панель, при желании с конкретным чатом."
-          }
-        }
-      }
-    },
-    "Start a new chat" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Начать новый чат"
-          }
-        }
-      }
-    },
     "Starting…" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Запуск…"
-          }
-        }
-      }
-    },
-    "Starts a fresh conversation; the previous one stays in the chat list." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Начинает новый разговор; предыдущий остаётся в списке чатов."
-          }
-        }
-      }
-    },
-    "Still generating. Open Mac-Olama to follow the answer." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ответ ещё генерируется. Откройте Mac-Olama, чтобы дочитать его."
           }
         }
       }
@@ -2028,16 +1778,6 @@
         }
       }
     },
-    "Updated" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Обновлён"
-          }
-        }
-      }
-    },
     "Using %@…" : {
       "localizations" : {
         "ru" : {
@@ -2064,16 +1804,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Версия %@ актуальна."
-          }
-        }
-      }
-    },
-    "Vision + text" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Изображения + текст"
           }
         }
       }
@@ -2274,6 +2004,146 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Модель не дала ответа. Спросите ещё раз или переформулируйте вопрос."
+          }
+        }
+      }
+    },
+    "%@ file %@?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ файл %2$@?"
+          }
+        }
+      }
+    },
+    "About This Mac" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Об этом Mac"
+          }
+        }
+      }
+    },
+    "Append to" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дописать в"
+          }
+        }
+      }
+    },
+    "Calculator" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Калькулятор"
+          }
+        }
+      }
+    },
+    "Check a local address?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить локальный адрес?"
+          }
+        }
+      }
+    },
+    "Create" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создать"
+          }
+        }
+      }
+    },
+    "Network Diagnostics" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сетевая диагностика"
+          }
+        }
+      }
+    },
+    "Open %@?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть %@?"
+          }
+        }
+      }
+    },
+    "Replace" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заменить"
+          }
+        }
+      }
+    },
+    "The model computes in JavaScript instead of doing arithmetic in its head" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель считает на JavaScript, а не в уме"
+          }
+        }
+      }
+    },
+    "The model may look up the weather (Open-Meteo)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может узнать погоду (Open-Meteo)"
+          }
+        }
+      }
+    },
+    "The model may read this Mac's state: battery, disk space, memory, processes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может читать состояние этого Mac: батарея, место на диске, память, процессы"
+          }
+        }
+      }
+    },
+    "The model may run ping, traceroute, DNS and port checks from this Mac" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может запускать с этого Mac ping, traceroute, DNS и проверку портов"
+          }
+        }
+      }
+    },
+    "Weather" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Погода"
           }
         }
       }

@@ -602,6 +602,15 @@ final class AppContainer {
         updateTools()
     }
 
+    func isToolEnabled(_ tool: ExtraTool) -> Bool { settings.extraTools.contains(tool.rawValue) }
+
+    func setToolEnabled(_ tool: ExtraTool, _ enabled: Bool) {
+        var list = Set(settings.extraTools)
+        if enabled { list.insert(tool.rawValue) } else { list.remove(tool.rawValue) }
+        settings.extraTools = list.sorted()
+        updateTools()
+    }
+
     func setShortcutsToolEnabled(_ enabled: Bool) {
         settings.shortcutsToolEnabled = enabled
         updateTools()
@@ -629,7 +638,18 @@ final class AppContainer {
         }
         if settings.fileToolsEnabled, !settings.allowedFolders.isEmpty {
             providers.append(
-                FileToolProvider(configuration: .init(allowedFolders: settings.allowedFolders.map { URL(fileURLWithPath: $0) })))
+                FileToolProvider(
+                    configuration: .init(
+                        allowedFolders: settings.allowedFolders.map { URL(fileURLWithPath: $0) }, confirmation: NotificationService.shared))
+            )
+        }
+        for tool in ExtraTool.allCases where isToolEnabled(tool) {
+            switch tool {
+            case .calculator: providers.append(JavaScriptToolProvider())
+            case .macInfo: providers.append(MacInfoToolProvider())
+            case .network: providers.append(NetworkToolProvider(confirmation: NotificationService.shared))
+            case .weather: providers.append(WeatherToolProvider())
+            }
         }
         if settings.shortcutsToolEnabled {
             providers.append(ShortcutToolProvider(configuration: .init(confirmation: NotificationService.shared)))
@@ -738,10 +758,6 @@ final class AppSettings {
         get { double(.idleUnloadSeconds) }
         set { set(newValue, .idleUnloadSeconds) }
     }
-    var spotlightTimeoutSeconds: TimeInterval {
-        get { double(.spotlightTimeoutSeconds) }
-        set { set(newValue, .spotlightTimeoutSeconds) }
-    }
     var launchAtLogin: Bool {
         get { bool(.launchAtLogin) }
         set { set(newValue, .launchAtLogin) }
@@ -796,6 +812,10 @@ final class AppSettings {
     var lastModelUpdateCheck: Date? {
         get { access(keyPath: \.token); return defaults.object(forKey: SettingsKey.lastModelUpdateCheck.rawValue) as? Date }
         set { set(newValue, .lastModelUpdateCheck) }
+    }
+    var extraTools: [String] {
+        get { access(keyPath: \.token); return defaults.stringArray(forKey: SettingsKey.extraTools.rawValue) ?? [] }
+        set { set(newValue, .extraTools) }
     }
     var huggingFaceToken: String? {
         get { string(.huggingFaceToken) }

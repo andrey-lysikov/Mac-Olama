@@ -119,7 +119,7 @@ final class ChatsViewModel {
                 case .chatInserted, .chatUpdated, .chatDeleted:
                     await self.reload()
                 case .messageInserted(let cid, _), .messageUpdated(let cid, _), .messageDeleted(let cid, _):
-                    // Skipped only while this window streams the reply itself; one written by the panel (or Spotlight) is
+                    // Skipped only while this window streams the reply itself; one written by the panel or the API is
                     // followed through the store, its partial text saved every quarter second.
                     if cid == self.selectedChatID, !self.streamsHere { await self.loadMessages() }
                 }

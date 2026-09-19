@@ -1,7 +1,10 @@
 //  Copyright © AndreyLysikov
 //  SPDX-License-Identifier: Apache-2.0
 
+import AppKit
 import Foundation
+import PDFKit
+import Vision
 
 // Local tools: read/search files inside user-approved folders and run user-made Shortcuts.
 // Every path is canonicalised and must sit under an allowed folder; side effects go through `ToolConfirmation`.
@@ -30,6 +33,10 @@ public struct FileToolProvider: ToolProvider {
     public struct Configuration: Sendable {
         public var allowedFolders: [URL]
         public var maxFileCharacters = 20_000
+        public var maxWrittenCharacters = 200_000
+        public var maxRecognizedPages = 10
+        /// Writing a file and opening one (or a link) are the only side effects here; both ask the user first.
+        public var confirmation: (any ToolConfirmation)?
         public var maxResults = 25
         public var maxContentScanFiles = 400
         public var skippedDirectories: Set<String> = [".git", "node_modules", ".build", "DerivedData", "Library", ".Trash"]
@@ -37,7 +44,10 @@ public struct FileToolProvider: ToolProvider {
             "txt", "md", "markdown", "json", "yaml", "yml", "csv", "tsv", "xml", "html", "htm", "swift", "py", "js", "ts",
             "rs", "go", "java", "kt", "c", "h", "cpp", "m", "mm", "sh", "toml", "ini", "cfg", "log", "rtf", "tex", "sql", "plist",
         ]
-        public init(allowedFolders: [URL]) { self.allowedFolders = allowedFolders.map { $0.standardizedFileURL.resolvingSymlinksInPath() } }
+        public init(allowedFolders: [URL], confirmation: (any ToolConfirmation)? = nil) {
+            self.allowedFolders = allowedFolders.map { $0.standardizedFileURL.resolvingSymlinksInPath() }
+            self.confirmation = confirmation
+        }
     }
 
     let configuration: Configuration
@@ -60,13 +70,34 @@ public struct FileToolProvider: ToolProvider {
                 parametersJSONSchema:
                     #"{"type":"object","properties":{"query":{"type":"string","description":"Case-insensitive substring to match"},"in_contents":{"type":"boolean","description":"Also search inside text files (slower)"},"folder":{"type":"string","description":"Restrict to one allowed folder"}},"required":["query"]}"#
             ),
+            ToolSpec(
+                name: "recognize_text",
+                description:
+                    "Read the text of an image or a scanned PDF from the allowed folders (\(folders)) with on-device recognition. Use it when a file is not plain text.",
+                parametersJSONSchema:
+                    #"{"type":"object","properties":{"path":{"type":"string","description":"Path to a png, jpg, heic, tiff or pdf file"}},"required":["path"]}"#
+            ),
+            ToolSpec(
+                name: "write_file",
+                description:
+                    "Write a text file inside the allowed folders (\(folders)). The user approves every write. Existing files are replaced unless append is true.",
+                parametersJSONSchema:
+                    #"{"type":"object","properties":{"path":{"type":"string","description":"Path inside an allowed folder"},"content":{"type":"string"},"append":{"type":"boolean","description":"Append instead of replacing"}},"required":["path","content"]}"#
+            ),
+            ToolSpec(
+                name: "open_item",
+                description:
+                    "Open a file from the allowed folders (\(folders)) in its usual app, or open an http(s) link in the browser. The user approves every open.",
+                parametersJSONSchema:
+                    #"{"type":"object","properties":{"target":{"type":"string","description":"File path inside an allowed folder, or an http(s) URL"}},"required":["target"]}"#
+            ),
         ]
     }
 
     public func execute(_ call: ToolCall) async throws -> String {
         let args = (try? JSONSerialization.jsonObject(with: Data(call.argumentsJSON.utf8))) as? [String: Any] ?? [:]
         guard !configuration.allowedFolders.isEmpty else {
-            return "error: no folders are allowed; ask the user to add folders in Mac-Olama → Download Model… → Advanced"
+            return "error: no folders are allowed; ask the user to add one in the Mac-Olama menu → Features → Folder Access"
         }
         switch call.name {
         case "read_file":
@@ -78,6 +109,17 @@ public struct FileToolProvider: ToolProvider {
             let roots: [URL]
             if let folder = args["folder"] as? String, let r = resolve(folder) { roots = [r] } else { roots = configuration.allowedFolders }
             return search(query: query, inContents: inContents, roots: roots)
+        case "recognize_text":
+            guard let path = args["path"] as? String, let url = resolve(path) else { return "error: path is outside the allowed folders" }
+            return try await recognizeText(url)
+        case "write_file":
+            guard let path = args["path"] as? String, let content = args["content"] as? String else {
+                return "error: missing path or content"
+            }
+            return await writeFile(path: path, content: content, append: args["append"] as? Bool ?? false)
+        case "open_item":
+            guard let target = args["target"] as? String else { return "error: missing target" }
+            return await openItem(target)
         default:
             throw ConversationError.unknownTool(call.name)
         }
@@ -116,6 +158,107 @@ public struct FileToolProvider: ToolProvider {
         let clipped =
             text.count > configuration.maxFileCharacters ? String(text.prefix(configuration.maxFileCharacters)) + "\n…[truncated]" : text
         return WebToolProvider.wrap(clipped, source: url.path)
+    }
+
+    /// Where a new file may go: the folder it lands in must be an allowed one, and the name must be a plain file name.
+    func resolveForWriting(_ path: String) -> URL? {
+        let expanded = NSString(string: path).expandingTildeInPath
+        let name = (expanded as NSString).lastPathComponent
+        guard !name.isEmpty, name != ".", name != "..", !name.hasPrefix("/") else { return nil }
+        let parent = (expanded as NSString).deletingLastPathComponent
+        let folders: [URL] =
+            expanded.hasPrefix("/") || !parent.isEmpty
+            ? [URL(fileURLWithPath: parent.isEmpty ? "/" : parent)] : configuration.allowedFolders
+        for folder in folders {
+            let canonical = folder.standardizedFileURL.resolvingSymlinksInPath()
+            guard configuration.allowedFolders.contains(where: { canonical.path == $0.path || canonical.path.hasPrefix($0.path + "/") })
+            else { continue }
+            return canonical.appendingPathComponent(name)
+        }
+        return nil
+    }
+
+    func recognizeText(_ url: URL) async throws -> String {
+        let images: [CGImage]
+        switch url.pathExtension.lowercased() {
+        case "pdf":
+            guard let document = PDFDocument(url: url) else { return "error: the PDF could not be opened" }
+            images = (0..<min(document.pageCount, configuration.maxRecognizedPages)).compactMap { index in
+                guard let page = document.page(at: index) else { return nil }
+                let bounds = page.bounds(for: .mediaBox)
+                let size = CGSize(width: bounds.width * 2, height: bounds.height * 2)  // 144 dpi: enough for small print
+                return page.thumbnail(of: size, for: .mediaBox).cgImage(forProposedRect: nil, context: nil, hints: nil)
+            }
+        case "png", "jpg", "jpeg", "heic", "heif", "tiff", "tif", "gif", "bmp", "webp":
+            guard let image = NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                return "error: the image could not be opened"
+            }
+            images = [image]
+        default:
+            return "error: only images and PDFs can be recognized"
+        }
+        guard !images.isEmpty else { return "error: nothing to recognize in this file" }
+        var request = RecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.automaticallyDetectsLanguage = true
+        var pages: [String] = []
+        for (index, image) in images.enumerated() {
+            let lines = try await request.perform(on: image).compactMap { $0.topCandidates(1).first?.string }
+            guard !lines.isEmpty else { continue }
+            pages.append(images.count > 1 ? "— page \(index + 1) —\n" + lines.joined(separator: "\n") : lines.joined(separator: "\n"))
+        }
+        guard !pages.isEmpty else { return "No text was recognized in \(url.lastPathComponent)." }
+        let text = pages.joined(separator: "\n\n")
+        let clipped =
+            text.count > configuration.maxFileCharacters ? String(text.prefix(configuration.maxFileCharacters)) + "\n…[truncated]" : text
+        return WebToolProvider.wrap(clipped, source: "recognize_text: \(url.path)")
+    }
+
+    func writeFile(path: String, content: String, append: Bool) async -> String {
+        guard content.count <= configuration.maxWrittenCharacters else {
+            return "error: content longer than \(configuration.maxWrittenCharacters) characters"
+        }
+        guard let url = resolveForWriting(path) else { return "error: path is outside the allowed folders" }
+        let exists = FileManager.default.fileExists(atPath: url.path)
+        guard configuration.textExtensions.contains(url.pathExtension.lowercased()) else { return "error: only text files can be written" }
+        if let confirmation = configuration.confirmation {
+            let action =
+                append && exists ? String(localized: "Append to") : exists ? String(localized: "Replace") : String(localized: "Create")
+            let allowed = await confirmation.confirm(
+                title: String(localized: "\(action) file \(url.lastPathComponent)?"),
+                detail: "\(url.path)\n\(content.prefix(200))")
+            guard allowed else { return "error: the user declined the write" }
+        }
+        do {
+            if append, exists, let handle = try? FileHandle(forWritingTo: url) {
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                try handle.write(contentsOf: Data(content.utf8))
+            } else {
+                try Data(content.utf8).write(to: url, options: .atomic)
+            }
+            return "Wrote \(content.count) characters to \(url.path)."
+        } catch {
+            return "error: \(error.localizedDescription)"
+        }
+    }
+
+    func openItem(_ target: String) async -> String {
+        let url: URL
+        if let link = URL(string: target), ["http", "https"].contains(link.scheme ?? "") {
+            url = link
+        } else if let file = resolve(target) {
+            url = file
+        } else {
+            return "error: open a file inside the allowed folders or an http(s) link"
+        }
+        if let confirmation = configuration.confirmation {
+            let allowed = await confirmation.confirm(
+                title: String(localized: "Open \(url.lastPathComponent)?"), detail: url.absoluteString)
+            guard allowed else { return "error: the user declined to open it" }
+        }
+        let opened = await MainActor.run { NSWorkspace.shared.open(url) }
+        return opened ? "Opened \(url.absoluteString)." : "error: the system could not open it"
     }
 
     func search(query: String, inContents: Bool, roots: [URL]) -> String {

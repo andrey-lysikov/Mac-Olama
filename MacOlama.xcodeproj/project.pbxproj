@@ -118,7 +118,6 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				AppIcon.icon,
-				AppShortcuts.xcstrings,
 				Assets.xcassets,
 				InfoPlist.xcstrings,
 				Localizable.xcstrings,
@@ -133,7 +132,9 @@
 				HTMLDocument.swift,
 				LocalTools.swift,
 				SystemServices.swift,
+				SystemTools.swift,
 				Updates.swift,
+				WeatherTool.swift,
 				WebTools.swift,
 				WindowManager.swift,
 			);
@@ -142,7 +143,6 @@
 		7F426283305DD08300005A57 /* Exceptions for "UI" folder in "MacOlama" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				AppIntents.swift,
 				ChatsWindow.swift,
 				CodeHighlighter.swift,
 				DownloadWindow.swift,
