@@ -2267,6 +2267,16 @@
           }
         }
       }
+    },
+    "The model gave no answer. Ask again or rephrase the question." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель не дала ответа. Спросите ещё раз или переформулируйте вопрос."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

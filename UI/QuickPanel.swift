@@ -440,6 +440,8 @@ final class QuickPanelViewModel {
                         streamingText = ""
                     case .toolCallFinished:
                         progress?.toolFinished()
+                    case .retrying:
+                        streamingText = ""
                     case .finished, .failed:
                         if case .failed(let message) = event { errorMessage = message }
                         if case .finished(let message) = event {

@@ -297,6 +297,7 @@ final class ChatsViewModel {
                         progress?.toolStarted(AnswerText.activity(for: call, searchProvider: container.settings.searchProvider))
                         streamingText = ""  // the preamble before the call is not the answer
                     case .toolCallFinished: progress?.toolFinished()
+                    case .retrying: streamingText = ""
                     case .failed(let e): errorMessage = e
                     case .finished(let message):
                         progress?.endThinking()
@@ -788,7 +789,11 @@ private struct ChatMessageView: View {
                 if let summary { ProgressSummaryLine(text: summary) }
                 // A reply that asked for tools has no answer of its own: its text is a preamble or echoed results.
                 if message.toolCalls.isEmpty {
-                    MarkdownView(markdown: answer.isEmpty && message.isPartial ? "…" : answer, baseFontSize: Self.textSize)
+                    if answer.isEmpty, !message.isPartial {
+                        NoAnswerLine()
+                    } else {
+                        MarkdownView(markdown: answer.isEmpty ? "…" : answer, baseFontSize: Self.textSize)
+                    }
                 }
                 if !message.isPartial, message.toolCalls.isEmpty {
                     HStack(spacing: 12) {

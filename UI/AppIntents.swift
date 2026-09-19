@@ -78,6 +78,7 @@ final class IntentBridge {
                 case .token(let t):
                     text += t
                     if let p = progress, p.completedUnitCount < 95 { p.completedUnitCount += 1 }
+                case .retrying: text = ""
                 case .finished(let m): return (m.text, false)
                 case .failed(let e): throw IntentError.generationFailed(e)
                 default: break

@@ -363,6 +363,16 @@ struct AttachmentStrip: View {
     }
 }
 
+// NoAnswerLine
+
+/// A finished reply with nothing to show (the model only thought, or derailed): said plainly instead of a blank space.
+struct NoAnswerLine: View {
+    var body: some View {
+        Label(String(localized: "The model gave no answer. Ask again or rephrase the question."), systemImage: "exclamationmark.bubble")
+            .font(.callout).foregroundStyle(.secondary)
+    }
+}
+
 // MessageView
 
 /// One message: plain text for the user, Markdown (code, tables) for the assistant.
@@ -389,9 +399,13 @@ struct MessageView: View {
                     if let summary { ProgressSummaryLine(text: summary) }
                     // A reply that asked for tools has no answer of its own: its text is a preamble or echoed results.
                     if message.toolCalls.isEmpty {
-                        // Same reading size as the chats window (15 pt).
-                        MarkdownView(markdown: answer.isEmpty && message.isPartial ? "…" : answer, baseFontSize: 15)
-                            .padding(10)  // air around the answer text
+                        if answer.isEmpty, !message.isPartial {
+                            NoAnswerLine().padding(10)
+                        } else {
+                            // Same reading size as the chats window (15 pt).
+                            MarkdownView(markdown: answer.isEmpty ? "…" : answer, baseFontSize: 15)
+                                .padding(10)  // air around the answer text
+                        }
                     }
                 }
                 if message.role == .assistant, message.toolCalls.isEmpty, let tps = message.tokensPerSecond, !message.isPartial {

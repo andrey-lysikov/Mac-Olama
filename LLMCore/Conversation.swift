@@ -20,6 +20,8 @@ public enum ConversationEvent: Sendable, Equatable {
     case token(String)
     case toolCallStarted(ToolCall)
     case toolCallFinished(ToolCall, resultPreview: String)
+    /// What was streamed so far is dropped: an empty answer after tool rounds is being asked for once more.
+    case retrying
     case finished(Message)
     case failed(String)
 }
@@ -168,6 +170,7 @@ public actor ConversationService {
 
             var iterations = 0
             var finish: FinishReason = .stop
+            var retriedEmptyAnswer = false
             loop: while true {
                 let history = try await store.messages(chatID: chat.id).filter { $0.id != assistant.id }
                 let toolSpecs = model.supportsTools ? tools.specs : []
@@ -206,6 +209,17 @@ public actor ConversationService {
                     assistant.tokensPerSecond = usage.tokensPerSecond
                 }
 
+                // A small model sometimes derails after tool rounds: it opens a new turn (`<|im_start|>…`) instead of
+                // answering, and nothing visible is left. Sampling once more usually gives the answer.
+                if pendingCalls.isEmpty, finish != .cancelled, iterations > 0, !retriedEmptyAnswer,
+                    AnswerText.visible(assistant.text).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    retriedEmptyAnswer = true
+                    assistant.text = ""
+                    try await store.update(assistant)
+                    continuation.yield(.retrying)
+                    continue loop
+                }
                 if pendingCalls.isEmpty || finish == .cancelled { break loop }
 
                 iterations += 1
