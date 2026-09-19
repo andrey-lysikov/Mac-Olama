@@ -62,48 +62,85 @@ import Testing
 
     @Test func recommendationsKeepOrderAndResolvePerHub() {
         #expect(RecommendedModels.names == ["Qwen 3.6", "Qwen 3 Coder", "Gemma 4", "Ornith 1.5"])
-        #expect(RecommendedModels.query(for: "Gemma 4", in: .ollama) == "gemma4")
+        #expect(RecommendedModels.query(for: "Gemma 4", in: .modelScope) == "gemma-4")
         #expect(RecommendedModels.query(for: "Gemma 4", in: .huggingFace) == "gemma-4")
-        #expect(RecommendedModels.query(for: "Unknown", in: .ollama) == nil)
+        #expect(RecommendedModels.query(for: "Unknown", in: .modelScope) == nil)
     }
 }
 
-@Suite struct OllamaTests {
+@Suite struct ModelScopeTests {
     @Test func referencesAreTellingHubsApart() {
         #expect(ModelReference.parse("mlx-community/Qwen3-8B-4bit") == .huggingFace(repoID: "mlx-community/Qwen3-8B-4bit"))
-        #expect(ModelReference.parse("gemma4:12b-mlx") == .ollama(name: "gemma4", tag: "12b-mlx"))
-        #expect(ModelReference.parse("https://ollama.com/library/gemma4:12b-mlx") == .ollama(name: "gemma4", tag: "12b-mlx"))
+        #expect(ModelReference.parse("modelscope:mlx-community/Qwen3-8B-4bit") == .modelScope(repoID: "mlx-community/Qwen3-8B-4bit"))
+        #expect(
+            ModelReference.parse("https://modelscope.cn/models/lmstudio-community/gemma-4-12B-it-MLX-4bit/files")
+                == .modelScope(repoID: "lmstudio-community/gemma-4-12B-it-MLX-4bit"))
         #expect(ModelReference.parse("gemma4") == nil)
     }
 
     @Test func directoryNamesRoundTrip() {
-        for reference in [ModelReference.huggingFace(repoID: "mlx-community/Qwen3-8B-4bit"), .ollama(name: "gemma4", tag: "12b-mlx")] {
+        for reference in [ModelReference.huggingFace(repoID: "mlx-community/Qwen3-8B-4bit"), .modelScope(repoID: "a/b--c")] {
             #expect(ModelReference(directoryName: reference.directoryName) == reference)
         }
     }
 
-    @Test func directoryNamesAreFlat() {
-        #expect(ModelReference.ollama(name: "gemma4", tag: "12b-mlx").directoryName == "ollama--gemma4--12b-mlx")
-        #expect(!ModelReference.huggingFace(repoID: "a/b").directoryName.contains("/"))
+    @Test func directoryNamesAreFlatAndDistinct() {
+        #expect(ModelReference.modelScope(repoID: "org/model").directoryName == "modelscope--org--model")
+        #expect(ModelReference.huggingFace(repoID: "org/model").directoryName == "org--model")
+        // The installed model's id is derived from the manifest's repoID; it must name the same folder.
+        #expect(ModelDescriptor.directoryName(forRepo: ModelReference.modelScope(repoID: "org/model").repoID) == "modelscope--org--model")
     }
 
-    @Test func tagsPageIsParsed() {
-        let html = """
-            <a href="/library/gemma4:12b-mlx">gemma4:12b-mlx</a> <span>MLX</span> <span>7.7GB</span>
-            <a href="/library/gemma4:12b">gemma4:12b</a> <span>GGUF</span> <span>8.1GB</span>
+    @Test func searchAnswerIsParsed() throws {
+        let json = """
+            {"Code": 200, "Data": {"Model": {"TotalCount": 2, "Models": [
+              {"Name": "gemma-4-12B-it-MLX-4bit", "Path": "lmstudio-community", "Tags": ["mlx"], "Libraries": ["mlx", "safetensors"],
+               "Downloads": 135, "LastUpdatedTime": 1784910499, "StorageSize": 6773395357, "BaseModel": ["google/gemma-4-12B-it"],
+               "ModelType": ["gemma4_unified"]},
+              {"Name": "gemma-4-12b-it-GGUF", "Path": "unsloth", "Tags": ["gguf"], "Libraries": ["gguf"], "Downloads": 9}
+            ]}}}
             """
-        let tags = OllamaRegistryClient.parseTags(html: html, name: "gemma4")
-        #expect(tags.map(\.tag) == ["12b-mlx", "12b"])
-        #expect(tags[0].isMLX)
-        #expect(!tags[1].isMLX)
-        #expect(tags[0].sizeBytes == 7_700_000_000)
+        let models = try ModelScopeClient.parseSearch(Data(json.utf8))
+        #expect(models.map(\.id) == ["lmstudio-community/gemma-4-12B-it-MLX-4bit", "unsloth/gemma-4-12b-it-GGUF"])
+        #expect(models[0].isMLX && !models[1].isMLX)
+        #expect(models[0].storageSize == 6_773_395_357)
+        #expect(models[0].baseModel == "google/gemma-4-12B-it")
+        #expect(models[0].lastUpdated == Date(timeIntervalSince1970: 1_784_910_499))
     }
 
-    @Test func searchPageIsParsed() {
-        let html = #"<a href="/library/gemma4"><p>Google's open model</p></a><a href="/library/gemma4:12b">tag</a>"#
-        let entries = OllamaRegistryClient.parseSearch(html: html)
-        #expect(entries.map(\.name) == ["gemma4"])
-        #expect(entries[0].description == "Google's open model")
+    @Test func fileListKeepsBlobsWithHashes() {
+        let json = """
+            {"Code": 200, "Data": {"Files": [
+              {"Path": "config.json", "Type": "blob", "Size": 5894, "Sha256": "677723368b4196b5"},
+              {"Path": "sub", "Type": "tree", "Size": 0, "Sha256": ""},
+              {"Path": "sub/tokenizer.json", "Type": "blob", "Size": 12, "Sha256": ""}
+            ]}}
+            """
+        let files = ModelScopeClient.parseFiles(Data(json.utf8))
+        #expect(
+            files == [
+                RepoFile(path: "config.json", size: 5894, sha256: "677723368b4196b5"),
+                RepoFile(path: "sub/tokenizer.json", size: 12, sha256: nil),
+            ])
+    }
+}
+
+@Suite struct ModelOwnersTests {
+    @Test func authorComesFromTheBaseModel() {
+        let owners = ModelOwners(repoID: "modelscope:lmstudio-community/gemma-4-12B-it-MLX-4bit", baseModel: "google/gemma-4-12B-it")
+        #expect(owners == ModelOwners(author: "google", community: "lmstudio-community"))
+    }
+
+    @Test func withoutBaseModelTheOwnerIsTheAuthor() {
+        #expect(ModelOwners(repoID: "Qwen/Qwen3-8B-MLX-4bit", baseModel: nil) == ModelOwners(author: "Qwen", community: nil))
+        #expect(
+            ModelOwners(repoID: "google/gemma-4-12B-it", baseModel: "google/gemma-4-12B") == ModelOwners(author: "google", community: nil))
+    }
+
+    @Test func baseModelIsReadFromHubTags() {
+        let tags = ["mlx", "base_model:google/gemma-4-12B-it", "base_model:quantized:google/gemma-4-12B-it"]
+        #expect(ModelOwners.baseModel(fromTags: tags) == "google/gemma-4-12B-it")
+        #expect(ModelOwners.baseModel(fromTags: ["mlx"]) == nil)
     }
 
     @Test func excludedFilesFollowPatterns() {

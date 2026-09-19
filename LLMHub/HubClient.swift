@@ -130,10 +130,10 @@ public enum HubError: Error, Equatable {
 /// `KeyValuePairs` is the ordered flavour of a dictionary literal, so the dropdown keeps this order.
 public enum RecommendedModels {
     public static let queries: KeyValuePairs<String, [ModelSource: String]> = [
-        "Qwen 3.6": [.huggingFace: "Qwen3.6", .ollama: "qwen3.6"],
-        "Qwen 3 Coder": [.huggingFace: "Qwen3-Coder", .ollama: "qwen3-coder"],
-        "Gemma 4": [.huggingFace: "gemma-4", .ollama: "gemma4"],
-        "Ornith 1.5": [.huggingFace: "Ornith-1.5", .ollama: "ornith"],
+        "Qwen 3.6": [.huggingFace: "Qwen3.6", .modelScope: "Qwen3.6"],
+        "Qwen 3 Coder": [.huggingFace: "Qwen3-Coder", .modelScope: "Qwen3-Coder"],
+        "Gemma 4": [.huggingFace: "gemma-4", .modelScope: "gemma-4"],
+        "Ornith 1.5": [.huggingFace: "Ornith-1.5", .modelScope: "Ornith-1.5"],
     ]
 
     public static var names: [String] { queries.map(\.key) }

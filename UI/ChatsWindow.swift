@@ -189,7 +189,11 @@ final class ChatsViewModel {
         let (text, images, documents) = (question.text, question.images, question.documents)
         // A queued question goes to the chat it was asked in, even if another chat is on screen by now.
         if let chatID = question.chatID, chatID != selectedChatID { selectedChatID = chatID }
-        run { chatID in try await self.container.conversation.send(chatID: chatID, text: text, images: images, documents: documents) }
+        run { chatID in
+            // The model shown in the composer is the one that answers, whatever the store still says.
+            try await self.container.conversation.send(
+                chatID: chatID, text: text, images: images, documents: documents, modelID: self.activeModel?.id)
+        }
     }
 
     /// Deletes the last assistant reply and asks again with the same user message.
@@ -201,7 +205,9 @@ final class ChatsViewModel {
             try? await container.chatStore.deleteMessage(id: last.id)
             try? await container.chatStore.deleteMessage(id: user.id)
             let images = (try? user.attachments.map { try loadImage($0) }) ?? []
-            run { chatID in try await self.container.conversation.send(chatID: chatID, text: user.text, images: images) }
+            run { chatID in
+                try await self.container.conversation.send(chatID: chatID, text: user.text, images: images, modelID: self.activeModel?.id)
+            }
         }
     }
 
@@ -668,10 +674,16 @@ private struct ChatsSplitView: View {
         }
     }
 
+    /// Menus are drawn by AppKit, so the icon goes in as an image (the hub's symbol until the avatars have loaded).
+    private func modelImage(_ model: ModelDescriptor) -> Image {
+        _ = ModelIcons.shared.revision
+        return ModelIcons.shared.menuImage(for: model, size: 16).map { Image(nsImage: $0) } ?? Image(systemName: model.source.symbol)
+    }
+
     /// Model used by this chat; defaults to the one picked in the status menu.
     private var modelPicker: some View {
         Menu {
-            // A menu row takes one title and one icon: the hub mark is the icon, the toggle draws the check mark.
+            // A menu row takes one title and one icon: the model's icon, the toggle draws the check mark.
             ForEach(container.models) { m in
                 Toggle(
                     isOn: Binding(get: { m.id == viewModel.activeModel?.id }, set: { _ in viewModel.setModel(m) })
@@ -679,8 +691,9 @@ private struct ChatsSplitView: View {
                     Label {
                         Text(verbatim: m.kind == .vlm ? "\(m.name) · VLM" : m.name)
                     } icon: {
-                        Image(nsImage: GlyphImage.monochrome(m.source.glyph, pointSize: 13))
+                        modelImage(m)
                     }
+                    .labelStyle(.titleAndIcon)  // menus on macOS 26+ drop item icons unless asked to show them
                 }
                 .disabled(!container.isAvailable(m))
             }
@@ -693,7 +706,7 @@ private struct ChatsSplitView: View {
                 Label {
                     Text(verbatim: model.name).font(.callout).lineLimit(1).truncationMode(.middle)
                 } icon: {
-                    Image(nsImage: GlyphImage.monochrome(model.source.glyph, pointSize: 13))
+                    modelImage(model)
                 }
                 .foregroundStyle(container.isAvailable(model) ? .primary : .tertiary)  // VERIFY(mac): menu label keeps the style
                 .help(
@@ -707,6 +720,8 @@ private struct ChatsSplitView: View {
         .frame(maxWidth: 260)
         .fixedSize(horizontal: true, vertical: false)
         .help(String(localized: "Model for this chat"))
+        // Locked until this chat's answer is complete (tool rounds included); other chats keep their own picker free.
+        .disabled(viewModel.isGenerating)
     }
 
     @ViewBuilder

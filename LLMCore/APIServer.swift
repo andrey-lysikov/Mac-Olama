@@ -323,11 +323,12 @@ public final class APIServer: Sendable {
 
     private func pull(_ req: HTTPRequest) async throws -> HTTPResponse {
         let body = try req.decode(OllamaPullRequest.self)
-        guard let ref = body.ref, let repoID = HubClient.parseRepoID(ref) else {
-            return Self.error(400, "model must be a Hugging Face repo id like mlx-community/Qwen3.5-9B-MLX-4bit")
+        guard let ref = body.ref, let reference = ModelReference.parse(ref) else {
+            return Self.error(
+                400, "model must be a repo id like mlx-community/Qwen3.5-9B-MLX-4bit (Hugging Face) or modelscope:org/repo (ModelScope)")
         }
         guard let downloader else { return Self.error(501, "downloads are disabled") }
-        let events = await downloader.download(repoID: repoID)
+        let events = await downloader.download(reference)
         let onChanged = onModelsChanged
         if body.stream == false {
             do {
@@ -655,7 +656,7 @@ public final class APIServer: Sendable {
         <h2>Ollama</h2><ul>
         <li><code>GET /api/version</code>, <code>GET /api/tags</code>, <code>GET /api/ps</code>, <code>POST /api/show</code></li>
         <li><code>POST /api/chat</code>, <code>POST /api/generate</code> (NDJSON streaming, <code>keep_alive</code>, <code>images</code>, <code>tools</code>)</li>
-        <li><code>POST /api/pull</code> (Hugging Face repo id), <code>DELETE /api/delete</code></li>
+        <li><code>POST /api/pull</code> (Hugging Face repo id or <code>modelscope:org/repo</code>), <code>DELETE /api/delete</code></li>
         <li>501: <code>/api/embed</code>, <code>/api/embeddings</code>, <code>/api/create</code>, <code>/api/push</code>, <code>/api/copy</code></li></ul>
         <h2>OpenAI</h2><ul><li><code>GET /v1/models</code>, <code>POST /v1/chat/completions</code> (SSE), <code>POST /v1/completions</code></li><li>501: <code>/v1/embeddings</code></li></ul>
         """

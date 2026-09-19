@@ -62,6 +62,12 @@
             ReferencedContainer = "container:MacOlama.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
+      <CommandLineArguments>
+         <CommandLineArgument
+            argument = "-com.apple.CoreData.Logging.stderr 0"
+            isEnabled = "YES">
+         </CommandLineArgument>
+      </CommandLineArguments>
       <MetalAPIValidationSettings
          isEnabled = "No">
       </MetalAPIValidationSettings>

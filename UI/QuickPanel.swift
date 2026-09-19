@@ -24,6 +24,7 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
     /// Height of the last content report, so the panel can snap back to it after the user stops dragging an edge.
     private var contentHeight: CGFloat = minHeight
     private var isApplyingFrame = false
+    private var fitScheduled = false
     /// Waits for the end of a drag, see `windowDidMove`.
     private var dragWatch: Task<Void, Never>?
 
@@ -66,7 +67,7 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
 
         let root = QuickPanelView(
             viewModel: viewModel, onClose: { [weak self] in self?.hide() },
-            onHeightChange: { [weak self] height in self?.fit(contentHeight: height) },
+            onHeightChange: { [weak self] height in self?.scheduleFit(contentHeight: height) },
             onMakeKey: { [weak self] in self?.panel.makeKey() },
             onChooseFiles: { [weak self] in self?.chooseFiles() },
             onToggleAutoClose: { [weak self] in self?.toggleAutoClose() }
@@ -138,6 +139,19 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
     }
 
     // Geometry: the user drags the panel anywhere and drags its edges; width and the height limit for answers are remembered.
+
+    /// SwiftUI reports the height from inside its layout pass, i.e. during a Core Animation commit, where resizing the
+    /// window breaks AppKit's transaction ("Invalid attempt to open a new transaction during CA commit"): resize next turn.
+    private func scheduleFit(contentHeight: CGFloat) {
+        self.contentHeight = contentHeight
+        guard !fitScheduled else { return }  // several reports in one frame collapse into one resize
+        fitScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            fitScheduled = false
+            fit(contentHeight: self.contentHeight)
+        }
+    }
 
     /// Follows the SwiftUI content: the bottom edge (the field) stays where it is and the panel grows or shrinks upwards,
     /// up to the height limit (the user's own, otherwise half of the screen) and never past the top of the screen.
@@ -409,7 +423,9 @@ final class QuickPanelViewModel {
             do {
                 if chat == nil { await loadActiveChat() }
                 guard let chat else { return }
-                let stream = try await container.conversation.send(chatID: chat.id, text: text, images: images, documents: documents)
+                // The panel answers with the model checked in the status menu.
+                let stream = try await container.conversation.send(
+                    chatID: chat.id, text: text, images: images, documents: documents, modelID: container.activeModel?.id)
                 for await event in stream {
                     switch event {
                     case .started:

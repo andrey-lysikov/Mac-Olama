@@ -17,16 +17,6 @@
         }
       }
     },
-    "%@ has a newer revision on Hugging Face." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "У %@ появилась новая ревизия на Hugging Face."
-          }
-        }
-      }
-    },
     "%@ is ready to use." : {
       "localizations" : {
         "ru" : {
@@ -43,26 +33,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ — последняя версия."
-          }
-        }
-      }
-    },
-    "%@ will be converted to MLX 4-bit on first use; this takes a few minutes." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ будет сконвертирована в MLX 4-bit при первом запуске; это займёт несколько минут."
-          }
-        }
-      }
-    },
-    "%@:%@ is a GGUF tag. Only MLX (safetensors) tags can be downloaded." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@:%@ — это тег GGUF. Загружать можно только теги MLX (safetensors)."
           }
         }
       }
@@ -537,16 +507,6 @@
         }
       }
     },
-    "Could not reach Hugging Face." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось связаться с Hugging Face."
-          }
-        }
-      }
-    },
     "Cut" : {
       "localizations" : {
         "ru" : {
@@ -687,16 +647,6 @@
         }
       }
     },
-    "Enter mlx-community/Qwen3.5-9B-MLX-4bit, gemma4:12b-mlx, or a huggingface.co / ollama.com link" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Укажите mlx-community/Qwen3.5-9B-MLX-4bit, gemma4:12b-mlx или ссылку на huggingface.co / ollama.com"
-          }
-        }
-      }
-    },
     "Enter the server address, e.g. http://localhost:11434." : {
       "localizations" : {
         "ru" : {
@@ -763,16 +713,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Доступ к папкам"
-          }
-        }
-      }
-    },
-    "GGUF tag: the MLX engine cannot run it. Pick an MLX tag instead." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Тег GGUF: движок MLX не может его запустить. Выберите тег MLX."
           }
         }
       }
@@ -1167,16 +1107,6 @@
         }
       }
     },
-    "No MLX tags found. Only MLX tags can be downloaded." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Теги MLX не найдены. Загружать можно только теги MLX."
-          }
-        }
-      }
-    },
     "No folders yet" : {
       "localizations" : {
         "ru" : {
@@ -1557,16 +1487,6 @@
         }
       }
     },
-    "Repository, name:tag or link" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Репозиторий, name:tag или ссылка"
-          }
-        }
-      }
-    },
     "Run “Ask Mac-Olama” again to continue" : {
       "localizations" : {
         "ru" : {
@@ -1723,16 +1643,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Быстрые команды"
-          }
-        }
-      }
-    },
-    "Show only models built for MLX. Turn off to search every repository or tag." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Показывать только модели, собранные для MLX. Снимите флажок, чтобы искать по всем репозиториям и тегам."
           }
         }
       }
@@ -2294,6 +2204,66 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не закрывать панель при клике вне её"
+          }
+        }
+      }
+    },
+    "Check whether the server answers" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить, отвечает ли сервер"
+          }
+        }
+      }
+    },
+    "Could not reach the model hubs." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось связаться с хабами моделей."
+          }
+        }
+      }
+    },
+    "Repository or link" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Репозиторий или ссылка"
+          }
+        }
+      }
+    },
+    "Show only models built for MLX. Turn off to search every repository; MLX builds stay on top." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показывать только модели для MLX. Если выключить, поиск идёт по всем репозиториям, а MLX-сборки остаются вверху."
+          }
+        }
+      }
+    },
+    "%@ has a newer revision on its hub." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для %@ на хабе есть новая версия."
+          }
+        }
+      }
+    },
+    "Enter mlx-community/Qwen3.5-9B-MLX-4bit or a huggingface.co / modelscope.cn link" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Введите mlx-community/Qwen3.5-9B-MLX-4bit или ссылку на huggingface.co / modelscope.cn"
           }
         }
       }

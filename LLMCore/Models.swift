@@ -11,27 +11,35 @@ public enum ModelKind: String, Codable, Sendable, CaseIterable {
     case vlm
 }
 
-/// Registry a model was installed from. Drives grouping in menus; Ollama registry support is planned (phase 5).
+/// Hub a model was installed from. Drives grouping in menus.
 public enum ModelSource: String, Codable, Sendable, CaseIterable {
     case huggingFace = "huggingface"
-    case ollama = "ollama"
+    case modelScope = "modelscope"
     /// A model served by another program over the Ollama or OpenAI-compatible (llama.cpp) API; nothing is downloaded.
     case remote = "remote"
 
     public var displayName: String {
         switch self {
         case .huggingFace: "Hugging Face"
-        case .ollama: "Ollama"
+        case .modelScope: "ModelScope"
         case .remote: "API"
         }
     }
 
-    /// Emoji mark of the hub, shown next to models and in the hub picker so the origin is obvious at a glance.
-    public var glyph: String {
+    /// Hugging Face account whose avatar stands for the hub in the hub picker (the hubs have no emoji of their own).
+    public var avatarOwner: String? {
         switch self {
-        case .huggingFace: "🤗"
-        case .ollama: "🦙"
-        case .remote: "🔌"
+        case .huggingFace: "huggingface"
+        case .modelScope: "modelscope"
+        case .remote: nil
+        }
+    }
+
+    /// Mark of a model that has no avatar yet (or never gets one, like a model served over the API).
+    public var symbol: String {
+        switch self {
+        case .huggingFace, .modelScope: "shippingbox"
+        case .remote: "network"
         }
     }
 }
@@ -52,11 +60,13 @@ public struct ModelDescriptor: Codable, Sendable, Hashable, Identifiable {
     public var quantization: String?
     public var supportsTools: Bool
     public var downloadedAt: Date
+    /// Repository the weights were made from (`google/gemma-4-12B-it`), as the hub declares it; nil when unknown.
+    public var baseModel: String?
 
     public init(
         id: String, name: String, repoID: String, source: ModelSource = .huggingFace, kind: ModelKind, directory: URL,
         sizeBytes: Int64, contextLength: Int? = nil, quantization: String? = nil,
-        supportsTools: Bool = false, downloadedAt: Date = .now
+        supportsTools: Bool = false, downloadedAt: Date = .now, baseModel: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -69,12 +79,16 @@ public struct ModelDescriptor: Codable, Sendable, Hashable, Identifiable {
         self.quantization = quantization
         self.supportsTools = supportsTools
         self.downloadedAt = downloadedAt
+        self.baseModel = baseModel
     }
 
-    /// Folder name for a repo: `org/repo` → `org--repo`.
+    /// Folder name for a repo: `org/repo` → `org--repo`, `modelscope:org/repo` → `modelscope--org--repo`.
     public static func directoryName(forRepo repoID: String) -> String {
-        repoID.replacingOccurrences(of: "/", with: "--")
+        repoID.replacingOccurrences(of: ":", with: "--").replacingOccurrences(of: "/", with: "--")
     }
+
+    /// Who made the model (the owner of its base model) and who built this copy: the pair behind the model's icon.
+    public var owners: ModelOwners { ModelOwners(repoID: repoID, baseModel: baseModel) }
 
     /// Short name for API/menu: last repo component, lowercased.
     public static func shortName(forRepo repoID: String) -> String {
@@ -114,12 +128,14 @@ public struct ModelManifest: Codable, Sendable, Equatable {
     public var downloadedAt: Date
     /// Chat template override for repos whose template breaks in swift-jinja.
     public var chatTemplateOverride: String?
+    /// See `ModelDescriptor.baseModel`; filled in later for models downloaded before it existed.
+    public var baseModel: String?
 
     public init(
         version: Int = ModelManifest.currentVersion, repoID: String, revision: String = "main", source: ModelSource? = .huggingFace,
         kind: ModelKind, files: [FileEntry], contextLength: Int? = nil, quantization: String? = nil,
         supportsTools: Bool = false, architectures: [String] = [], downloadedAt: Date = .now,
-        chatTemplateOverride: String? = nil
+        chatTemplateOverride: String? = nil, baseModel: String? = nil
     ) {
         self.version = version
         self.repoID = repoID
@@ -133,6 +149,7 @@ public struct ModelManifest: Codable, Sendable, Equatable {
         self.architectures = architectures
         self.downloadedAt = downloadedAt
         self.chatTemplateOverride = chatTemplateOverride
+        self.baseModel = baseModel
     }
 
     public var totalSizeBytes: Int64 { files.reduce(0) { $0 + $1.sizeBytes } }
@@ -165,8 +182,37 @@ public struct ModelManifest: Codable, Sendable, Equatable {
             name: ModelDescriptor.shortName(forRepo: repoID),
             repoID: repoID, source: source ?? .huggingFace, kind: kind, directory: directory,
             sizeBytes: totalSizeBytes, contextLength: contextLength, quantization: quantization,
-            supportsTools: remote ? supportsTools : Self.templateSupportsTools(in: directory), downloadedAt: downloadedAt
+            supportsTools: remote ? supportsTools : Self.templateSupportsTools(in: directory), downloadedAt: downloadedAt,
+            baseModel: baseModel
         )
+    }
+}
+
+// ModelOwners
+
+/// The two accounts a model's icon is drawn from: the author of the base model (Google, Qwen…) and the community that
+/// built this copy (mlx-community, lmstudio-community…). Both are Hugging Face account names.
+public struct ModelOwners: Sendable, Hashable {
+    public var author: String?
+    public var community: String?
+
+    public init(author: String?, community: String?) {
+        self.author = author
+        self.community = community
+    }
+
+    /// `repoID` may carry a hub prefix (`modelscope:org/repo`); a base model is `org/repo` (a path-like `org/a/b` keeps `org`).
+    public init(repoID: String, baseModel: String?) {
+        let repo = repoID.split(separator: ":").last.map(String.init) ?? repoID
+        let owner = repo.contains("/") ? repo.split(separator: "/").first.map(String.init) : nil
+        let author = baseModel.flatMap { $0.contains("/") ? $0.split(separator: "/").first.map(String.init) : nil }
+        self.init(author: author ?? owner, community: author != nil && author != owner ? owner : nil)
+    }
+
+    /// Hugging Face lists the base model as tags (`base_model:google/x`, `base_model:quantized:google/x`).
+    public static func baseModel(fromTags tags: [String]) -> String? {
+        let values = tags.filter { $0.hasPrefix("base_model:") }.map { String($0.split(separator: ":").last ?? "") }
+        return values.first { $0.contains("/") }
     }
 }
 

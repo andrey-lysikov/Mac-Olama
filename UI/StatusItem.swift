@@ -2,7 +2,6 @@
 //  SPDX-License-Identifier: Apache-2.0
 
 import AppKit
-import CoreImage
 import SwiftUI
 
 // StatusItemController
@@ -146,37 +145,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 }
 
-// GlyphImage
-
-/// Emoji hub marks rendered as black-and-white images, for places drawn by AppKit (menus, pop-up buttons) where a SwiftUI
-/// greyscale modifier has no effect.
-@MainActor
-enum GlyphImage {
-    private static var cache: [String: NSImage] = [:]
-
-    static func monochrome(_ glyph: String, pointSize: CGFloat) -> NSImage {
-        let key = "\(glyph)@\(pointSize)"
-        if let cached = cache[key] { return cached }
-        let text = NSAttributedString(string: glyph, attributes: [.font: NSFont.systemFont(ofSize: pointSize)])
-        let size = text.size()
-        let colour = NSImage(size: size, flipped: false) { rect in
-            text.draw(in: rect)
-            return true
-        }
-        var result = colour
-        if let tiff = colour.tiffRepresentation, let input = CIImage(data: tiff), let filter = CIFilter(name: "CIPhotoEffectMono") {
-            filter.setValue(input, forKey: kCIInputImageKey)
-            if let output = filter.outputImage {
-                let image = NSImage(size: size)
-                image.addRepresentation(NSCIImageRep(ciImage: output))
-                result = image
-            }
-        }
-        cache[key] = result
-        return result
-    }
-}
-
 // StatusMenuBuilder
 
 /// Right-click menu, rebuilt on every open so it always reflects current state. All settings live here (no settings window).
@@ -234,8 +202,8 @@ struct StatusMenuBuilder {
                     keyEquivalent: "")
                 mi.target = actions
                 mi.representedObject = model.id
-                // The pictogram is the hub the model came from; the checkmark marks the model in use.
-                Self.setGlyph(model.source.glyph, on: mi)
+                // The model's icon (author, with the community that built it in the corner); the checkmark marks the model in use.
+                Self.setModelIcon(model, on: mi)
                 mi.toolTip = model.kind == .vlm ? String(localized: "Understands images and text") : String(localized: "Text only")
                 mi.state = model.id == container.activeModel?.id ? .on : .off
                 if !container.isAvailable(model) {
@@ -385,9 +353,8 @@ struct StatusMenuBuilder {
         }
     }
 
-    /// Emoji mark (hub glyph) drawn into an image so it sits in the pictogram column like the symbols do.
-    private static func setGlyph(_ glyph: String, on item: NSMenuItem) {
-        item.image = GlyphImage.monochrome(glyph, pointSize: 13)
+    private static func setModelIcon(_ model: ModelDescriptor, on item: NSMenuItem) {
+        item.image = ModelIcons.shared.menuImage(for: model, size: 16)
         if #available(macOS 27.0, *) {
             item.preferredImageVisibility = .visible
         }

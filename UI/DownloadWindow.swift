@@ -12,40 +12,60 @@ import SwiftUI
 @Observable
 final class DownloadViewModel {
     enum Hub: String, CaseIterable, Identifiable {
-        case huggingFace, ollama, link, api
+        case huggingFace, modelScope, link, api
         var id: String { rawValue }
+        /// The hub a search goes to; nil for the entries that do not search.
+        var source: ModelSource? {
+            switch self {
+            case .huggingFace: .huggingFace
+            case .modelScope: .modelScope
+            case .link, .api: nil
+            }
+        }
         var title: String {
             switch self {
-            case .huggingFace: ModelSource.huggingFace.displayName
-            case .ollama: ModelSource.ollama.displayName
+            case .huggingFace, .modelScope: source?.displayName ?? ""
             case .link: String(localized: "By Link")
             case .api: String(localized: "Connect by API")
             }
         }
-        /// Black-and-white mark shown next to the title in the hub picker.
+        /// The hub's own logo (greyscale, like the model icons), a symbol until it has loaded.
         @MainActor var icon: Image {
+            if let owner = source?.avatarOwner, let avatar = ModelIcons.shared.avatar(owner) {
+                return Image(nsImage: Self.rounded(avatar, side: 14))
+            }
             switch self {
-            case .huggingFace: Image(nsImage: GlyphImage.monochrome(ModelSource.huggingFace.glyph, pointSize: 14))
-            case .ollama: Image(nsImage: GlyphImage.monochrome(ModelSource.ollama.glyph, pointSize: 14))
-            case .link: Image(systemName: "link")
-            case .api: Image(systemName: "network")
+            case .huggingFace, .modelScope: return Image(systemName: "shippingbox")
+            case .link: return Image(systemName: "link")
+            case .api: return Image(systemName: "network")
             }
         }
         /// The search hubs stay bare: the dropdown of recommended models is the hint. A link has to be typed exactly.
         var prompt: String {
             switch self {
-            case .huggingFace, .ollama: ""
-            case .link: String(localized: "Repository, name:tag or link")
+            case .huggingFace, .modelScope: ""
+            case .link: String(localized: "Repository or link")
             case .api: String(localized: "Model name")
+            }
+        }
+
+        /// The picker is drawn by AppKit: the logo goes in as a small rounded image.
+        @MainActor private static func rounded(_ image: NSImage, side: CGFloat) -> NSImage {
+            NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+                NSBezierPath(roundedRect: rect, xRadius: side * 0.22, yRadius: side * 0.22).addClip()
+                image.draw(in: rect)
+                return true
             }
         }
     }
 
-    /// One result line; the same shape for Hugging Face repositories and Ollama tags.
+    /// One result line; the same shape for both hubs.
     struct Row: Identifiable, Equatable {
         var id: String { repoID }
-        var repoID: String  // `org/repo` or `name:tag`
+        var repoID: String  // `org/repo` or `modelscope:org/repo`
         var source: ModelSource
+        /// Author of the base model and the community that built this copy: the row's icon.
+        var owners: ModelOwners
         var title: String
         var sizeBytes: Int64?
         var quantization: String?
@@ -55,8 +75,6 @@ final class DownloadViewModel {
         var detailsLoaded = false
         var isMLX = true
         var lastModified: Date?
-        /// Set when the row is listed but cannot be downloaded at all (e.g. a GGUF tag).
-        var blockedReason: String?
     }
 
     enum Verdict: Equatable {
@@ -90,7 +108,7 @@ final class DownloadViewModel {
     var hub: Hub = .huggingFace
     var remoteDrafts: [RemoteDraft] = []
     var query = ""
-    /// On by default: only MLX builds are listed. Off widens the search to every repository or tag.
+    /// On by default: only MLX builds are listed. Off widens the search to every repository (MLX builds still come first).
     var mlxOnly = true { didSet { if mlxOnly != oldValue, hasSearched { search() } } }
     private(set) var rows: [Row] = []
     private(set) var isSearching = false
@@ -108,8 +126,7 @@ final class DownloadViewModel {
 
     /// A suggestion was taken from the dropdown: swap the family name for this hub's search text and search right away.
     func queryChanged() {
-        let source: ModelSource = hub == .ollama ? .ollama : .huggingFace
-        guard hub != .link, hub != .api, let text = RecommendedModels.query(for: query, in: source) else { return }
+        guard let source = hub.source, let text = RecommendedModels.query(for: query, in: source) else { return }
         query = text
         search()
     }
@@ -135,7 +152,7 @@ final class DownloadViewModel {
             do {
                 switch hub {
                 case .huggingFace: try await searchHuggingFace(q)
-                case .ollama: try await searchOllama(q)
+                case .modelScope: try await searchModelScope(q)
                 case .link: try await resolveLink(q)
                 case .api: break
                 }
@@ -200,32 +217,33 @@ final class DownloadViewModel {
         try Task.checkCancellation()
         rows = found.filter { !mlxOnly || $0.isMLX }.map {
             Row(
-                repoID: $0.id, source: .huggingFace, title: $0.displayName, isGated: $0.isGated, isMLX: $0.isMLX,
-                lastModified: $0.lastModified)
+                repoID: $0.id, source: .huggingFace,
+                owners: ModelOwners(repoID: $0.id, baseModel: ModelOwners.baseModel(fromTags: $0.tags ?? [])),
+                title: $0.displayName, isGated: $0.isGated, isMLX: $0.isMLX, lastModified: $0.lastModified)
         }
         // The order depends on every row's verdict, so details are fetched for all rows up front (URLSession queues them per host).
         for row in rows { loadDetails(for: row.repoID) }
     }
 
-    // Ollama lists tags per library entry; every MLX tag becomes its own row.
-    private func searchOllama(_ q: String) async throws {
-        let parts = q.split(separator: ":", maxSplits: 1).map(String.init)
-        let wantedTag = parts.count == 2 ? parts[1] : nil
-        let entries = try await container.ollamaClient.search(parts[0])
+    // ModelScope's search already carries the size and the base model; the config is read per row for kind and context.
+    private func searchModelScope(_ q: String) async throws {
+        let found = try await container.modelScopeClient.search(query: q, limit: 40, mlxOnly: mlxOnly)
         try Task.checkCancellation()
-        for entry in entries.prefix(8) {
-            let tags = ((try? await container.ollamaClient.tags(name: entry.name)) ?? []).filter { !mlxOnly || $0.isMLX }
-            try Task.checkCancellation()
-            let matching = wantedTag.map { wanted in tags.filter { $0.tag == wanted } } ?? tags
-            rows += matching.map { Self.row(name: entry.name, tag: $0.tag, sizeBytes: $0.sizeBytes, isMLX: $0.isMLX) }
-        }
+        rows = found.map { Self.row(modelScope: $0) }
+        for row in rows { loadDetails(for: row.repoID) }
+    }
+
+    private static func row(modelScope model: ModelScopeModel) -> Row {
+        let repoID = ModelScopeClient.prefix + model.id
+        return Row(
+            repoID: repoID, source: .modelScope, owners: ModelOwners(repoID: repoID, baseModel: model.baseModel),
+            title: model.displayName, sizeBytes: model.storageSize, isMLX: model.isMLX, lastModified: model.lastUpdated)
     }
 
     /// "By link": checks that the model exists and reports its name and size as a single row.
     private func resolveLink(_ q: String) async throws {
         guard let reference = ModelReference.parse(q) else {
-            searchError = String(
-                localized: "Enter mlx-community/Qwen3.5-9B-MLX-4bit, gemma4:12b-mlx, or a huggingface.co / ollama.com link")
+            searchError = String(localized: "Enter mlx-community/Qwen3.5-9B-MLX-4bit or a huggingface.co / modelscope.cn link")
             return
         }
         switch reference {
@@ -233,39 +251,24 @@ final class DownloadViewModel {
             let info = try await container.hubClient.info(repoID: repoID)
             try Task.checkCancellation()
             var row = Row(
-                repoID: info.id, source: .huggingFace, title: info.id.split(separator: "/").last.map(String.init) ?? info.id,
-                isGated: info.gated?.isGated ?? false)
+                repoID: info.id, source: .huggingFace,
+                owners: ModelOwners(repoID: info.id, baseModel: ModelOwners.baseModel(fromTags: info.tags ?? [])),
+                title: info.id.split(separator: "/").last.map(String.init) ?? info.id, isGated: info.gated?.isGated ?? false,
+                isMLX: info.tags?.contains("mlx") == true)
             apply(info: info, classification: try? await container.hubClient.classify(repoID: repoID), to: &row)
             rows = [row]
-        case .ollama(let name, let tag):
-            let manifest = try await container.ollamaClient.manifest(name: name, tag: tag)
+        case .modelScope(let repoID):
+            let info = try await container.modelScopeClient.info(repoID: repoID)
             try Task.checkCancellation()
-            guard manifest.isSafetensors else {
-                searchError = String(localized: "\(name):\(tag) is a GGUF tag. Only MLX (safetensors) tags can be downloaded.")
-                return
-            }
-            rows = [Self.row(name: name, tag: tag, sizeBytes: manifest.totalBytes)]
+            rows = [Self.row(modelScope: info)]
+            loadDetails(for: rows[0].repoID)
         }
-    }
-
-    // The search page gives only the tag text and size, so the format shown is the one the tag itself spells out
-    // (…-bf16, …-mxfp8, …-nvfp4); a tag that names none shows none rather than an assumed default.
-    private static func row(name: String, tag: String, sizeBytes: Int64?, isMLX: Bool = true) -> Row {
-        let spelledOut = tag.split(whereSeparator: { $0 == "-" || $0 == "_" }).last { part in
-            let p = part.lowercased()
-            return p.hasSuffix("16") || p.hasSuffix("fp8") || p.hasSuffix("fp4") || p.hasPrefix("q")
-        }
-        return Row(
-            repoID: "\(name):\(tag)", source: .ollama, title: "\(name):\(tag)", sizeBytes: sizeBytes,
-            quantization: isMLX ? spelledOut.map { $0.uppercased() } : "GGUF", detailsLoaded: true, isMLX: isMLX,
-            blockedReason: isMLX ? nil : String(localized: "GGUF tag: the MLX engine cannot run it. Pick an MLX tag instead."))
     }
 
     /// Lazily fetches size and classification for a row to avoid flooding HF with requests.
     func loadDetails(for repoID: String) {
-        guard detailTasks[repoID] == nil, let row = rows.first(where: { $0.repoID == repoID }), !row.detailsLoaded,
-            row.source == .huggingFace
-        else { return }
+        guard detailTasks[repoID] == nil, let row = rows.first(where: { $0.repoID == repoID }), !row.detailsLoaded else { return }
+        if case .modelScope(let id) = ModelReference.parse(repoID) { return loadModelScopeDetails(for: repoID, hubRepoID: id) }
         detailTasks[repoID] = Task {
             defer { detailTasks[repoID] = nil }
             async let info = container.hubClient.info(repoID: repoID)
@@ -281,6 +284,21 @@ final class DownloadViewModel {
         }
     }
 
+    /// The size came with the search; the config gives the kind, the context and the quantization.
+    private func loadModelScopeDetails(for repoID: String, hubRepoID: String) {
+        detailTasks[repoID] = Task {
+            defer { detailTasks[repoID] = nil }
+            let classification = (try? await container.modelScopeClient.config(repoID: hubRepoID)).map {
+                HubModelClassification.classify(configJSON: $0)
+            }
+            guard !Task.isCancelled, let i = rows.firstIndex(where: { $0.repoID == repoID }) else { return }
+            rows[i].quantization = classification?.quantization
+            rows[i].kind = classification?.kind
+            rows[i].contextLength = classification?.contextLength
+            rows[i].detailsLoaded = true
+        }
+    }
+
     private func apply(info: HubModelInfo, classification: HubModelClassification?, to row: inout Row) {
         row.sizeBytes = info.totalBytes
         row.quantization = classification?.quantization
@@ -289,7 +307,7 @@ final class DownloadViewModel {
         row.detailsLoaded = true
     }
 
-    // Order: models that fit first, then the uncertain ones, then those that will not run; newest first inside each group.
+    // Order: MLX builds first, then models that fit, the uncertain ones, those that will not run; newest first inside each group.
 
     var sortedRows: [Row] {
         func rank(_ row: Row) -> Int {
@@ -300,6 +318,7 @@ final class DownloadViewModel {
             }
         }
         return rows.enumerated().sorted { a, b in
+            if a.element.isMLX != b.element.isMLX { return a.element.isMLX }
             let (ra, rb) = (rank(a.element), rank(b.element))
             if ra != rb { return ra < rb }
             let (da, db) = (a.element.lastModified ?? .distantPast, b.element.lastModified ?? .distantPast)
@@ -311,7 +330,6 @@ final class DownloadViewModel {
     // Verdict
 
     func verdict(for row: Row) -> Verdict {
-        if let reason = row.blockedReason { return .tooLarge(reason) }
         guard row.detailsLoaded else { return .unknown(String(localized: "Checking size and architecture…")) }
         guard let bytes = row.sizeBytes, bytes > 0 else { return .unknown(String(localized: "Model size is unknown.")) }
         let hardware = container.hardware
@@ -445,7 +463,7 @@ struct ModelLibraryView: View {
                 Toggle(String(localized: "MLX models only"), isOn: $vm.mlxOnly)
                     .toggleStyle(.checkbox)
                     .disabled(vm.hub == .link || vm.hub == .api)
-                    .help(String(localized: "Show only models built for MLX. Turn off to search every repository or tag."))
+                    .help(String(localized: "Show only models built for MLX. Turn off to search every repository; MLX builds stay on top."))
             }
             .sharedBackgroundVisibility(.hidden)
             // With the title removed nothing stretches between the groups, so the push to the right edge is explicit.
@@ -478,11 +496,7 @@ struct ModelLibraryView: View {
         if vm.isSearching {
             ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(12)
         } else if visible.isEmpty, vm.searchError == nil {
-            Text(
-                vm.hub == .ollama
-                    ? String(localized: "No MLX tags found. Only MLX tags can be downloaded.") : String(localized: "Nothing found.")
-            )
-            .foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(24)
+            Text("Nothing found.").foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(24)
         }
     }
 
@@ -491,7 +505,7 @@ struct ModelLibraryView: View {
         let installed = container.models.contains { $0.repoID.lowercased() == row.repoID.lowercased() }
         return HStack(spacing: 14) {
             rowText(
-                source: row.source, repoID: row.repoID, sizeBytes: row.sizeBytes, quantization: row.quantization,
+                source: row.source, owners: row.owners, repoID: row.repoID, sizeBytes: row.sizeBytes, quantization: row.quantization,
                 detail: detail(repoID: row.repoID, kind: row.kind, contextLength: row.contextLength), gated: row.isGated)
             Spacer(minLength: 8)
             // The reason is a plain tooltip; the app shortens the system tooltip delay so it appears as soon as the pointer stops.
@@ -507,16 +521,16 @@ struct ModelLibraryView: View {
                 symbolButton("arrow.down.circle", String(localized: "Download")) {
                     container.download(repoID: row.repoID, title: row.title, quantization: row.quantization, sizeBytes: row.sizeBytes)
                 }
-                .disabled(row.blockedReason != nil)
             }
         }
         .padding(.vertical, 12)
     }
 
-    /// Left: the hub mark, two lines tall. Line 1: model name (large), size and quantization. Line 2: full identifier with its owner, input → output, maximum context.
-    /// The first line is a single attributed Text so every part shares one baseline.
+    /// Left: the model's icon, two lines tall. Line 1: model name (large), size and quantization. Line 2: full identifier with its
+    /// owner, input → output, maximum context. The first line is a single attributed Text so every part shares one baseline.
     private func rowText(
-        source: ModelSource?, repoID: String, sizeBytes: Int64?, quantization: String?, detail: String, gated: Bool = false
+        source: ModelSource?, owners: ModelOwners?, repoID: String, sizeBytes: Int64?, quantization: String?, detail: String,
+        gated: Bool = false
     ) -> some View {
         var line = AttributedString()
         var name = AttributedString(repoID.split(separator: "/").last.map(String.init) ?? repoID)
@@ -529,12 +543,8 @@ struct ModelLibraryView: View {
         tail.foregroundColor = .secondary
         line.append(name)
         line.append(tail)
-        // The hub mark stands to the left of the two text lines, at half its former size.
         return HStack(alignment: .center, spacing: 12) {
-            if let source {
-                // Emoji marks are drawn in greyscale so the lists stay monochrome like the rest of the pictograms.
-                Text(verbatim: source.glyph).font(.system(size: 16)).grayscale(1).frame(width: 20).help(source.displayName)
-            }
+            if let source { ModelIconView(owners: owners, source: source, size: 24) }
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     Text(line).font(.title3).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
@@ -580,6 +590,8 @@ struct ModelLibraryView: View {
         return container.orderedDownloads.filter { !installed.contains($0.repoID.lowercased()) }
     }
 
+    private var installedModels: [ModelDescriptor] { container.models }
+
     private var libraryRows: some View {
         VStack(spacing: 0) {
             let downloads = newDownloads
@@ -587,7 +599,7 @@ struct ModelLibraryView: View {
                 if index > 0 { Divider() }
                 downloadRow(download)
             }
-            ForEach(Array(container.models.enumerated()), id: \.element.id) { index, model in
+            ForEach(Array(installedModels.enumerated()), id: \.element.id) { index, model in
                 if index > 0 || !downloads.isEmpty { Divider() }
                 installedRow(model)
             }
@@ -597,7 +609,7 @@ struct ModelLibraryView: View {
                 return !downloads.contains { $0.repoID.lowercased() == repoID }
             }
             ForEach(Array(broken.enumerated()), id: \.element.id) { index, model in
-                if index > 0 || !downloads.isEmpty || !container.models.isEmpty { Divider() }
+                if index > 0 || !downloads.isEmpty || !installedModels.isEmpty { Divider() }
                 brokenRow(model)
             }
             if let viewModel {
@@ -607,7 +619,7 @@ struct ModelLibraryView: View {
                         draft: $draft, onSave: { viewModel.saveRemote(draft.id) }, onCancel: { viewModel.cancelRemote(draft.id) })
                 }
             }
-            if container.models.isEmpty, downloads.isEmpty, broken.isEmpty, viewModel?.remoteDrafts.isEmpty ?? true {
+            if installedModels.isEmpty, downloads.isEmpty, broken.isEmpty, viewModel?.remoteDrafts.isEmpty ?? true {
                 Text("No models yet. Click the empty search field to see recommended models, or search a hub.")
                     .foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 16)
             }
@@ -619,7 +631,8 @@ struct ModelLibraryView: View {
         let reference = ModelReference(directoryName: model.id)
         return HStack(alignment: .center, spacing: 14) {
             rowText(
-                source: reference?.source, repoID: reference?.repoID ?? model.id, sizeBytes: nil, quantization: nil,
+                source: reference?.source, owners: reference.map { ModelOwners(repoID: $0.repoID, baseModel: nil) },
+                repoID: reference?.repoID ?? model.id, sizeBytes: nil, quantization: nil,
                 detail: String(localized: "Damaged — download again or delete"))
             Spacer(minLength: 8)
             Image(systemName: "exclamationmark.triangle")
@@ -635,17 +648,28 @@ struct ModelLibraryView: View {
 
     private func installedRow(_ model: ModelDescriptor) -> some View {
         let update = container.downloads.first { $0.repoID.lowercased() == model.repoID.lowercased() }
+        // A model connected by API whose server does not answer: greyed out like in the menu, with a button to check again.
+        let unavailable = !container.isAvailable(model)
         return HStack(alignment: .center, spacing: 14) {
             rowText(
-                source: model.source, repoID: model.repoID, sizeBytes: model.sizeBytes, quantization: model.quantization,
-                detail: detail(repoID: model.repoID, kind: model.kind, contextLength: model.contextLength))
+                source: model.source, owners: model.owners, repoID: model.repoID, sizeBytes: model.sizeBytes,
+                quantization: model.quantization, detail: detail(repoID: model.repoID, kind: model.kind, contextLength: model.contextLength)
+            )
+            .opacity(unavailable ? 0.4 : 1)
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 6) {
                 HStack(spacing: 14) {
-                    contextPicker(model)
+                    contextPicker(model).disabled(unavailable)
                     if model.source == .remote {
-                        // Served elsewhere: nothing to update here, the server owns the model.
-                        EmptyView()
+                        // Served elsewhere: nothing to update here, the server owns the model; only its availability is checked.
+                        if unavailable {
+                            let checking = container.isCheckingAvailability
+                            symbolButton("arrow.clockwise", String(localized: "Check whether the server answers")) {
+                                container.checkModelAvailability(force: true)
+                            }
+                            .symbolEffect(.rotate, isActive: checking)
+                            .disabled(checking)
+                        }
                     } else if let update {
                         // While the new revision downloads, the update pictogram turns into pause/continue and "cancel the update".
                         transferControls(update)
@@ -668,6 +692,9 @@ struct ModelLibraryView: View {
                         .disabled(update != nil)
                 }
                 if let update { updateProgress(update) }
+                if unavailable {
+                    Text("The server does not answer").font(.caption).foregroundStyle(.secondary)
+                }
             }
         }
         .padding(.vertical, 12)
@@ -722,7 +749,8 @@ struct ModelLibraryView: View {
             HStack(alignment: .center, spacing: 14) {
                 // While downloading, the second line says where the files are going.
                 rowText(
-                    source: ModelReference.parse(download.repoID)?.source, repoID: download.repoID,
+                    source: ModelReference.parse(download.repoID)?.source,
+                    owners: ModelOwners(repoID: download.repoID, baseModel: nil), repoID: download.repoID,
                     sizeBytes: download.sizeBytes ?? download.progress?.bytesTotal, quantization: download.quantization,
                     detail: viewModel?.destination(for: download.repoID) ?? "")
                 Spacer(minLength: 8)

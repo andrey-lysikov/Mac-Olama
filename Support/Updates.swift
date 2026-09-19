@@ -261,8 +261,7 @@ final class UpdateChecker {
         }
         modelsTask?.cancel()
         let models = container.models
-        let client = container.hubClient
-        let ollama = container.ollamaClient
+        let (client, modelScope) = (container.hubClient, container.modelScopeClient)
         modelsTask = Task { [weak self] in
             defer { self?.modelsTask = nil }
             var found: [String: String] = [:]
@@ -270,14 +269,9 @@ final class UpdateChecker {
             for model in models {
                 guard let manifest = try? ModelManifest.load(from: model.directory), let reference = ModelReference(manifest: manifest)
                 else { continue }
-                let latest: String?
-                switch reference {
-                case .huggingFace(let repo): latest = (try? await client.info(repoID: repo))?.sha
-                case .ollama(let name, let tag): latest = (try? await ollama.manifest(name: name, tag: tag))?.digest
-                }
-                guard let latest else { continue }
+                guard let latest = await Self.latestRevision(of: reference, client: client, modelScope: modelScope) else { continue }
                 reachable = true
-                if !manifest.revision.isEmpty, manifest.revision != "main", latest != manifest.revision {
+                if Self.isKnown(manifest.revision), latest != manifest.revision {
                     found[model.repoID] = latest
                 }
             }
@@ -292,7 +286,7 @@ final class UpdateChecker {
         for (repo, _) in found where container.downloaderIsIdle(repoID: repo) {
             NotificationService.shared.send(
                 title: String(localized: "Model update available"),
-                body: String(localized: "\(repo) has a newer revision on Hugging Face."),
+                body: String(localized: "\(repo) has a newer revision on its hub."),
                 category: .modelUpdate, userInfo: ["repoID": repo], identifier: "model-update-\(repo)"
             )
         }
@@ -300,7 +294,7 @@ final class UpdateChecker {
             NotificationService.shared.send(
                 title: String(localized: "Model updates"),
                 body: reachable
-                    ? String(localized: "All installed models are up to date.") : String(localized: "Could not reach Hugging Face."))
+                    ? String(localized: "All installed models are up to date.") : String(localized: "Could not reach the model hubs."))
         }
     }
 
@@ -308,17 +302,12 @@ final class UpdateChecker {
     func checkAndUpdate(_ model: ModelDescriptor) {
         guard !checkingModels.contains(model.repoID), container.downloaderIsIdle(repoID: model.repoID) else { return }
         checkingModels.insert(model.repoID)
-        let client = container.hubClient
-        let ollama = container.ollamaClient
+        let (client, modelScope) = (container.hubClient, container.modelScopeClient)
         Task { [weak self] in
             defer { self?.checkingModels.remove(model.repoID) }
             guard let manifest = try? ModelManifest.load(from: model.directory), let reference = ModelReference(manifest: manifest)
             else { return }
-            let latest: String?
-            switch reference {
-            case .huggingFace(let repo): latest = (try? await client.info(repoID: repo))?.sha
-            case .ollama(let name, let tag): latest = (try? await ollama.manifest(name: name, tag: tag))?.digest
-            }
+            let latest = await Self.latestRevision(of: reference, client: client, modelScope: modelScope)
             guard let self else { return }
             guard let latest else {
                 NotificationService.shared.send(
@@ -326,7 +315,7 @@ final class UpdateChecker {
                     body: String(localized: "Could not check \(model.repoID): the hub is unreachable."))
                 return
             }
-            if !manifest.revision.isEmpty, manifest.revision != "main", latest != manifest.revision {
+            if Self.isKnown(manifest.revision), latest != manifest.revision {
                 self.updateModel(repoID: model.repoID)
             } else {
                 self.pendingModelUpdates[model.repoID] = nil
@@ -335,6 +324,18 @@ final class UpdateChecker {
             }
         }
     }
+
+    /// Hugging Face: the commit sha; ModelScope: the time of the last update (its model API has no commit id).
+    private static func latestRevision(of reference: ModelReference, client: HubClient, modelScope: ModelScopeClient) async -> String? {
+        switch reference {
+        case .huggingFace(let repo): (try? await client.info(repoID: repo))?.sha
+        case .modelScope(let repo):
+            (try? await modelScope.info(repoID: repo))?.lastUpdated.map { String(Int($0.timeIntervalSince1970)) }
+        }
+    }
+
+    /// A branch name instead of a revision means the hub did not report one at download time: nothing to compare.
+    private static func isKnown(_ revision: String) -> Bool { !revision.isEmpty && revision != "main" && revision != "master" }
 
     /// Re-downloads the repo; the downloader replaces the model folder atomically on completion.
     func updateModel(repoID: String) {

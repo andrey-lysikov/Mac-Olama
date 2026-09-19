@@ -28,9 +28,11 @@ public struct AppPaths: Sendable {
     public var database: URL { root.appendingPathComponent("db", isDirectory: true) }
     public var attachments: URL { root.appendingPathComponent("attachments", isDirectory: true) }
     public var logs: URL { root.appendingPathComponent("logs", isDirectory: true) }
+    /// Greyscale avatars behind the model icons, one PNG per Hugging Face account.
+    public var icons: URL { root.appendingPathComponent("icons", isDirectory: true) }
 
     public func createAll() throws {
-        for dir in [root, models, downloads, database, attachments, logs] {
+        for dir in [root, models, downloads, database, attachments, logs, icons] {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
     }

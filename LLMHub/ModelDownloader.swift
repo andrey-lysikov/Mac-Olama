@@ -29,7 +29,7 @@ extension HubModelInfo.Sibling {
     }
 }
 
-/// Downloads a repo into `models/<org>--<repo>/` with Range resume, sha256 checks and a `manifest.json`.
+/// Downloads a repo (Hugging Face or ModelScope) into `models/<folder>/` with Range resume, sha256 checks and a `manifest.json`.
 /// Partial files live in `downloads/<org>--<repo>/*.part` and are moved into place when complete.
 public actor ModelDownloader {
     public struct Options: Sendable {
@@ -43,18 +43,18 @@ public actor ModelDownloader {
     }
 
     private let client: HubClient
-    private let ollama: OllamaRegistryClient
+    private let modelScope: ModelScopeClient
     private let paths: AppPaths
     private let options: Options
     private let session: URLSession
     private var activeTasks: [String: Task<Void, Never>] = [:]
 
     public init(
-        client: HubClient, ollama: OllamaRegistryClient = .init(), paths: AppPaths, options: Options = .init(),
+        client: HubClient, modelScope: ModelScopeClient = .init(), paths: AppPaths, options: Options = .init(),
         session: URLSession = .shared
     ) {
         self.client = client
-        self.ollama = ollama
+        self.modelScope = modelScope
         self.paths = paths
         self.options = options
         self.session = session
@@ -80,10 +80,7 @@ public actor ModelDownloader {
         }
         let task = Task { [self] in
             do {
-                switch reference {
-                case .huggingFace(let id): try await self.run(repoID: id, revision: revision, continuation: continuation)
-                case .ollama(let name, let tag): try await self.runOllama(name: name, tag: tag, continuation: continuation)
-                }
+                try await self.run(reference, revision: revision, continuation: continuation)
                 continuation.finish()
             } catch is CancellationError {
                 continuation.finish(throwing: HubError.cancelled)
@@ -99,13 +96,45 @@ public actor ModelDownloader {
 
     private func clearTask(repoID: String) { activeTasks[repoID] = nil }
 
-    private func run(repoID: String, revision: String, continuation: AsyncThrowingStream<DownloadEvent, Error>.Continuation) async throws {
-        let info = try await client.info(repoID: repoID)
-        let files = info.siblings.filter { !Self.isExcluded($0.rfilename, patterns: options.excludedPatterns) }
-        let totalBytes = files.reduce(0) { $0 + $1.byteSize }
+    /// What a hub reports before the transfer: the files, the revision stored for update checks, the base model.
+    private struct Listing {
+        var files: [RepoFile]
+        var revision: String
+        var baseModel: String?
+        var url: @Sendable (String) -> URL
+    }
+
+    private func listing(for reference: ModelReference, revision: String) async throws -> Listing {
+        switch reference {
+        case .huggingFace(let id):
+            let info = try await client.info(repoID: id)
+            let client = client
+            return Listing(
+                files: info.siblings.map { RepoFile(path: $0.rfilename, size: $0.byteSize, sha256: $0.sha256) },
+                revision: info.sha ?? revision, baseModel: ModelOwners.baseModel(fromTags: info.tags ?? []),
+                url: { client.fileURL(repoID: id, path: $0, revision: revision) })
+        case .modelScope(let id):
+            async let files = modelScope.files(repoID: id)
+            async let info = modelScope.info(repoID: id)
+            let details = try? await info
+            let modelScope = modelScope
+            // ModelScope has no commit id in its model API; the last update time serves as the revision for update checks.
+            return Listing(
+                files: try await files, revision: details?.lastUpdated.map { String(Int($0.timeIntervalSince1970)) } ?? "master",
+                baseModel: details?.baseModel, url: { modelScope.fileURL(repoID: id, path: $0) })
+        }
+    }
+
+    private func run(
+        _ reference: ModelReference, revision: String, continuation: AsyncThrowingStream<DownloadEvent, Error>.Continuation
+    ) async throws {
+        let repoID = reference.repoID
+        let listing = try await listing(for: reference, revision: revision)
+        let files = listing.files.filter { !Self.isExcluded($0.path, patterns: options.excludedPatterns) }
+        let totalBytes = files.reduce(0) { $0 + $1.size }
         continuation.yield(.resolved(.init(files: files.count, bytes: totalBytes)))
 
-        let dirName = ModelDescriptor.directoryName(forRepo: repoID)
+        let dirName = reference.directoryName
         let stagingDir = paths.downloads.appendingPathComponent(dirName, isDirectory: true)
         let finalDir = paths.models.appendingPathComponent(dirName, isDirectory: true)
         let fm = FileManager.default
@@ -118,14 +147,11 @@ public actor ModelDownloader {
         let start = ContinuousClock.now
         for (index, file) in files.enumerated() {
             try Task.checkCancellation()
-            let dest = stagingDir.appendingPathComponent(file.rfilename)
+            let dest = stagingDir.appendingPathComponent(file.path)
             try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
             let base = receivedBefore
-            let fileName = file.rfilename
-            try await downloadFile(
-                url: client.fileURL(repoID: repoID, path: fileName, revision: revision),
-                to: dest, expectedSize: file.byteSize
-            ) { received in
+            let fileName = file.path
+            try await downloadFile(url: listing.url(fileName), to: dest, expectedSize: file.size) { received in
                 let elapsed = start.duration(to: .now)
                 let secs = max(0.001, Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18)
                 continuation.yield(
@@ -137,10 +163,10 @@ public actor ModelDownloader {
             }
             if options.verifyChecksums, let expected = file.sha256 {
                 let actual = try Self.sha256Hex(of: dest)
-                guard actual == expected else { throw HubError.checksumMismatch(file: fileName) }
+                guard actual == expected.lowercased() else { throw HubError.checksumMismatch(file: fileName) }
             }
-            receivedBefore += file.byteSize
-            manifestFiles.append(.init(path: fileName, sizeBytes: file.byteSize, sha256: file.sha256))
+            receivedBefore += file.size
+            manifestFiles.append(.init(path: fileName, sizeBytes: file.size, sha256: file.sha256))
             continuation.yield(.fileFinished(fileName))
         }
 
@@ -148,9 +174,10 @@ public actor ModelDownloader {
         let configData = (try? Data(contentsOf: stagingDir.appendingPathComponent("config.json"))) ?? Data()
         let cls = HubModelClassification.classify(configJSON: configData)
         let manifest = ModelManifest(
-            repoID: repoID, revision: info.sha ?? revision, source: .huggingFace, kind: cls.kind, files: manifestFiles,
+            repoID: repoID, revision: listing.revision, source: reference.source, kind: cls.kind, files: manifestFiles,
             contextLength: cls.contextLength, quantization: cls.quantization,
-            supportsTools: ModelManifest.templateSupportsTools(in: stagingDir), architectures: cls.architectures
+            supportsTools: ModelManifest.templateSupportsTools(in: stagingDir), architectures: cls.architectures,
+            baseModel: listing.baseModel
         )
         try manifest.save(to: stagingDir)
 
@@ -158,122 +185,6 @@ public actor ModelDownloader {
         try fm.createDirectory(at: paths.models, withIntermediateDirectories: true)
         try fm.moveItem(at: stagingDir, to: finalDir)
         continuation.yield(.finished(manifest.descriptor(directory: finalDir)))
-    }
-
-    /// Ollama registry: JSON layers become files, tensor blobs are merged into safetensors shards (≤ 1 GB each).
-    /// Blobs are content-addressed, so a restart only re-fetches blobs that are missing or truncated.
-    private func runOllama(name: String, tag: String, continuation: AsyncThrowingStream<DownloadEvent, Error>.Continuation) async throws {
-        let repoID = "\(name):\(tag)"
-        let manifest = try await ollama.manifest(name: name, tag: tag)
-        guard manifest.isSafetensors else { throw HubError.badURL("\(repoID) is not an MLX/safetensors tag") }
-        let totalBytes = manifest.totalBytes
-        continuation.yield(.resolved(.init(files: manifest.layers.count, bytes: totalBytes)))
-
-        let reference = ModelReference.ollama(name: name, tag: tag)
-        let stagingDir = paths.downloads.appendingPathComponent(reference.directoryName, isDirectory: true)
-        let blobDir = stagingDir.appendingPathComponent("blobs", isDirectory: true)
-        let finalDir = paths.models.appendingPathComponent(reference.directoryName, isDirectory: true)
-        let fm = FileManager.default
-        try fm.createDirectory(at: blobDir, withIntermediateDirectories: true)
-        try checkDiskSpace(required: totalBytes * 2, at: paths.root)  // blobs + merged shards coexist briefly
-
-        var received: Int64 = 0
-        let start = ContinuousClock.now
-        let layerCount = manifest.layers.count
-        let emit: @Sendable (String, Int, Int64) -> Void = { file, index, bytes in
-            let elapsed = start.duration(to: .now)
-            let secs = max(0.001, Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18)
-            continuation.yield(
-                .progress(
-                    DownloadProgress(
-                        repoID: repoID, currentFile: file, fileIndex: index, fileCount: layerCount,
-                        bytesReceived: bytes, bytesTotal: totalBytes, bytesPerSecond: Double(bytes) / secs)))
-        }
-
-        // JSON layers (config.json, tokenizer.json, …) straight into the staging folder; skip draft/* (speculative decoding).
-        var manifestFiles: [ModelManifest.FileEntry] = []
-        var index = 0
-        for layer in manifest.jsonLayers {
-            index += 1
-            guard let fileName = layer.name, !fileName.hasPrefix("draft/") else { received += layer.size; continue }
-            let dest = stagingDir.appendingPathComponent(fileName)
-            try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let (base, idx) = (received, index)
-            try await downloadFile(url: ollama.blobURL(name: name, digest: layer.digest), to: dest, expectedSize: layer.size) { got in
-                emit(fileName, idx, base + got)
-            }
-            received += layer.size
-            manifestFiles.append(.init(path: fileName, sizeBytes: layer.size, sha256: String(layer.digest.dropFirst("sha256:".count))))
-            continuation.yield(.fileFinished(fileName))
-        }
-
-        // Tensor blobs → shards.
-        var shard: [SafetensorsMerger.Entry] = []
-        var shardBytes: Int64 = 0
-        var shardIndex = 0
-        var shardFiles: [URL] = []
-        var quantTypes = Set<String>()
-        let shardLimit: Int64 = 1024 * 1024 * 1024
-        func flush() throws {
-            guard !shard.isEmpty else { return }
-            shardIndex += 1
-            let url = stagingDir.appendingPathComponent(String(format: "model-%05d.safetensors", shardIndex))
-            try SafetensorsMerger.write(shard, to: url)
-            shardFiles.append(url)
-            shard.removeAll(); shardBytes = 0
-        }
-        for layer in manifest.tensorLayers {
-            try Task.checkCancellation()
-            index += 1
-            guard let tensorName = layer.name, !tensorName.hasPrefix("draft.") else { received += layer.size; continue }
-            let blob = blobDir.appendingPathComponent(String(layer.digest.dropFirst("sha256:".count)))
-            let (base, idx) = (received, index)
-            try await downloadFile(url: ollama.blobURL(name: name, digest: layer.digest), to: blob, expectedSize: layer.size) { got in
-                emit(tensorName, idx, base + got)
-            }
-            received += layer.size
-            let parsed = try SafetensorsMerger.parse(try Data(contentsOf: blob), fallbackName: tensorName)
-            if let q = parsed.quantType { quantTypes.insert(q) }
-            for entry in parsed.entries {
-                shard.append(entry)
-                shardBytes += Int64(entry.data.count)
-            }
-            if shardBytes >= shardLimit { try flush() }
-        }
-        try flush()
-        for url in shardFiles {
-            let size = (try? fm.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
-            manifestFiles.append(.init(path: url.lastPathComponent, sizeBytes: size, sha256: nil))
-            continuation.yield(.fileFinished(url.lastPathComponent))
-        }
-        try? fm.removeItem(at: blobDir)
-
-        // One quant scheme per model is assumed (Ollama converts uniformly); mixed schemes are rejected.
-        let configURL = stagingDir.appendingPathComponent("config.json")
-        var quantLabel: String?
-        if let type = quantTypes.first {
-            guard quantTypes.count == 1, let scheme = OllamaQuantScheme(quantType: type) else {
-                throw HubError.badURL("\(repoID): unsupported quantization \(quantTypes.sorted().joined(separator: ","))")
-            }
-            try SafetensorsMerger.patchConfig(at: configURL, scheme: scheme)
-            quantLabel = "\(scheme.bits)-bit \(scheme.mode)"
-            if scheme.needsConversion {
-                try JSONCoding.encoder.encode(scheme).write(
-                    to: stagingDir.appendingPathComponent(OllamaQuantScheme.conversionMarker), options: .atomic)
-            }
-        }
-        try? fm.removeItem(at: stagingDir.appendingPathComponent("hf_quant_config.json"))
-        let configData = (try? Data(contentsOf: configURL)) ?? Data()
-        let cls = HubModelClassification.classify(configJSON: configData)
-        let manifestFile = ModelManifest(
-            repoID: repoID, revision: manifest.digest, source: .ollama, kind: cls.kind, files: manifestFiles,
-            contextLength: cls.contextLength, quantization: quantLabel ?? cls.quantization,
-            supportsTools: ModelManifest.templateSupportsTools(in: stagingDir), architectures: cls.architectures)
-        try manifestFile.save(to: stagingDir)
-        if fm.fileExists(atPath: finalDir.path) { try fm.removeItem(at: finalDir) }
-        try fm.createDirectory(at: paths.models, withIntermediateDirectories: true)
-        try fm.moveItem(at: stagingDir, to: finalDir)
-        continuation.yield(.finished(manifestFile.descriptor(directory: finalDir)))
     }
 
     /// Downloads one file; if a `.part` exists, resumes from its size via a Range request.

@@ -115,11 +115,16 @@ public actor ConversationService {
     // Send
 
     /// Sends a prompt and streams events. Generation continues even if the subscriber goes away.
+    /// `modelID`: the model the UI shows for this chat; it wins over what the store still holds and is saved to the chat.
     public func send(
         chatID: UUID, text: String, images: [ImageInput] = [], documents: [DocumentInput] = [],
-        sampling: SamplingParams? = nil, keepAlive: KeepAlive = .default
+        sampling: SamplingParams? = nil, keepAlive: KeepAlive = .default, modelID shownModelID: String? = nil
     ) async throws -> AsyncStream<ConversationEvent> {
-        guard let chat = try await store.chat(id: chatID) else { throw ConversationError.chatNotFound(chatID) }
+        guard var chat = try await store.chat(id: chatID) else { throw ConversationError.chatNotFound(chatID) }
+        if let shownModelID, shownModelID != chat.modelID {
+            chat.modelID = shownModelID
+            try await store.update(chat)
+        }
         guard let modelID = chat.modelID ?? activeModelID, let model = await catalog.model(id: modelID) else {
             throw ConversationError.noActiveModel
         }
@@ -529,6 +534,6 @@ enum AnswerText {
 }
 
 extension SHA256Digest {
-    /// Lowercase hex, as in Hugging Face `lfs.sha256` and Ollama `sha256:` digests.
+    /// Lowercase hex, as Hugging Face (`lfs.sha256`) and ModelScope (`Sha256`) list file hashes.
     var hex: String { map { String(format: "%02x", $0) }.joined() }
 }

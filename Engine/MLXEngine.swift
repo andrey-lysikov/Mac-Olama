@@ -36,14 +36,6 @@ public actor MLXEngine: InferenceEngine {
         if loadedModel?.id == model.id, container != nil { return }
         await unload()
         progress(0)
-        // Ollama NVFP4 imports are re-quantized to affine 4-bit on first use (takes minutes for 10B+ models).
-        if OllamaImportConverter.needsConversion(model.directory) {
-            do {
-                try OllamaImportConverter.convert(directory: model.directory) { progress($0 * 0.8) }
-            } catch {
-                throw EngineError.loadFailed("conversion failed: \(error)")
-            }
-        }
         let tokenizerLoader = LocalTokenizerLoader()
         do {
             // Local weights only: no Downloader involved, hence no fine-grained progress.

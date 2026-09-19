@@ -19,7 +19,7 @@ final class AppContainer {
     let conversation: ConversationService
     let hardware: HardwareProfile
     private(set) var hubClient: HubClient
-    let ollamaClient = OllamaRegistryClient()
+    let modelScopeClient = ModelScopeClient()
     private(set) var downloader: ModelDownloader
     private(set) var updates: UpdateChecker!
     let logger = Logger(subsystem: "com.macolama.app", category: "container")
@@ -45,7 +45,7 @@ final class AppContainer {
     private var lastAvailabilityCheck: ContinuousClock.Instant?
     private var availabilityTask: Task<Void, Never>?
     var activeModel: ModelDescriptor? { models.first { $0.id == settings.activeModelID } }
-    /// Installed models grouped by registry (Hugging Face, Ollama…), empty registries omitted.
+    /// Installed models grouped by hub (Hugging Face, ModelScope, API), empty hubs omitted.
     var modelsBySource: [(source: ModelSource, models: [ModelDescriptor])] {
         ModelSource.allCases.compactMap { src in
             let list = models.filter { $0.source == src }
@@ -151,6 +151,7 @@ final class AppContainer {
     func refreshModels() async {
         let list = await catalog.refresh()
         models = list
+        fillInBaseModels(list)
         brokenModels = await catalog.brokenModels
         if settings.activeModelID == nil || !list.contains(where: { $0.id == settings.activeModelID }) {
             setActiveModel(list.first)
@@ -158,40 +159,73 @@ final class AppContainer {
     }
 
     /// Checks the servers of models connected by API. Called when the panel or the chats window opens, at most every 30 s:
-    /// local models are on disk and need no check.
-    func checkModelAvailability() {
+    /// local models are on disk and need no check. `force`: the check button of an unavailable model skips the 30 s.
+    func checkModelAvailability(force: Bool = false) {
         let remotes = models.filter { $0.source == .remote }
         guard availabilityTask == nil else { return }
         guard !remotes.isEmpty else { return unavailableModelIDs = [] }
-        if let last = lastAvailabilityCheck, last.duration(to: .now) < .seconds(30) { return }
-        let targets = remotes.compactMap { model in (try? RemoteEndpoint.load(from: model.directory)).map { (model.id, $0) } }
+        if !force, let last = lastAvailabilityCheck, last.duration(to: .now) < .seconds(30) { return }
+        let targets = remotes.compactMap { model in (try? RemoteEndpoint.load(from: model.directory)).map { (model, $0) } }
         availabilityTask = Task {
-            let down = await withTaskGroup(of: String?.self) { group in
-                for (id, endpoint) in targets {
+            // nil probe = up but refused us (no token sent); a probe = up, with what the server serves now.
+            let results = await withTaskGroup(of: (ModelDescriptor, RemoteEndpoint, RemoteEngine.Probe?, up: Bool).self) { group in
+                for (model, endpoint) in targets {
                     group.addTask {
                         // No token: reading the Keychain on every open made macOS ask for the password. A server that
                         // refuses us without one is still up.
                         do {
-                            _ = try await RemoteEngine.probe(baseURL: endpoint.baseURL, model: endpoint.model, token: nil)
-                            return nil
+                            let probe = try await RemoteEngine.probe(baseURL: endpoint.baseURL, model: endpoint.model, token: nil)
+                            return (model, endpoint, probe, true)
                         } catch RemoteError.http(let status, _) where status == 401 || status == 403 {
-                            return nil
+                            return (model, endpoint, nil, true)
                         } catch {
-                            return id
+                            return (model, endpoint, nil, false)
                         }
                     }
                 }
-                var down: Set<String> = []
-                for await id in group { if let id { down.insert(id) } }
-                return down
+                var all: [(ModelDescriptor, RemoteEndpoint, RemoteEngine.Probe?, up: Bool)] = []
+                for await result in group { all.append(result) }
+                return all
             }
-            unavailableModelIDs = down
+            unavailableModelIDs = Set(results.filter { !$0.up }.map(\.0.id))
+            var changed = false
+            for (model, endpoint, probe, _) in results {
+                if let probe, updateRemote(model, endpoint: endpoint, probe: probe) { changed = true }
+            }
+            if changed { await refreshModels() }
             lastAvailabilityCheck = .now
             availabilityTask = nil
         }
     }
 
+    /// llama-server answers under any name with whatever model it was restarted with: the connected model follows it —
+    /// new name, context, tools and vision. The folder (the model's id) stays, so chats, the menu choice and the token keep it.
+    private func updateRemote(_ model: ModelDescriptor, endpoint: RemoteEndpoint, probe: RemoteEngine.Probe) -> Bool {
+        let repoID = "\(endpoint.hostAndPort)/\(probe.model)"
+        let kind: ModelKind = probe.supportsVision ? .vlm : .llm
+        let same =
+            probe.model == endpoint.model && repoID == model.repoID && kind == model.kind && probe.contextLength == model.contextLength
+            && probe.supportsTools == model.supportsTools
+        guard !same, var manifest = try? ModelManifest.load(from: model.directory) else { return false }
+        var updated = endpoint
+        updated.model = probe.model
+        manifest.repoID = repoID
+        manifest.kind = kind
+        manifest.contextLength = probe.contextLength
+        manifest.supportsTools = probe.supportsTools
+        do {
+            try updated.save(to: model.directory)
+            try manifest.save(to: model.directory)
+        } catch {
+            logger.error("Could not update remote model \(model.id): \(error)")
+            return false
+        }
+        if engineState.modelID == model.id { Task { await engineManager.unload() } }  // next question reconnects with the new model
+        return true
+    }
+
     func isAvailable(_ model: ModelDescriptor) -> Bool { !unavailableModelIDs.contains(model.id) }
+    var isCheckingAvailability: Bool { availabilityTask != nil }
 
     func answerFinished(_ message: Message) {
         guard !message.isPartial else { return }  // stopped by the user, who is looking at it
@@ -318,7 +352,7 @@ final class AppContainer {
 
     // Downloads (shared by the download window, menu, notifications and the update checker)
 
-    /// Accepts `org/repo`, a huggingface.co link, or `name:tag` / ollama.com link.
+    /// Accepts `org/repo` or a huggingface.co link (Hugging Face), `modelscope:org/repo` or a modelscope.cn link (ModelScope).
     func download(repoID: String, title: String? = nil, quantization: String? = nil, sizeBytes: Int64? = nil) {
         guard let ref = ModelReference.parse(repoID) else { return }
         download(ref, title: title, quantization: quantization, sizeBytes: sizeBytes)
@@ -402,13 +436,8 @@ final class AppContainer {
                         await self.refreshModels()
                         self.downloads.removeAll { $0.repoID == repoID }
                         if self.settings.activeModelID == nil { self.setActiveModel(model) }
-                        let needsConversion = FileManager.default.fileExists(
-                            atPath: model.directory.appendingPathComponent("conversion.json").path)
                         NotificationService.shared.send(
-                            title: String(localized: "Model downloaded"),
-                            body: needsConversion
-                                ? String(localized: "\(model.name) will be converted to MLX 4-bit on first use; this takes a few minutes.")
-                                : String(localized: "\(model.name) is ready to use."),
+                            title: String(localized: "Model downloaded"), body: String(localized: "\(model.name) is ready to use."),
                             category: .downloadFinished)
                     case .resolved, .fileFinished: break
                     }
@@ -431,6 +460,31 @@ final class AppContainer {
             }
             self.downloadTasks[repoID] = nil
             self.startNextDownloadIfIdle()
+        }
+    }
+
+    // Base models (for the icons): models downloaded before `baseModel` was stored get it from their hub once.
+
+    private var baseModelLookups: Set<String> = []
+
+    private func fillInBaseModels(_ list: [ModelDescriptor]) {
+        let missing = list.filter { $0.baseModel == nil && $0.source != .remote && baseModelLookups.insert($0.id).inserted }
+        guard !missing.isEmpty else { return }
+        let (hub, modelScope) = (hubClient, modelScopeClient)
+        Task {
+            var changed = false
+            for model in missing {
+                let base: String? =
+                    switch ModelReference.parse(model.repoID) {
+                    case .huggingFace(let id): (try? await hub.info(repoID: id)).flatMap { ModelOwners.baseModel(fromTags: $0.tags ?? []) }
+                    case .modelScope(let id): (try? await modelScope.info(repoID: id))?.baseModel
+                    case nil: nil
+                    }
+                guard let base, var manifest = try? ModelManifest.load(from: model.directory) else { continue }
+                manifest.baseModel = base
+                if (try? manifest.save(to: model.directory)) != nil { changed = true }
+            }
+            if changed { await refreshModels() }
         }
     }
 
