@@ -353,6 +353,8 @@ private struct ChatsSplitView: View {
             if container.showsModelLibrary { ModelLibraryView() } else { detail }
         }
         .navigationSplitViewStyle(.balanced)
+        // The window is named after what it shows: the chat's short title, as in the sidebar, or the models section.
+        .onChange(of: windowTitle, initial: true) { _, title in WindowManager.shared.window(.chats)?.title = title }
         // Showing the library (menu, notification, sidebar) clears the chat selection so only one section is highlighted.
         .onChange(of: container.showsModelLibrary) { _, shown in if shown { viewModel.selectedChatID = nil } }
         .onChange(of: viewModel.focusToken) { _, _ in
@@ -366,6 +368,12 @@ private struct ChatsSplitView: View {
             FieldCaret.moveToEnd()
         }
         .frame(minWidth: 760, minHeight: 480)
+    }
+
+    private var windowTitle: String {
+        if container.showsModelLibrary { return String(localized: "Models") }
+        return viewModel.selectedChat.map { $0.title.isEmpty ? String(localized: "Untitled chat") : $0.title }
+            ?? String(localized: "New Chat")
     }
 
     // Sidebar
@@ -481,13 +489,8 @@ private struct ChatsSplitView: View {
     // Detail: centered column, user bubbles on the right, plain assistant text, rounded composer (the familiar Ollama layout)
 
     private var detail: some View {
+        // The chat's title is the window's title (`windowTitle`), not a line of its own above the transcript.
         VStack(alignment: .leading, spacing: 0) {
-            // Same header line and margins as the model library, so switching sections keeps the layout still.
-            Text(
-                viewModel.selectedChat.map { $0.title.isEmpty ? String(localized: "Untitled chat") : $0.title }
-                    ?? String(localized: "New Chat")
-            )
-            .font(.headline).lineLimit(1).padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 4)
             if viewModel.messages.isEmpty && viewModel.streamingText.isEmpty && viewModel.errorMessage == nil {
                 emptyState
             } else {
@@ -601,7 +604,7 @@ private struct ChatsSplitView: View {
                 Button {
                     chooseFile()
                 } label: {
-                    Image(systemName: "plus")
+                    Image(systemName: "paperclip")
                 }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
                 .help(String(localized: "Attach files"))

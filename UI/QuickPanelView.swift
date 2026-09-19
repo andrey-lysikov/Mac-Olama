@@ -102,7 +102,7 @@ struct QuickPanelView: View {
                 EngineActivityControl(state: viewModel.engineState, onStop: viewModel.stop)
                 // Documents work with any model; images only with a VLM (the dialog offers them then).
                 Button(action: onChooseFiles) {
-                    Image(systemName: "doc.badge.plus")
+                    Image(systemName: "paperclip")
                 }
                 .help(String(localized: "Attach file"))
                 Button {
