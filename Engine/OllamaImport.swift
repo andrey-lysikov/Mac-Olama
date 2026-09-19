@@ -4,9 +4,8 @@
 import Foundation
 import MLX
 
-// Ollama `*-mlx` tags ship NVFP4 weights with a per-tensor `global_scale`. mlx-swift 0.31.6 can dequantize them
-// (`dequantized(mode: .nvfp4, globalScale:)`) but MLXNN's QuantizedLinear has no global scale for inference, so we
-// re-quantize once to plain affine 4-bit/g64 — the same format mlx-community publishes. Runs on first load.
+// Ollama `*-mlx` tags ship NVFP4 weights with a `global_scale` that MLXNN's QuantizedLinear cannot use, so on first
+// load they are re-quantized once to affine 4-bit/g64, the format mlx-community publishes.
 
 public enum OllamaImportError: Error {
     case missingScheme

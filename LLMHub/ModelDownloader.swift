@@ -1,6 +1,7 @@
 //  Copyright © AndreyLysikov
 //  SPDX-License-Identifier: Apache-2.0
 
+import CryptoKit
 import Foundation
 
 public struct DownloadProgress: Sendable, Equatable {
@@ -367,10 +368,10 @@ public actor ModelDownloader {
     static func sha256Hex(of url: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
-        var hasher = SHA256Hasher()
+        var hasher = SHA256()  // streamed: weight files are far too large to read whole
         while let chunk = try handle.read(upToCount: 4 << 20), !chunk.isEmpty {
-            hasher.update(chunk)
+            hasher.update(data: chunk)
         }
-        return hasher.finalizeHex()
+        return hasher.finalize().hex
     }
 }

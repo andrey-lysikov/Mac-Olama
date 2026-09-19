@@ -1,0 +1,28 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Ask Mac-Olama About Selection" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Спросить Mac-Olama о выделенном"
+          }
+        }
+      }
+    },
+    "Open Mac-Olama" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть Mac-Olama"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

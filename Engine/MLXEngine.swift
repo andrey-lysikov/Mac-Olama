@@ -98,6 +98,16 @@ public actor MLXEngine: InferenceEngine {
             do {
                 let userInput = try Self.makeUserInput(request, resize: resize)
                 let input = try await container.prepare(input: userInput)
+                // Some templates open the reasoning block in the prompt itself (`…assistant\n<think>\n`), so the reply
+                // carries only the closing tag. Re-open it in the stream, so the transcript hides the reasoning while it is written.
+                let promptTail = input.text.tokens.asArray(Int32.self).suffix(8).map(Int.init)
+                let promptEnd = await container.perform(values: promptTail) { context, ids in
+                    context.tokenizer.decode(tokenIds: ids, skipSpecialTokens: false)
+                }
+                let trimmedEnd = promptEnd.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let block = AnswerText.reasoningBlocks.first(where: { trimmedEnd.hasSuffix($0.open) }) {
+                    continuation.yield(.token(block.open))
+                }
                 let generation = try await container.generate(input: input, parameters: parameters)
                 var finish: FinishReason = .stop
                 var sawToolCall = false

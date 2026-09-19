@@ -149,13 +149,11 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
 
 // UpdateChecker
 
-/// Daily checks: the app against GitHub Releases, installed models against their Hugging Face revision.
-/// Mirrors the System-Spinner checker: one check per day, `force` bypasses the guard and always reports.
-// Observable so the model list reacts to `pendingModelUpdates` and `checkingModels`.
+/// Daily checks of the app (GitHub Releases) and the models (hub revision); `force` skips the daily guard and always reports.
+/// Observable so the model list reacts to `pendingModelUpdates` and `checkingModels`.
 @MainActor
 @Observable
 final class UpdateChecker {
-    // TODO: set once the repository exists.
     static let latestReleaseURL = URL(string: "https://github.com/andrey-lysikov/Mac-Olama/releases/latest")!
     private static let apiURL = URL(string: "https://api.github.com/repos/andrey-lysikov/Mac-Olama/releases/latest")!
     private static let startupDelay: TimeInterval = 600
@@ -231,7 +229,7 @@ final class UpdateChecker {
     }
 
     private func finishApp(release: Release?, installed: String, force: Bool) {
-        container.settings.lastAppUpdateCheck = .now
+        // Only an answer counts as today's check: offline at launch, the next 6-hour tick tries again.
         guard let release else {
             if force {
                 NotificationService.shared.send(
@@ -239,6 +237,7 @@ final class UpdateChecker {
             }
             return
         }
+        container.settings.lastAppUpdateCheck = .now
         let latest = Self.versionNumber(release.tagName)
         let current = Self.versionNumber(installed)
         if latest > 0, current > 0, latest > current {
@@ -269,9 +268,10 @@ final class UpdateChecker {
             var found: [String: String] = [:]
             var reachable = false
             for model in models {
-                guard let manifest = try? ModelManifest.load(from: model.directory) else { continue }
+                guard let manifest = try? ModelManifest.load(from: model.directory), let reference = ModelReference(manifest: manifest)
+                else { continue }
                 let latest: String?
-                switch ModelReference(manifest: manifest) {
+                switch reference {
                 case .huggingFace(let repo): latest = (try? await client.info(repoID: repo))?.sha
                 case .ollama(let name, let tag): latest = (try? await ollama.manifest(name: name, tag: tag))?.digest
                 }
@@ -312,9 +312,10 @@ final class UpdateChecker {
         let ollama = container.ollamaClient
         Task { [weak self] in
             defer { self?.checkingModels.remove(model.repoID) }
-            guard let manifest = try? ModelManifest.load(from: model.directory) else { return }
+            guard let manifest = try? ModelManifest.load(from: model.directory), let reference = ModelReference(manifest: manifest)
+            else { return }
             let latest: String?
-            switch ModelReference(manifest: manifest) {
+            switch reference {
             case .huggingFace(let repo): latest = (try? await client.info(repoID: repo))?.sha
             case .ollama(let name, let tag): latest = (try? await ollama.manifest(name: name, tag: tag))?.digest
             }

@@ -15,11 +15,14 @@ public enum ModelKind: String, Codable, Sendable, CaseIterable {
 public enum ModelSource: String, Codable, Sendable, CaseIterable {
     case huggingFace = "huggingface"
     case ollama = "ollama"
+    /// A model served by another program over the Ollama or OpenAI-compatible (llama.cpp) API; nothing is downloaded.
+    case remote = "remote"
 
     public var displayName: String {
         switch self {
         case .huggingFace: "Hugging Face"
         case .ollama: "Ollama"
+        case .remote: "API"
         }
     }
 
@@ -28,6 +31,7 @@ public enum ModelSource: String, Codable, Sendable, CaseIterable {
         switch self {
         case .huggingFace: "🤗"
         case .ollama: "🦙"
+        case .remote: "🔌"
         }
     }
 }
@@ -153,15 +157,66 @@ public struct ModelManifest: Codable, Sendable, Equatable {
     }
 
     // `supportsTools` is re-read from the template on every catalog refresh, so manifests written by older builds stay correct.
+    // A remote model has no template here: the server reported its capabilities when it was connected.
     public func descriptor(directory: URL) -> ModelDescriptor {
-        ModelDescriptor(
-            id: ModelDescriptor.directoryName(forRepo: repoID),
+        let remote = source == .remote
+        return ModelDescriptor(
+            id: remote ? directory.lastPathComponent : ModelDescriptor.directoryName(forRepo: repoID),
             name: ModelDescriptor.shortName(forRepo: repoID),
             repoID: repoID, source: source ?? .huggingFace, kind: kind, directory: directory,
             sizeBytes: totalSizeBytes, contextLength: contextLength, quantization: quantization,
-            supportsTools: Self.templateSupportsTools(in: directory), downloadedAt: downloadedAt
+            supportsTools: remote ? supportsTools : Self.templateSupportsTools(in: directory), downloadedAt: downloadedAt
         )
     }
+}
+
+// RemoteEndpoint
+
+/// `remote.json` next to the manifest of a remote model: where the server is and which API it speaks.
+/// The optional token lives in the Keychain, never in this file.
+public struct RemoteEndpoint: Codable, Sendable, Equatable {
+    public enum API: String, Codable, Sendable {
+        /// Ollama's own API (`/api/chat`).
+        case ollama
+        /// OpenAI-compatible (`/v1/chat/completions`): llama.cpp's llama-server and others.
+        case openAI = "openai"
+    }
+
+    public static let fileName = "remote.json"
+    public var baseURL: URL
+    public var model: String
+    public var api: API
+
+    public init(baseURL: URL, model: String, api: API) {
+        self.baseURL = baseURL
+        self.model = model
+        self.api = api
+    }
+
+    public static func load(from directory: URL) throws -> RemoteEndpoint {
+        try JSONCoding.decoder.decode(RemoteEndpoint.self, from: Data(contentsOf: directory.appendingPathComponent(fileName)))
+    }
+
+    public func save(to directory: URL) throws {
+        try JSONCoding.encoder.encode(self).write(to: directory.appendingPathComponent(Self.fileName), options: .atomic)
+    }
+
+    /// `host:port` for display and for the model's repo id.
+    public var hostAndPort: String {
+        let host = baseURL.host() ?? baseURL.absoluteString
+        return baseURL.port.map { "\(host):\($0)" } ?? host
+    }
+
+    /// Folder name under `models/`: `remote--host_port--model`, flat and filesystem-safe.
+    public var directoryName: String {
+        let safe = { (s: String) in
+            String(s.map { $0.isLetter || $0.isNumber || "-._".contains($0) ? $0 : "_" })
+        }
+        return "remote--\(safe(hostAndPort))--\(safe(model))"
+    }
+
+    /// Keychain account of the optional token.
+    public static func tokenAccount(modelID: String) -> String { "remote:\(modelID)" }
 }
 
 /// Shared JSON settings for all project files (ISO-8601 dates, pretty output).
@@ -201,8 +256,24 @@ public actor ModelCatalog {
         entries.compactMap { if case .ready(let d) = $0 { d } else { nil } }
     }
 
-    public var brokenEntries: [Entry] {
-        entries.filter { if case .broken = $0 { true } else { false } }
+    /// A model folder that cannot be loaded (download interrupted, file truncated or deleted): shown for re-download or removal.
+    public struct BrokenModel: Sendable, Equatable, Identifiable {
+        public var directory: URL
+        public var reason: String
+        public var id: String { directory.lastPathComponent }
+    }
+
+    public var brokenModels: [BrokenModel] {
+        entries.compactMap {
+            if case .broken(let directory, let reason) = $0 { BrokenModel(directory: directory, reason: reason) } else { nil }
+        }
+    }
+
+    /// Deletes a broken model's folder; only folders inside the models directory are touched.
+    public func removeBroken(_ model: BrokenModel) throws {
+        guard model.directory.standardizedFileURL.deletingLastPathComponent() == modelsDirectory.standardizedFileURL else { return }
+        try FileManager.default.removeItem(at: model.directory)
+        refresh()
     }
 
     public func model(id: String) -> ModelDescriptor? {

@@ -1,8 +1,11 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "" : {
+      "shouldTranslate" : false
+    },
     "%@" : {
-
+      "shouldTranslate" : false
     },
     "%@ free" : {
       "localizations" : {
@@ -74,17 +77,6 @@
         }
       }
     },
-    "~%lld tok/s, %@ left for the system" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "~%1$lld ток/с, системе останется %2$@"
-          }
-        }
-      }
-    },
     "1 hour" : {
       "localizations" : {
         "ru" : {
@@ -105,6 +97,16 @@
         }
       }
     },
+    "15 minutes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "15 минут"
+          }
+        }
+      }
+    },
     "5 minutes" : {
       "localizations" : {
         "ru" : {
@@ -115,12 +117,22 @@
         }
       }
     },
-    "15 minutes" : {
+    "API port in use" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "15 минут"
+            "value" : "Порт API занят"
+          }
+        }
+      }
+    },
+    "API server not started" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API-сервер не запущен"
           }
         }
       }
@@ -155,12 +167,42 @@
         }
       }
     },
+    "Add" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить"
+          }
+        }
+      }
+    },
     "Add Folder…" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Добавить папку…"
+          }
+        }
+      }
+    },
+    "Add this model: enter its server address below" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить модель: ниже укажите адрес сервера"
+          }
+        }
+      }
+    },
+    "Address and port, e.g. http://localhost:11434" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Адрес и порт, например http://localhost:11434"
           }
         }
       }
@@ -195,46 +237,12 @@
         }
       }
     },
-    "API port in use" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Порт API занят"
-          }
-        }
-      }
-    },
-    "API server not started" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "API-сервер не запущен"
-          }
-        }
-      }
-    },
-    "Ask %@" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Спросить %@"
-          }
-        }
-      }
-    },
     "Ask ${prompt}" : {
-
-    },
-    "Ask a Question" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Задать вопрос"
+            "value" : "Спросить ${prompt}"
           }
         }
       }
@@ -249,22 +257,32 @@
         }
       }
     },
+    "Ask a Question" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Задать вопрос"
+          }
+        }
+      }
+    },
+    "Ask a question…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Задайте вопрос…"
+          }
+        }
+      }
+    },
     "Ask the local model and continue the current chat." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Спросить локальную модель и продолжить текущий чат."
-          }
-        }
-      }
-    },
-    "Ask the local model…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Спросите локальную модель…"
           }
         }
       }
@@ -379,22 +397,22 @@
         }
       }
     },
-    "Check for an update and download it" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Проверить обновление и загрузить его"
-          }
-        }
-      }
-    },
     "Check for Updates" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Проверить обновление"
+          }
+        }
+      }
+    },
+    "Check for an update and download it" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить обновление и загрузить его"
           }
         }
       }
@@ -449,6 +467,16 @@
         }
       }
     },
+    "Close Window" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закрыть окно"
+          }
+        }
+      }
+    },
     "Close the panel when you click outside it" : {
       "localizations" : {
         "ru" : {
@@ -459,12 +487,12 @@
         }
       }
     },
-    "Close Window" : {
+    "Connect by API" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Закрыть окно"
+            "value" : "Подключить по API"
           }
         }
       }
@@ -559,12 +587,12 @@
         }
       }
     },
-    "Damaged: %lld — download again" : {
+    "Damaged — download again or delete" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Повреждено: %lld — скачайте заново"
+            "value" : "Повреждено — скачайте заново или удалите"
           }
         }
       }
@@ -609,6 +637,16 @@
         }
       }
     },
+    "Detailed Analysis" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подробный анализ"
+          }
+        }
+      }
+    },
     "Done" : {
       "localizations" : {
         "ru" : {
@@ -625,6 +663,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Загрузить"
+          }
+        }
+      }
+    },
+    "Download Again" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скачать заново"
           }
         }
       }
@@ -689,6 +737,16 @@
         }
       }
     },
+    "Enter the server address, e.g. http://localhost:11434." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Укажите адрес сервера, например http://localhost:11434."
+          }
+        }
+      }
+    },
     "Estimated context used by this chat, the context window, and what is left" : {
       "localizations" : {
         "ru" : {
@@ -745,6 +803,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Доступ к папкам"
+          }
+        }
+      }
+    },
+    "GGUF tag: the MLX engine cannot run it. Pick an MLX tag instead." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тег GGUF: движок MLX не может его запустить. Выберите тег MLX."
           }
         }
       }
@@ -829,44 +897,12 @@
         }
       }
     },
-    "GGUF tag: the MLX engine cannot run it. Pick an MLX tag instead." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Тег GGUF: движок MLX не может его запустить. Выберите тег MLX."
-          }
-        }
-      }
-    },
-    "hf_…" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "hf_…"
-          }
-        }
-      }
-    },
     "Hub" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Хаб"
-          }
-        }
-      }
-    },
-    "Hugging Face" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Hugging Face"
           }
         }
       }
@@ -887,6 +923,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Токен Hugging Face"
+          }
+        }
+      }
+    },
+    "Images: %lld" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Изображения: %lld"
           }
         }
       }
@@ -971,6 +1017,16 @@
         }
       }
     },
+    "MLX models only" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только MLX-модели"
+          }
+        }
+      }
+    },
     "Mac-Olama is still starting. Try again in a moment." : {
       "localizations" : {
         "ru" : {
@@ -1011,16 +1067,6 @@
         }
       }
     },
-    "MLX models only" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Только MLX-модели"
-          }
-        }
-      }
-    },
     "Model" : {
       "localizations" : {
         "ru" : {
@@ -1037,6 +1083,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Модель %@ не принимает изображения. Выберите VLM-модель."
+          }
+        }
+      }
+    },
+    "Model Library…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Набор моделей…"
           }
         }
       }
@@ -1061,12 +1117,12 @@
         }
       }
     },
-    "Model Library…" : {
+    "Model name" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Набор моделей…"
+            "value" : "Имя модели"
           }
         }
       }
@@ -1121,16 +1177,6 @@
         }
       }
     },
-    "Needed only for gated models. Create a token with the Read role and paste it here; it is stored in the Keychain." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Нужен только для закрытых моделей. Создайте токен с ролью Read и вставьте его сюда; он хранится в Связке ключей."
-          }
-        }
-      }
-    },
     "Never" : {
       "localizations" : {
         "ru" : {
@@ -1171,22 +1217,22 @@
         }
       }
     },
-    "No folders yet" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Папок пока нет"
-          }
-        }
-      }
-    },
     "No MLX tags found. Only MLX tags can be downloaded." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Теги MLX не найдены. Загружать можно только теги MLX."
+          }
+        }
+      }
+    },
+    "No folders yet" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Папок пока нет"
           }
         }
       }
@@ -1301,17 +1347,6 @@
         }
       }
     },
-    "Ollama" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ollama"
-          }
-        }
-      }
-    },
     "Ollama %@ is listening on %lld; Mac-Olama API will use the next free port." : {
       "localizations" : {
         "ru" : {
@@ -1338,6 +1373,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Открыть Чаты"
+          }
+        }
+      }
+    },
+    "Open Mac-Olama Chats" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть Чаты Mac-Olama"
+          }
+        }
+      }
+    },
+    "Open Mac-Olama Panel" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть панель Mac-Olama"
+          }
+        }
+      }
+    },
+    "Open Panel" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть панель"
           }
         }
       }
@@ -1372,32 +1437,12 @@
         }
       }
     },
-    "Open Mac-Olama Chats" : {
+    "Pages read: %lld" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Открыть Чаты Mac-Olama"
-          }
-        }
-      }
-    },
-    "Open Mac-Olama Panel" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Открыть панель Mac-Olama"
-          }
-        }
-      }
-    },
-    "Open Panel" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Открыть панель"
+            "value" : "Прочитано страниц: %lld"
           }
         }
       }
@@ -1448,6 +1493,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Запрос"
+          }
+        }
+      }
+    },
+    "Queued" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В очереди"
           }
         }
       }
@@ -1508,6 +1563,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Сгенерировать заново"
+          }
+        }
+      }
+    },
+    "Remove from queue" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Убрать из очереди"
           }
         }
       }
@@ -1602,6 +1667,16 @@
         }
       }
     },
+    "Save: check the model on the server and add it" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранить: проверить модель на сервере и добавить"
+          }
+        }
+      }
+    },
     "Search" : {
       "localizations" : {
         "ru" : {
@@ -1618,6 +1693,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Поиск по чатам"
+          }
+        }
+      }
+    },
+    "Searches: %lld" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск: %lld"
           }
         }
       }
@@ -1662,12 +1747,12 @@
         }
       }
     },
-    "Send a message" : {
+    "Server error %lld: %@" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Отправить сообщение"
+            "value" : "Ошибка сервера %1$lld: %2$@"
           }
         }
       }
@@ -1762,16 +1847,6 @@
         }
       }
     },
-    "System prompt for this chat" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Системный промпт для этого чата"
-          }
-        }
-      }
-    },
     "System Prompt…" : {
       "localizations" : {
         "ru" : {
@@ -1782,23 +1857,23 @@
         }
       }
     },
+    "System prompt for this chat" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Системный промпт для этого чата"
+          }
+        }
+      }
+    },
     "Text" : {
-      "extractionState" : "stale",
+      "extractionState" : "manual",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Текст"
-          }
-        }
-      }
-    },
-    "text → text" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "текст → текст"
           }
         }
       }
@@ -1809,16 +1884,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Только текст"
-          }
-        }
-      }
-    },
-    "text, images → text" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "текст, изображения → текст"
           }
         }
       }
@@ -1853,12 +1918,82 @@
         }
       }
     },
-    "Thinking…" : {
+    "The model runs several searches, reads the best pages in full and compares sources; answers take longer" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Думает…"
+            "value" : "Модель делает несколько запросов, читает лучшие страницы целиком и сравнивает источники; ответ готовится дольше"
+          }
+        }
+      }
+    },
+    "The server did not answer in %lld s. Check the address and port." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер не ответил за %lld с. Проверьте адрес и порт."
+          }
+        }
+      }
+    },
+    "The server does not answer" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер не отвечает"
+          }
+        }
+      }
+    },
+    "The server does not answer as an Ollama or OpenAI-compatible API: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер не отвечает как API Ollama или OpenAI-совместимый API: %@"
+          }
+        }
+      }
+    },
+    "The server has no model “%@”." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На сервере нет модели «%@»."
+          }
+        }
+      }
+    },
+    "The server has no model “%@”. Available: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На сервере нет модели «%1$@». Есть: %2$@"
+          }
+        }
+      }
+    },
+    "Thinking · %lld s" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Размышляет · %lld с"
+          }
+        }
+      }
+    },
+    "Thinking · %lld s · Tokens: %lld/s (%lld)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Размышляет · %1$lld с · Токенов: %2$lld/с (%3$lld)"
           }
         }
       }
@@ -1893,6 +2028,16 @@
         }
       }
     },
+    "Thought for %lld s" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Думал %lld с"
+          }
+        }
+      }
+    },
     "Title" : {
       "localizations" : {
         "ru" : {
@@ -1913,12 +2058,42 @@
         }
       }
     },
+    "Token (optional)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Токен (необязательно)"
+          }
+        }
+      }
+    },
+    "Tools used: %lld" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инструменты: %lld"
+          }
+        }
+      }
+    },
     "Try Again" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Повторить"
+          }
+        }
+      }
+    },
+    "Type the model's name as the server knows it, e.g. qwen3:8b." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Введите имя модели так, как его знает сервер, например qwen3:8b."
           }
         }
       }
@@ -1983,33 +2158,12 @@
         }
       }
     },
-    "up to %lldk context" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "контекст до %lldk"
-          }
-        }
-      }
-    },
     "Update" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Обновить"
-          }
-        }
-      }
-    },
-    "Update %@" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Обновить %@"
           }
         }
       }
@@ -2074,16 +2228,6 @@
         }
       }
     },
-    "VLM" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "VLM"
-          }
-        }
-      }
-    },
     "Waiting for a Hugging Face access token" : {
       "localizations" : {
         "ru" : {
@@ -2140,6 +2284,56 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "У вашей учётной записи Hugging Face пока нет доступа к этой модели. Нажмите, чтобы открыть её страницу и запросить доступ."
+          }
+        }
+      }
+    },
+    "text → text" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "текст → текст"
+          }
+        }
+      }
+    },
+    "text, images → text" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "текст, изображения → текст"
+          }
+        }
+      }
+    },
+    "the answer is not JSON" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ответ не в формате JSON"
+          }
+        }
+      }
+    },
+    "up to %lldk context" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "контекст до %lldk"
+          }
+        }
+      }
+    },
+    "Needed only for gated models. Create a token with the Read role and paste it here." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нужен только для закрытых моделей. Создайте токен с ролью Read и вставьте его сюда."
           }
         }
       }

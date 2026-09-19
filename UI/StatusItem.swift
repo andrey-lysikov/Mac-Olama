@@ -7,13 +7,17 @@ import SwiftUI
 
 // StatusItemController
 
-/// Menu bar icon: left click opens the panel, right click the menu. Follows `AppContainer.engineState` through the tooltip.
+/// Menu bar icon: left click opens the panel, right click the menu. Follows `AppContainer.engineState` through the tooltip
+/// and blinks while an answer is waiting that neither the panel nor the chats window showed.
 @MainActor
 final class StatusItemController: NSObject, NSMenuDelegate {
     private let container: AppContainer
     private let panel: QuickPanelController
     private let item: NSStatusItem
     private var observationTask: Task<Void, Never>?
+    private var blinkTimer: Timer?
+    private var seenAnswers = 0
+    /// A template silhouette with the features cut out: the menu bar tints it for light and dark bars and for highlight.
     private static let icon: NSImage? = {
         let image = NSImage(named: "MenuBarIcon")
         image?.isTemplate = true
@@ -40,6 +44,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     // Clicks
 
     @objc private func handleClick(_ sender: NSStatusBarButton) {
+        stopBlinking()
         guard let event = NSApp.currentEvent else { return }
         if event.type == .rightMouseUp || event.modifierFlags.contains(.control) { showMenu() } else { activate() }
     }
@@ -79,6 +84,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                         withObservationTracking {
                             _ = container.engineState
                             _ = container.downloads
+                            _ = container.answersFinished
                         } onChange: {
                             c.resume()
                         }
@@ -86,13 +92,38 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                 }
                 guard let self else { return }
                 self.render(container.engineState)
+                self.noticeAnswers()
             }
         }
         render(container.engineState)
     }
 
-    /// Template image at full opacity, so the system paints it white on dark or translucent menu bars and dark on light ones.
-    /// The icon stays still; state is conveyed by the tooltip alone.
+    // Unseen answer
+
+    private func noticeAnswers() {
+        guard container.answersFinished != seenAnswers else { return }
+        seenAnswers = container.answersFinished
+        guard !answerIsVisible, blinkTimer == nil else { return }
+        blinkTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.blink() }
+        }
+    }
+
+    private var answerIsVisible: Bool { panel.isVisible || WindowManager.shared.isOnScreen(.chats) }
+
+    /// Opening the panel or the chats window some other way (shortcut, Spotlight, Dock) also counts as seeing the answer.
+    private func blink() {
+        guard let button = item.button, !answerIsVisible else { return stopBlinking() }
+        button.alphaValue = button.alphaValue < 1 ? 1 : 0.2
+    }
+
+    private func stopBlinking() {
+        blinkTimer?.invalidate()
+        blinkTimer = nil
+        item.button?.alphaValue = 1
+    }
+
+    /// The icon stays still; state is conveyed by the tooltip alone (the only motion is the unseen-answer blink).
     private func render(_ state: EngineState) {
         guard let button = item.button else { return }
         button.image = Self.icon
@@ -215,15 +246,15 @@ struct StatusMenuBuilder {
                 Self.setGlyph(model.source.glyph, on: mi)
                 mi.toolTip = model.kind == .vlm ? String(localized: "Understands images and text") : String(localized: "Text only")
                 mi.state = model.id == container.activeModel?.id ? .on : .off
-                if fit.fit == .no {
+                if !container.isAvailable(model) {
+                    mi.isEnabled = false
+                    mi.toolTip = String(localized: "The server does not answer")
+                }
+                if fit.fit == .no, mi.isEnabled {  // an explicit colour would override the disabled grey
                     mi.attributedTitle = NSAttributedString(string: mi.title, attributes: [.foregroundColor: NSColor.systemRed])
                 }
                 sub.addItem(mi)
             }
-        }
-        if container.brokenModelCount > 0 {
-            sub.addItem(
-                disabled(String(localized: "Damaged: \(container.brokenModelCount) — download again"), "exclamationmark.triangle"))
         }
         sub.addItem(.separator())
         sub.addItem(item(String(localized: "Model Library…"), "square.stack.3d.up", #selector(MenuActions.openDownload), actions))
@@ -280,6 +311,13 @@ struct StatusMenuBuilder {
             mi.state = container.settings.toolsEnabled && selected ? .on : .off
             sub.addItem(mi)
         }
+        sub.addItem(.separator())
+        sub.addItem(
+            toggle(
+                String(localized: "Detailed Analysis"), "text.magnifyingglass", container.settings.deepWebSearch,
+                #selector(MenuActions.toggleDeepWebSearch), actions,
+                help: String(
+                    localized: "The model runs several searches, reads the best pages in full and compares sources; answers take longer")))
         return sub
     }
 
@@ -420,8 +458,8 @@ final class MenuActions: NSObject {
         LaunchAtLogin.sync(enabled: container.settings.launchAtLogin)
     }
     @objc func selectModel(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String else { return }
-        container.setActiveModel(container.models.first { $0.id == id })
+        guard let id = sender.representedObject as? String, let model = container.models.first(where: { $0.id == id }) else { return }
+        container.chooseModel(model)
     }
     @objc func unloadNow() { container.unloadNow() }
     @objc func setIdle(_ sender: NSMenuItem) { if let s = sender.representedObject as? Double { container.setIdleTimeout(s) } }
@@ -438,6 +476,7 @@ final class MenuActions: NSObject {
     @objc func setFileAccess(_ sender: NSMenuItem) {
         if let enabled = sender.representedObject as? Bool { container.setFileToolsEnabled(enabled) }
     }
+    @objc func toggleDeepWebSearch() { container.setDeepWebSearch(!container.settings.deepWebSearch) }
     @objc func toggleShortcutsTool() { container.setShortcutsToolEnabled(!container.settings.shortcutsToolEnabled) }
     @objc func removeAllowedFolder(_ sender: NSMenuItem) {
         if let path = sender.representedObject as? String { container.removeAllowedFolder(path) }

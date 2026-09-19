@@ -1,17 +1,6 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Ask Mac-Olama About Selection" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Спросить Mac-Olama о выделенном"
-          }
-        }
-      }
-    },
     "CFBundleDisplayName" : {
       "comment" : "Bundle display name",
       "extractionState" : "extracted_with_value",
@@ -24,7 +13,7 @@
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Mac-Olama"
           }
         }
@@ -37,6 +26,12 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
+            "value" : "Mac-Olama"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
             "value" : "Mac-Olama"
           }
         }
@@ -52,18 +47,8 @@
             "value" : ""
           }
         }
-      }
-    },
-    "Open Mac-Olama" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Открыть Mac-Olama"
-          }
-        }
-      }
+      },
+      "shouldTranslate" : false
     }
   },
   "version" : "1.0"

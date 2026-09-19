@@ -19,13 +19,6 @@ public enum EngineState: Sendable, Equatable {
         case .loading(let id, _), .ready(let id), .generating(let id, _, _): id
         }
     }
-
-    public var isBusy: Bool {
-        switch self {
-        case .loading, .generating: true
-        default: false
-        }
-    }
 }
 
 public struct SamplingParams: Sendable, Equatable, Codable {

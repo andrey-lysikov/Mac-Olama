@@ -27,13 +27,23 @@ final class AppContainer {
     // UI mirror
     private(set) var engineState: EngineState = .unloaded
     private(set) var models: [ModelDescriptor] = []
-    private(set) var brokenModelCount = 0
+    /// Model folders that cannot be loaded; the models section offers to download them again or delete them.
+    private(set) var brokenModels: [ModelCatalog.BrokenModel] = []
     private(set) var apiStatus: APIStatus = .disabled
     private(set) var downloads: [ActiveDownload] = [] { didSet { persistDownloads() } }
     /// The chats window shows the model library instead of a chat (set from the menu, notifications and the sidebar).
     var showsModelLibrary = false
     /// Raised whenever an action turns out to need a Hugging Face token; the model library answers by opening the token popover.
     var tokenPromptRequested = false
+    /// Chats on screen right now (the panel's and the one open in the chats window): a model picked in the menu goes to them.
+    var panelChatID: UUID?
+    /// Bumped when the panel or the chats window gets a complete answer; the status item blinks if nobody sees it.
+    private(set) var answersFinished = 0
+    var windowChatID: UUID?
+    /// Models connected by API whose server did not answer the last check; menus and pickers show them disabled.
+    private(set) var unavailableModelIDs: Set<String> = []
+    private var lastAvailabilityCheck: ContinuousClock.Instant?
+    private var availabilityTask: Task<Void, Never>?
     var activeModel: ModelDescriptor? { models.first { $0.id == settings.activeModelID } }
     /// Installed models grouped by registry (Hugging Face, Ollama…), empty registries omitted.
     var modelsBySource: [(source: ModelSource, models: [ModelDescriptor])] {
@@ -90,7 +100,9 @@ final class AppContainer {
         self.settings = AppSettings()
         self.hardware = HardwareProfile.current(recommendedWorkingSetBytes: MLXEngine.recommendedWorkingSetBytes())
         self.catalog = ModelCatalog(modelsDirectory: paths.models)
-        self.engineManager = EngineManager(engine: MLXEngine(), configuration: .init(idleUnloadSeconds: settings.idleUnloadSeconds))
+        self.engineManager = EngineManager(
+            engine: RoutingEngine(local: MLXEngine(), remote: RemoteEngine()),
+            configuration: .init(idleUnloadSeconds: settings.idleUnloadSeconds))
 
         let store: any ChatStore
         do {
@@ -104,7 +116,7 @@ final class AppContainer {
             engineManager: engineManager, store: store, catalog: catalog, attachmentsDirectory: paths.attachments,
             activeChatID: settings.activeChatID, activeModelID: settings.activeModelID
         )
-        let client = HubClient(token: KeychainStore.get(.huggingFaceToken))
+        let client = HubClient(token: settings.huggingFaceToken)
         self.hubClient = client
         self.downloader = ModelDownloader(client: client, paths: paths)
         self.updates = UpdateChecker(container: self)
@@ -139,9 +151,64 @@ final class AppContainer {
     func refreshModels() async {
         let list = await catalog.refresh()
         models = list
-        brokenModelCount = await catalog.brokenEntries.count
+        brokenModels = await catalog.brokenModels
         if settings.activeModelID == nil || !list.contains(where: { $0.id == settings.activeModelID }) {
             setActiveModel(list.first)
+        }
+    }
+
+    /// Checks the servers of models connected by API. Called when the panel or the chats window opens, at most every 30 s:
+    /// local models are on disk and need no check.
+    func checkModelAvailability() {
+        let remotes = models.filter { $0.source == .remote }
+        guard availabilityTask == nil else { return }
+        guard !remotes.isEmpty else { return unavailableModelIDs = [] }
+        if let last = lastAvailabilityCheck, last.duration(to: .now) < .seconds(30) { return }
+        let targets = remotes.compactMap { model in (try? RemoteEndpoint.load(from: model.directory)).map { (model.id, $0) } }
+        availabilityTask = Task {
+            let down = await withTaskGroup(of: String?.self) { group in
+                for (id, endpoint) in targets {
+                    group.addTask {
+                        // No token: reading the Keychain on every open made macOS ask for the password. A server that
+                        // refuses us without one is still up.
+                        do {
+                            _ = try await RemoteEngine.probe(baseURL: endpoint.baseURL, model: endpoint.model, token: nil)
+                            return nil
+                        } catch RemoteError.http(let status, _) where status == 401 || status == 403 {
+                            return nil
+                        } catch {
+                            return id
+                        }
+                    }
+                }
+                var down: Set<String> = []
+                for await id in group { if let id { down.insert(id) } }
+                return down
+            }
+            unavailableModelIDs = down
+            lastAvailabilityCheck = .now
+            availabilityTask = nil
+        }
+    }
+
+    func isAvailable(_ model: ModelDescriptor) -> Bool { !unavailableModelIDs.contains(model.id) }
+
+    func answerFinished(_ message: Message) {
+        guard !message.isPartial else { return }  // stopped by the user, who is looking at it
+        answersFinished += 1
+    }
+
+    /// The status menu choice: the app-wide model, and the chats on screen switch to it too, since each chat keeps its own
+    /// model and would otherwise go on answering with the old one.
+    func chooseModel(_ model: ModelDescriptor) {
+        setActiveModel(model)
+        let chatIDs = Set([panelChatID, windowChatID].compactMap { $0 })
+        Task {
+            for id in chatIDs {
+                guard var chat = try? await chatStore.chat(id: id), chat.modelID != model.id else { continue }
+                chat.modelID = model.id
+                try? await chatStore.update(chat)
+            }
         }
     }
 
@@ -159,9 +226,46 @@ final class AppContainer {
     }
 
     func deleteModel(_ model: ModelDescriptor) {
+        if model.source == .remote { KeychainStore.set(nil, account: RemoteEndpoint.tokenAccount(modelID: model.id)) }
         Task {
             if engineState.modelID == model.id { await engineManager.unload() }
             try? await catalog.remove(id: model.id)
+            await refreshModels()
+        }
+    }
+
+    /// "Connect by API": checks that the server answers and has the model, then adds it to the library like a downloaded one.
+    /// `address` may omit the scheme (`localhost:11434`); the optional token goes to the Keychain.
+    func connectRemote(model: String, address: String, token: String) async throws {
+        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let base = URL(string: trimmed.contains("://") ? trimmed : "http://" + trimmed), base.host() != nil else {
+            throw RemoteError.badAddress
+        }
+        let token = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        let probe = try await RemoteEngine.probe(
+            baseURL: base, model: model.trimmingCharacters(in: .whitespacesAndNewlines), token: token.isEmpty ? nil : token)
+        let endpoint = RemoteEndpoint(baseURL: base, model: probe.model, api: probe.api)
+        let directory = paths.models.appendingPathComponent(endpoint.directoryName)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try endpoint.save(to: directory)
+        KeychainStore.set(token.isEmpty ? nil : token, account: RemoteEndpoint.tokenAccount(modelID: endpoint.directoryName))
+        // The manifest goes last: a folder watcher refreshing in between would otherwise list a half-written model.
+        try ModelManifest(
+            repoID: "\(endpoint.hostAndPort)/\(probe.model)", revision: "", source: .remote, kind: probe.supportsVision ? .vlm : .llm,
+            files: [], contextLength: probe.contextLength, supportsTools: probe.supportsTools
+        ).save(to: directory)
+        await refreshModels()
+    }
+
+    /// Queues the broken model again: the downloader resumes its `.part` files and replaces the folder when done.
+    func redownload(_ broken: ModelCatalog.BrokenModel) {
+        guard let reference = ModelReference(directoryName: broken.id) else { return }
+        download(reference)
+    }
+
+    func deleteBroken(_ broken: ModelCatalog.BrokenModel) {
+        Task {
+            try? await catalog.removeBroken(broken)
             await refreshModels()
         }
     }
@@ -196,6 +300,9 @@ final class AppContainer {
     private func applyConversationConfiguration() {
         var config = ConversationService.Configuration()
         config.contextTokensByModel = settings.modelContextTokens
+        config.deepWebResearch = settings.deepWebSearch
+        // Detailed search reformulates queries and reads several pages, each a tool round.
+        if settings.deepWebSearch { config.maxToolIterations = 10 }
         Task { await conversation.setConfiguration(config) }
     }
 
@@ -391,7 +498,7 @@ final class AppContainer {
     func setHuggingFaceToken(_ token: String?) {
         let value = token?.trimmingCharacters(in: .whitespacesAndNewlines)
         let stored = value?.isEmpty == false ? value : nil
-        KeychainStore.set(stored, for: .huggingFaceToken)
+        settings.huggingFaceToken = stored
         hubClient = HubClient(token: stored)
         downloaderNeedsRebuild = true
         rebuildDownloaderIfIdle()
@@ -430,6 +537,12 @@ final class AppContainer {
         updateTools()
     }
 
+    func setDeepWebSearch(_ enabled: Bool) {
+        settings.deepWebSearch = enabled
+        updateTools()
+        applyConversationConfiguration()
+    }
+
     func setFileToolsEnabled(_ enabled: Bool) {
         settings.fileToolsEnabled = enabled
         updateTools()
@@ -458,7 +571,7 @@ final class AppContainer {
         var providers: [any ToolProvider] = []
         if settings.toolsEnabled {
             let provider: any SearchProvider = settings.searchProvider == "google" ? GoogleProvider() : DuckDuckGoProvider()
-            providers.append(WebToolProvider(provider: provider))
+            providers.append(WebToolProvider(provider: provider, configuration: settings.deepWebSearch ? .detailed : .init()))
         }
         if settings.fileToolsEnabled, !settings.allowedFolders.isEmpty {
             providers.append(
@@ -467,7 +580,7 @@ final class AppContainer {
         if settings.shortcutsToolEnabled {
             providers.append(ShortcutToolProvider(configuration: .init(confirmation: NotificationService.shared)))
         }
-        let tools: any ToolProvider = providers.isEmpty ? NoTools() : CompositeToolProvider(providers)
+        let tools: any ToolProvider = CompositeToolProvider(providers)
         Task { await conversation.setTools(tools) }
     }
 
@@ -591,6 +704,10 @@ final class AppSettings {
         get { string(.searchProvider) ?? SettingsDefaults.searchProvider }
         set { set(newValue, .searchProvider) }
     }
+    var deepWebSearch: Bool {
+        get { bool(.deepWebSearch) }
+        set { set(newValue, .deepWebSearch) }
+    }
     var fileToolsEnabled: Bool {
         get { bool(.fileToolsEnabled) }
         set { set(newValue, .fileToolsEnabled) }
@@ -629,5 +746,9 @@ final class AppSettings {
     var lastModelUpdateCheck: Date? {
         get { access(keyPath: \.token); return defaults.object(forKey: SettingsKey.lastModelUpdateCheck.rawValue) as? Date }
         set { set(newValue, .lastModelUpdateCheck) }
+    }
+    var huggingFaceToken: String? {
+        get { string(.huggingFaceToken) }
+        set { set(newValue, .huggingFaceToken) }
     }
 }

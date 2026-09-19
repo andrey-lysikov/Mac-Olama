@@ -2,6 +2,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import SwiftSoup
 
 // Search providers
 
@@ -33,7 +34,7 @@ enum HTTP {
     }
 }
 
-/// DuckDuckGo HTML endpoint: no API key, parsed with regular expressions. Fragile by nature; kept as the zero-config default.
+/// DuckDuckGo HTML endpoint: no API key, parsed from the DOM. Fragile by nature; kept as the zero-config default.
 public struct DuckDuckGoProvider: SearchProvider {
     public let name = "duckduckgo"
     public init() {}
@@ -45,14 +46,19 @@ public struct DuckDuckGoProvider: SearchProvider {
         return try Self.parse(html: String(decoding: data, as: UTF8.self), limit: limit)
     }
 
-    /// DDG HTML result blocks: `<a class="result__a" href="…">title</a>` followed by `<a class="result__snippet">…</a>`.
+    /// Result links `a.result__a` and snippets `a.result__snippet` come in document order; a snippet belongs to the link before it.
     static func parse(html: String, limit: Int) throws -> [SearchResult] {
-        let linkRE = try NSRegularExpression(pattern: #"<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>"#)
-        let snippetRE = try NSRegularExpression(pattern: #"<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)</a>"#)
-        let ns = html as NSString
+        let document = try SwiftSoup.parse(html, "https://html.duckduckgo.com/html/")
         var results: [SearchResult] = []
-        for m in linkRE.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
-            var href = HTMLText.decodeEntities(ns.substring(with: m.range(at: 1)))
+        var collecting = false
+        for element in try document.select("a.result__a, a.result__snippet").array() {
+            if element.hasClass("result__snippet") {
+                if collecting, let last = results.indices.last, results[last].snippet.isEmpty {
+                    results[last].snippet = try element.text()
+                }
+                continue
+            }
+            var href = try element.attr("href")
             // DDG wraps links as //duckduckgo.com/l/?uddg=<encoded>
             if let range = href.range(of: "uddg="),
                 let decoded = href[range.upperBound...].split(separator: "&").first?.removingPercentEncoding
@@ -60,78 +66,15 @@ public struct DuckDuckGoProvider: SearchProvider {
                 href = decoded
             }
             if href.hasPrefix("//") { href = "https:" + href }
-            let title = HTMLText.plainText(ns.substring(with: m.range(at: 2)))
-            let tail = m.range.location + m.range.length
-            let after = NSRange(location: tail, length: min(3000, ns.length - tail))
-            let snippet = snippetRE.firstMatch(in: html, range: after).map { HTMLText.plainText(ns.substring(with: $0.range(at: 1))) } ?? ""
-            if !href.isEmpty, !title.isEmpty { results.append(SearchResult(title: title, url: href, snippet: snippet)) }
-            if results.count >= limit { break }
+            let title = try element.text()
+            collecting = !href.isEmpty && !title.isEmpty
+            if collecting { results.append(SearchResult(title: title, url: href, snippet: "")) }
         }
-        return results
+        return Array(results.prefix(limit))
     }
 }
 
-/// Tag stripping and entity decoding good enough for search snippets and readable page text; no DOM needed.
-public enum HTMLText {
-    static let entities: [String: String] = [
-        "amp": "&", "lt": "<", "gt": ">", "quot": "\"", "apos": "'", "nbsp": " ", "laquo": "«", "raquo": "»",
-        "mdash": "—", "ndash": "–", "hellip": "…", "copy": "©",
-    ]
-
-    public static func decodeEntities(_ s: String) -> String {
-        guard s.contains("&") else { return s }
-        var out = ""
-        var i = s.startIndex
-        while i < s.endIndex {
-            if s[i] == "&", let semi = s[i...].firstIndex(of: ";"), s.distance(from: i, to: semi) <= 10 {
-                let name = String(s[s.index(after: i)..<semi])
-                var replacement: String?
-                if let e = entities[name] {
-                    replacement = e
-                } else if name.hasPrefix("#x"), let v = UInt32(name.dropFirst(2), radix: 16), let u = Unicode.Scalar(v) {
-                    replacement = String(u)
-                } else if name.hasPrefix("#"), let v = UInt32(name.dropFirst()), let u = Unicode.Scalar(v) {
-                    replacement = String(u)
-                }
-                if let replacement {
-                    out += replacement
-                    i = s.index(after: semi)
-                    continue
-                }
-            }
-            out.append(s[i])
-            i = s.index(after: i)
-        }
-        return out
-    }
-
-    /// Strips tags, decodes entities, collapses whitespace.
-    public static func plainText(_ html: String) -> String {
-        let stripped = html.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
-        return decodeEntities(stripped).replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    /// Removes whole elements (with content) for the given tag names, case-insensitively.
-    public static func removeElements(_ tags: [String], from html: String) -> String {
-        var out = html
-        for tag in tags {
-            out = out.replacingOccurrences(
-                of: "<\(tag)\\b[^>]*>[\\s\\S]*?</\(tag)\\s*>", with: " ", options: [.regularExpression, .caseInsensitive])
-        }
-        return out
-    }
-
-    /// Inner HTML of the first `<tag …>…</tag>` or nil.
-    public static func firstElement(_ tag: String, in html: String) -> String? {
-        guard let re = try? NSRegularExpression(pattern: "<\(tag)\\b[^>]*>([\\s\\S]*?)</\(tag)\\s*>", options: .caseInsensitive),
-            let m = re.firstMatch(in: html, range: NSRange(location: 0, length: (html as NSString).length))
-        else { return nil }
-        return (html as NSString).substring(with: m.range(at: 1))
-    }
-}
-
-/// Google's basic-HTML results page (`gbv=1`): no API key, parsed with regular expressions.
+/// Google's basic-HTML results page (`gbv=1`): no API key, parsed from the DOM.
 /// Google may answer with a JavaScript or consent wall instead; then the query falls back to DuckDuckGo so the tool keeps working.
 public struct GoogleProvider: SearchProvider {
     public let name = "google"
@@ -148,53 +91,43 @@ public struct GoogleProvider: SearchProvider {
         return results.isEmpty ? try await DuckDuckGoProvider().search(query, limit: limit) : results
     }
 
-    /// Result blocks: `<a href="/url?q=<target>&…"><h3 …>title</h3>…</a>` followed by the snippet text.
+    /// Result links are `<a href="/url?q=<target>&…">` with an `<h3>` title; the snippet is the text up to the next result link.
     static func parse(html: String, limit: Int) throws -> [SearchResult] {
-        let linkRE = try NSRegularExpression(pattern: #"<a[^>]*href="/url\?q=([^"&]+)[^"]*"[^>]*>([\s\S]*?)</a>"#)
-        let ns = html as NSString
-        let matches = linkRE.matches(in: html, range: NSRange(location: 0, length: ns.length))
+        let document = try SwiftSoup.parse(html, "https://www.google.com/")
         var results: [SearchResult] = []
-        for (index, m) in matches.enumerated() {
-            let inner = ns.substring(with: m.range(at: 2))
-            guard inner.contains("<h3"), let href = ns.substring(with: m.range(at: 1)).removingPercentEncoding,
-                let host = URL(string: href)?.host, !host.hasSuffix("google.com")
-            else { continue }
-            let title = HTMLText.plainText(HTMLText.firstElement("h3", in: inner) ?? inner)
-            // The snippet is the text between this result link and the next one.
-            let tail = m.range.location + m.range.length
-            let end = index + 1 < matches.count ? matches[index + 1].range.location : min(ns.length, tail + 1500)
-            var snippet = HTMLText.plainText(ns.substring(with: NSRange(location: tail, length: max(0, min(end, tail + 1500) - tail))))
-            if snippet.count > 300 { snippet = String(snippet.prefix(300)) + "…" }
-            if !title.isEmpty, !results.contains(where: { $0.url == href }) {
-                results.append(SearchResult(title: title, url: href, snippet: snippet))
+        var snippets: [[String]] = []
+        var current: Int?
+        func walk(_ node: Node) throws {
+            if let text = node as? TextNode {
+                let piece = HTMLText.collapse(text.getWholeText()).trimmingCharacters(in: .whitespaces)
+                if let current, !piece.isEmpty, snippets[current].joined().count < 300 { snippets[current].append(piece) }
+                return
             }
-            if results.count >= limit { break }
+            guard let element = node as? Element else { return }
+            if element.tagNameNormal() == "a", let href = try? element.attr("href"), href.hasPrefix("/url?"),
+                let heading = try element.select("h3").first()
+            {
+                current = nil
+                let target = URLComponents(string: href)?.queryItems?.first { $0.name == "q" }?.value ?? ""
+                let title = try heading.text()
+                if let host = URL(string: target)?.host, !host.hasSuffix("google.com"), !title.isEmpty,
+                    !results.contains(where: { $0.url == target })
+                {
+                    results.append(SearchResult(title: title, url: target, snippet: ""))
+                    snippets.append([])
+                    current = results.count - 1
+                }
+                return  // the link's own text is the title and the displayed URL, not the snippet
+            }
+            for child in element.getChildNodes() { try walk(child) }
         }
-        return results
-    }
-}
-
-// Page extraction
-
-public enum PageExtractor {
-    /// Readable text from HTML: drops chrome, prefers <article>/<main>, collapses whitespace, caps length.
-    public static func extractText(html: String, maxCharacters: Int) throws -> (title: String, text: String) {
-        let title = HTMLText.firstElement("title", in: html).map(HTMLText.plainText) ?? ""
-        let noComments = html.replacingOccurrences(of: "<!--[\\s\\S]*?-->", with: " ", options: .regularExpression)
-        let cleaned = HTMLText.removeElements(
-            ["script", "style", "noscript", "nav", "footer", "header", "aside", "form", "iframe", "svg"], from: noComments)
-        let body =
-            HTMLText.firstElement("article", in: cleaned) ?? HTMLText.firstElement("main", in: cleaned) ?? HTMLText.firstElement(
-                "body", in: cleaned) ?? cleaned
-        // Block-level closers become newlines so paragraphs stay separated after tag stripping.
-        let withBreaks = body.replacingOccurrences(
-            of: "</(p|div|li|h[1-6]|tr|section|article)[^>]*>|<br[^>]*>", with: "\n", options: [.regularExpression, .caseInsensitive])
-        var text = HTMLText.decodeEntities(withBreaks.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression))
-        text = text.replacingOccurrences(of: #"[ \t]+"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"\s*\n\s*"#, with: "\n", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.count > maxCharacters { text = String(text.prefix(maxCharacters)) + "…" }
-        return (title, text)
+        try walk(document)
+        for index in results.indices {
+            var snippet = snippets[index].joined(separator: " ")
+            if snippet.count > 300 { snippet = String(snippet.prefix(300)) + "…" }
+            results[index].snippet = snippet
+        }
+        return Array(results.prefix(limit))
     }
 }
 
@@ -208,6 +141,14 @@ public struct WebToolProvider: ToolProvider {
         public var blockedHosts: Set<String> = ["localhost", "127.0.0.1", "0.0.0.0", "::1"]
         public var timeout: TimeInterval = 15
         public init() {}
+
+        /// "Detailed Analysis": more candidates to choose from and pages read far enough to compare sources.
+        public static var detailed: Configuration {
+            var configuration = Configuration()
+            configuration.maxResults = 8
+            configuration.maxPageCharacters = 12_000
+            return configuration
+        }
     }
 
     let provider: any SearchProvider
@@ -227,7 +168,7 @@ public struct WebToolProvider: ToolProvider {
                 parametersJSONSchema:
                     #"{"type":"object","properties":{"query":{"type":"string","description":"Search query"}},"required":["query"]}"#),
             ToolSpec(
-                name: "fetch_url", description: "Fetch a web page and return its readable text.",
+                name: "fetch_url", description: "Fetch a web page and return its readable content as Markdown.",
                 parametersJSONSchema:
                     #"{"type":"object","properties":{"url":{"type":"string","description":"Absolute http(s) URL"}},"required":["url"]}"#),
         ]
@@ -258,9 +199,9 @@ public struct WebToolProvider: ToolProvider {
                 let text = String(decoding: data.prefix(configuration.maxPageCharacters), as: UTF8.self)
                 return Self.wrap(text, source: raw)
             }
-            let page = try PageExtractor.extractText(
-                html: String(decoding: data, as: UTF8.self), maxCharacters: configuration.maxPageCharacters)
-            return Self.wrap((page.title.isEmpty ? "" : "Title: \(page.title)\n\n") + page.text, source: raw)
+            let page = try PageExtractor.extract(
+                html: String(decoding: data, as: UTF8.self), url: http.url ?? url, maxCharacters: configuration.maxPageCharacters)
+            return Self.wrap((page.title.isEmpty ? "" : "Title: \(page.title)\n\n") + page.markdown, source: raw)
         default:
             throw ConversationError.unknownTool(call.name)
         }

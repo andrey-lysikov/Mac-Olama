@@ -9,37 +9,71 @@ import UniformTypeIdentifiers
 struct QuickPanelView: View {
     @Bindable var viewModel: QuickPanelViewModel
     var onClose: () -> Void
-    /// Reports the height the content wants, so the controller can grow the panel downwards as the answer streams in.
+    /// Reports the height the content wants, so the controller can grow the panel upwards as the answer streams in.
     var onHeightChange: (CGFloat) -> Void = { _ in }
+    /// Makes the panel key, so a file dropped from Finder can hand the keyboard to the field.
+    var onMakeKey: () -> Void = {}
     @State private var transcriptHeight: CGFloat = 0
+    /// Field plus attachment chips: whatever of the height limit is left goes to the transcript.
+    @State private var controlsHeight: CGFloat = 52
     @FocusState private var inputFocused: Bool
 
     var body: some View {
+        // Like a chat: the transcript above, the newest exchange at its bottom, right over the field.
         VStack(spacing: 0) {
-            inputRow
-            if !viewModel.pendingImages.isEmpty || !viewModel.pendingDocuments.isEmpty { attachmentsRow }
             if hasTranscript {
-                Divider().padding(.horizontal, 12)
                 transcript
+                Divider().padding(.horizontal, 12)
+            }
+            VStack(spacing: 0) {
+                // Questions asked while the model works stay pinned over the field until their turn comes.
+                if !viewModel.queuedQuestions.isEmpty {
+                    QueuedQuestionsView(questions: viewModel.queuedQuestions, onRemove: viewModel.removeQueued)
+                        .padding(.horizontal, 16).padding(.top, 10)
+                }
+                if !viewModel.pendingImages.isEmpty || !viewModel.pendingDocuments.isEmpty { attachmentsRow }
+                inputRow
+            }
+            .onGeometryChange(for: CGFloat.self) {
+                $0.size.height
+            } action: {
+                controlsHeight = $0
             }
         }
-        .frame(maxWidth: .infinity)  // the window decides the width; the user can drag its edges
+        // Measured at its own height, not the window's: otherwise a wrapping field squeezes into the current panel
+        // instead of growing it.
+        .fixedSize(horizontal: false, vertical: true)
         .onGeometryChange(for: CGFloat.self) {
             $0.size.height
         } action: {
             onHeightChange($0)
         }
+        // The window decides the width. If it is ever shorter than the content, the top of the transcript is cut, never the field.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        // Belt and braces: the hosting view already drops the title-bar safe area (`safeAreaRegions`).
+        .ignoresSafeArea()
+        // Any empty spot of the panel moves it; the field, buttons and the scrolling transcript keep their own clicks.
+        .background { Color.clear.contentShape(Rectangle()).gesture(WindowDragGesture()) }
+        // Nothing draws past the rounded panel, whatever a reply contains.
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         // Liquid Glass (macOS 26): system material, tint and light/dark follow the OS automatically.
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .onDrop(of: [.fileURL, .url, .image], isTargeted: nil) { providers in handleDrop(providers) }
         .onAppear { inputFocused = true }
+        // A new attachment (paste, drop, file picker, link) puts the caret in the field, ready for the question.
+        .onChange(of: viewModel.pendingImages.count + viewModel.pendingDocuments.count) { old, new in
+            guard new > old else { return }
+            onMakeKey()
+            inputFocused = true
+            FieldCaret.moveToEnd()
+        }
         .onKeyPress(.escape) {
             onClose(); return .handled
         }
     }
 
     private var hasTranscript: Bool {
-        !viewModel.messages.isEmpty || !viewModel.visibleStreamingText.isEmpty || viewModel.activity != nil
+        !viewModel.messages.isEmpty || !viewModel.visibleStreamingText.isEmpty || viewModel.progress != nil
             || viewModel.errorMessage != nil
     }
 
@@ -48,11 +82,11 @@ struct QuickPanelView: View {
     // The model is the one picked in the status menu; the row holds only the field and its pictograms.
     private var inputRow: some View {
         HStack(alignment: .center, spacing: 10) {
-            TextField(String(localized: "Ask the local model…"), text: $viewModel.input, axis: .vertical)
+            TextField(String(localized: "Ask a question…"), text: $viewModel.input, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 20, weight: .regular))
                 .lineLimit(1...6)
-                .padding(10)  // air around the typed text inside the field
+                .padding(.horizontal, 10).padding(.vertical, 8)  // air around the typed text, equal above and below
                 .focused($inputFocused)
                 .onSubmit { viewModel.send() }
                 .onKeyPress(.return, phases: .down) { press in
@@ -89,7 +123,7 @@ struct QuickPanelView: View {
             .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 6)
     }
 
     private var attachmentsRow: some View {
@@ -122,80 +156,99 @@ struct QuickPanelView: View {
                     .font(.caption).padding(6).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
                 }
             }
-            .padding(.horizontal, 16).padding(.bottom, 8)
+            .padding(.horizontal, 16).padding(.top, 10)
         }
     }
 
     // Transcript
 
-    /// Panel only: the newest exchange is on top. Inside an exchange the order stays natural (question, then its answers),
-    /// and the answer being streamed belongs to the newest one.
+    /// Question-and-answer groups in chat order; the answer being streamed belongs to the last one.
     private var exchanges: [[Message]] {
         var groups: [[Message]] = []
         for message in viewModel.messages where message.role != .system && message.role != .tool {
             if message.role == .user || groups.isEmpty { groups.append([message]) } else { groups[groups.count - 1].append(message) }
         }
-        return groups.reversed()
+        return groups
     }
 
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
-                    Color.clear.frame(height: 0).id("top")
+                // Not lazy: in a viewport that starts one point tall a lazy stack renders only its bottom rows and guesses
+                // the rest, so the question went missing and the measured height was wrong.
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(Array(exchanges.enumerated()), id: \.offset) { index, exchange in
+                        if index > 0 { Divider() }
+                        ForEach(Array(exchange.enumerated()), id: \.element.id) { position, message in
+                            // Tool rounds fold into one summary line above the answer they led to.
+                            if isStreamedPlaceholder(message) {
+                                EmptyView()
+                            } else if message.toolCalls.isEmpty {
+                                MessageView(
+                                    message: message,
+                                    summary: message.role == .assistant
+                                        ? AnswerText.summary(
+                                            of: AnswerText.toolCalls(before: position, in: exchange),
+                                            thoughtSeconds: viewModel.thoughtSeconds[message.id]) : nil)
+                            } else if !AnswerText.isFoldedIntoAnswer(position, in: exchange) {
+                                MessageView(message: message, summary: AnswerText.summary(of: message.toolCalls, thoughtSeconds: nil))
+                            }
+                        }
+                    }
+                    if let progress = viewModel.progress {
+                        GenerationProgressView(progress: progress, engineState: viewModel.engineState)
+                    }
+                    if !viewModel.visibleStreamingText.isEmpty {
+                        MessageView(
+                            message: Message(chatID: UUID(), role: .assistant, text: viewModel.visibleStreamingText, isPartial: true))
+                    }
                     if let error = viewModel.errorMessage {
                         Label(error, systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.red).font(.callout)
                     }
-                    ForEach(Array(exchanges.enumerated()), id: \.offset) { index, exchange in
-                        ForEach(exchange) { message in MessageView(message: message) }
-                        if index == 0, let activity = viewModel.activity { ToolActivityLine(activity: activity, isRunning: true) }
-                        if index == 0, !viewModel.visibleStreamingText.isEmpty {
-                            MessageView(
-                                message: Message(chatID: UUID(), role: .assistant, text: viewModel.visibleStreamingText, isPartial: true))
-                        }
-                        // End of the newest answer: the anchor the view scrolls to once generation finishes.
-                        if index == 0 { Color.clear.frame(height: 0).id("answerEnd") }
-                        if index < exchanges.count - 1 { Divider() }
-                    }
+                    // End of the newest answer: every scroll below goes here.
+                    Color.clear.frame(height: 0).id("bottom")
                 }
-                // The extra bottom inset keeps the last lines clear of the rounded glass edge when scrolled to the end.
-                .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 24)
+                // The extra top inset keeps the first lines clear of the rounded glass edge when scrolled to the start.
+                .padding(.horizontal, 16).padding(.top, 20).padding(.bottom, 12)
                 .onGeometryChange(for: CGFloat.self) {
                     $0.size.height
                 } action: {
                     transcriptHeight = $0
                 }
             }
-            // A scroll view has no height of its own: it follows the text until the panel reaches half of the screen,
+            // A scroll view has no height of its own: it follows the text until the panel reaches its height limit,
             // then the text scrolls inside it.
-            .frame(height: min(max(transcriptHeight, 1), max(viewModel.maxPanelHeight - 96, 64)))
-            // A new question jumps back to the top, where the newest exchange is; the stored answer arrives through the
-            // same change, so only a question moves the view.
-            .onChange(of: viewModel.messages.count) { _, _ in
-                if viewModel.messages.last?.role == .user { proxy.scrollTo("top", anchor: .top) }
+            .frame(height: min(max(transcriptHeight, 1), max(viewModel.heightLimit - controlsHeight - 1, 64)))
+            // Growing content stays pinned to its bottom, so the streamed answer never runs below the fold.
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .defaultScrollAnchor(.bottom, for: .sizeChanges)
+            .onChange(of: viewModel.messages.count) { _, _ in scrollToBottom(proxy) }
+            // After the layout of this token, not before it: scrolling in the same update reaches the old bottom.
+            .onChange(of: viewModel.visibleStreamingText) { _, _ in
+                Task { @MainActor in proxy.scrollTo("bottom", anchor: .bottom) }
             }
+            .onChange(of: viewModel.progress?.steps.count) { _, _ in scrollToBottom(proxy) }
             // Opening the panel keeps the transcript it had last time: start at the newest exchange, not where it was left.
-            .onChange(of: viewModel.transcriptToken) { _, _ in
-                Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(60))
-                    proxy.scrollTo("top", anchor: .top)
-                }
-            }
-            // When the answer is complete, show its end, so nothing stays hidden below the fold.
+            .onChange(of: viewModel.transcriptToken) { _, _ in scrollToBottom(proxy) }
             .onChange(of: viewModel.isGenerating) { _, generating in
                 guard !generating else { return }
-                scrollToAnswerEnd(proxy)
+                scrollToBottom(proxy)
             }
         }
     }
 
+    /// The stored copy of the reply being written: the streamed text below stands for it, otherwise it shows as a stray "…".
+    private func isStreamedPlaceholder(_ message: Message) -> Bool {
+        viewModel.isGenerating && message.id == viewModel.messages.last?.id && message.role == .assistant && message.toolCalls.isEmpty
+    }
+
     /// The last token, the panel growing and the stored message replacing the streamed one all land in different frames,
-    /// so the scroll waits for the layout to settle before it reveals the end of the answer.
-    private func scrollToAnswerEnd(_ proxy: ScrollViewProxy) {
+    /// so the scroll waits for the layout to settle before it reveals the end of the transcript.
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(120))
-            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("answerEnd", anchor: .bottom) }
+            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
         }
     }
 
@@ -231,6 +284,16 @@ struct QuickPanelView: View {
             guard response == .OK else { return }
             for url in panel.urls { viewModel.attach(fileURL: url) }
         }
+    }
+}
+
+// FieldCaret
+
+/// A programmatic focus selects the whole text of a field; typing would replace it. The caret goes to the end instead.
+@MainActor
+enum FieldCaret {
+    static func moveToEnd() {
+        Task { @MainActor in (NSApp.keyWindow?.firstResponder as? NSTextView)?.moveToEndOfDocument(nil) }
     }
 }
 
@@ -299,27 +362,13 @@ struct AttachmentStrip: View {
     }
 }
 
-// ToolActivityLine
-
-/// What the model went off to do, in one line: the tool call and its result never appear in the transcript.
-struct ToolActivityLine: View {
-    let activity: AnswerText.Activity
-    var isRunning = false
-
-    var body: some View {
-        HStack(spacing: 8) {
-            if isRunning { ProgressView().controlSize(.small) } else { Image(systemName: activity.symbol) }
-            Text(activity.text).lineLimit(2).truncationMode(.middle)
-        }
-        .font(.callout).foregroundStyle(.secondary)
-    }
-}
-
 // MessageView
 
 /// One message: plain text for the user, Markdown (code, tables) for the assistant.
 struct MessageView: View {
     let message: Message
+    /// What the tools and the thinking did on the way to this answer, one line above it.
+    var summary: String?
     @Environment(AppContainer.self) private var container
 
     /// Reasoning channels and tool syntax are the model talking to itself; only the answer is shown and copied.
@@ -336,22 +385,24 @@ struct MessageView: View {
                 if message.role == .user {
                     Text(message.text).textSelection(.enabled)
                 } else {
-                    // A reply that only asked for tools keeps its notes and nothing else: the call is not readable content.
-                    ForEach(AnswerText.activities(of: message, searchProvider: container.settings.searchProvider)) {
-                        ToolActivityLine(activity: $0)
-                    }
-                    if !answer.isEmpty || message.toolCalls.isEmpty {
-                        MarkdownView(markdown: answer.isEmpty && message.isPartial ? "…" : answer)
+                    if let summary { ProgressSummaryLine(text: summary) }
+                    // A reply that asked for tools has no answer of its own: its text is a preamble or echoed results.
+                    if message.toolCalls.isEmpty {
+                        // Same reading size as the chats window (15 pt).
+                        MarkdownView(markdown: answer.isEmpty && message.isPartial ? "…" : answer, baseFontSize: 15)
                             .padding(10)  // air around the answer text
                     }
                 }
-                if message.role == .assistant, let tps = message.tokensPerSecond, !message.isPartial {
+                if message.role == .assistant, message.toolCalls.isEmpty, let tps = message.tokensPerSecond, !message.isPartial {
                     Text(String(localized: "\(Int(tps)) tok/s"))
                         .font(.caption2).foregroundStyle(.tertiary)
                 }
             }
+            // The column takes the width the panel has, so wide code or formulas scroll instead of widening the row.
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
             Spacer(minLength: 0)
-            if message.role == .assistant, !message.isPartial {
+            if message.role == .assistant, !message.isPartial, message.toolCalls.isEmpty {
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(answer, forType: .string)

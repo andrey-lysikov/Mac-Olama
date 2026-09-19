@@ -76,6 +76,12 @@ import Testing
         #expect(ModelReference.parse("gemma4") == nil)
     }
 
+    @Test func directoryNamesRoundTrip() {
+        for reference in [ModelReference.huggingFace(repoID: "mlx-community/Qwen3-8B-4bit"), .ollama(name: "gemma4", tag: "12b-mlx")] {
+            #expect(ModelReference(directoryName: reference.directoryName) == reference)
+        }
+    }
+
     @Test func directoryNamesAreFlat() {
         #expect(ModelReference.ollama(name: "gemma4", tag: "12b-mlx").directoryName == "ollama--gemma4--12b-mlx")
         #expect(!ModelReference.huggingFace(repoID: "a/b").directoryName.contains("/"))
@@ -106,8 +112,101 @@ import Testing
         #expect(ModelDownloader.isExcluded("LICENSE.txt", patterns: patterns))
         #expect(!ModelDownloader.isExcluded("model.safetensors", patterns: patterns))
     }
+}
 
-    @Test func sha256MatchesKnownVector() {
-        #expect(SHA256Hasher.hex(of: Data("abc".utf8)) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+// Remote models: the network is replaced by a URLProtocol that answers per path, so parsing is tested without a server.
+
+final class RemoteStub: URLProtocol {
+    nonisolated(unsafe) static var responses: [String: (status: Int, body: String)] = [:]
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host() == "stub.test" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        guard let url = request.url else { return }
+        let (status, body) = Self.responses[url.path()] ?? (404, #"{"error":"not found"}"#)
+        let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil)
+        if let response { client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed) }
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+@Suite(.serialized) struct RemoteEngineTests {
+    private let base = URL(string: "http://stub.test:11434")!
+
+    init() { URLProtocol.registerClass(RemoteStub.self) }
+
+    private func run(api: RemoteEndpoint.API) async throws -> [GenerationEvent] {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try RemoteEndpoint(baseURL: base, model: "qwen3:8b", api: api).save(to: directory)
+        let model = ModelDescriptor(
+            id: "remote--stub", name: "qwen3:8b", repoID: "stub.test:11434/qwen3:8b", source: .remote, kind: .llm, directory: directory,
+            sizeBytes: 0)
+        let engine = RemoteEngine()
+        try await engine.load(model) { _ in }
+        var events: [GenerationEvent] = []
+        for try await event in await engine.generate(GenerationRequest(messages: [EngineMessage(role: .user, content: "hi")])) {
+            events.append(event)
+        }
+        return events
+    }
+
+    @Test func ollamaProbeAndStream() async throws {
+        RemoteStub.responses = [
+            "/api/tags": (200, #"{"models":[{"name":"qwen3:8b"}]}"#),
+            "/api/show": (200, #"{"capabilities":["completion","tools"],"model_info":{"qwen3.context_length":40960}}"#),
+            "/api/chat": (
+                200,
+                """
+                {"message":{"role":"assistant","content":"","thinking":"plan"},"done":false}
+                {"message":{"role":"assistant","content":"Hi"},"done":false}
+                {"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"web_search","arguments":{"query":"x"}}}]},"done":false}
+                {"done":true,"done_reason":"stop","eval_count":10,"eval_duration":1000000000,"prompt_eval_count":5}
+                """
+            ),
+        ]
+        let probe = try await RemoteEngine.probe(baseURL: base, model: "qwen3:8b", token: nil)
+        #expect(probe.api == .ollama && probe.supportsTools && !probe.supportsVision && probe.contextLength == 40960)
+        let events = try await run(api: .ollama)
+        let tokens = events.compactMap { if case .token(let t) = $0 { t } else { nil } }
+        #expect(tokens == ["<think>", "plan", "</think>", "Hi"])
+        #expect(
+            events.contains { if case .toolCall(let c) = $0 { c.name == "web_search" && c.argumentsJSON.contains("\"x\"") } else { false } }
+        )
+        #expect(events.last == .finished(.toolCalls))
+    }
+
+    @Test func llamaServerProbeAndStream() async throws {
+        RemoteStub.responses = [
+            "/v1/models": (200, #"{"data":[{"id":"model.gguf"}]}"#),
+            "/props": (
+                200, #"{"chat_template":"{% if tools %}","modalities":{"vision":true},"default_generation_settings":{"n_ctx":8192}}"#
+            ),
+            "/v1/chat/completions": (
+                200,
+                """
+                data: {"choices":[{"delta":{"reasoning_content":"plan"}}]}
+
+                data: {"choices":[{"delta":{"content":"Hello"}}]}
+
+                data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}
+
+                data: [DONE]
+                """
+            ),
+        ]
+        let probe = try await RemoteEngine.probe(baseURL: base, model: "anything", token: nil)
+        #expect(probe.api == .openAI && probe.model == "model.gguf" && probe.supportsTools && probe.supportsVision)
+        let events = try await run(api: .openAI)
+        let tokens = events.compactMap { if case .token(let t) = $0 { t } else { nil } }
+        #expect(tokens == ["<think>", "plan", "</think>", "Hello"])
+        #expect(events.last == .finished(.stop))
+    }
+
+    @Test func missingModelIsReported() async throws {
+        RemoteStub.responses = ["/api/tags": (200, #"{"models":[{"name":"llama3:8b"}]}"#)]
+        await #expect(throws: RemoteError.self) { try await RemoteEngine.probe(baseURL: base, model: "qwen3:8b", token: nil) }
     }
 }

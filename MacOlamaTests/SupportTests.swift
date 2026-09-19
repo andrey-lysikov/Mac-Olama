@@ -2,6 +2,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 
 import AppKit
+import CryptoKit
 import Foundation
 import Testing
 
@@ -19,7 +20,7 @@ import Testing
         #expect(placed.maxHeight == 500)
     }
 
-    @Test func offScreenPositionFallsBackToTheCentre() {
+    @Test func offScreenPositionFallsBackToTheDefaultPlace() {
         // The saved place belonged to a display that is gone: x = 2000 does not fit a 1512-wide screen.
         let placed = PanelPlacement.resolve(saved: [2000, 800, 700, 500], panelHeight: 56, visible: screen, screens: [screen])
         #expect(placed.frame.midX == screen.midX)
@@ -39,11 +40,18 @@ import Testing
         #expect(placed.maxHeight == screen.height)
     }
 
-    @Test func firstRunCentresWithDefaults() {
+    @Test func firstRunSitsLowWithDefaults() {
         let placed = PanelPlacement.resolve(saved: [], panelHeight: 56, visible: screen, screens: [screen])
         #expect(placed.frame.width == QuickPanelController.defaultWidth)
         #expect(placed.frame.midX == screen.midX)
+        #expect(placed.frame.minY == screen.minY + screen.height / 4)
         #expect(placed.maxHeight == screen.height / 2)
+    }
+
+    @Test func bottomAnchoredPositionKeepsItsBottomEdge() {
+        // The panel has grown since it was saved: the field stays put, the transcript goes up.
+        let placed = PanelPlacement.resolve(saved: [100, 200, 700, 500, 1], panelHeight: 300, visible: screen, screens: [screen])
+        #expect(placed.frame == NSRect(x: 100, y: 200, width: 700, height: 300))
     }
 }
 
@@ -184,10 +192,19 @@ import Testing
 }
 
 @Suite struct HashTests {
-    @Test func sha256MatchesMoreKnownVectors() {
-        #expect(SHA256Hasher.hex(of: Data()) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
-        // Two-block message: exercises the padding path across a 64-byte boundary.
-        let twoBlocks = Data("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".utf8)
-        #expect(SHA256Hasher.hex(of: twoBlocks) == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")
+    /// Hashes `data` through a temporary file, the way downloads are verified.
+    private func fileHash(_ data: Data) throws -> String {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: url) }
+        try data.write(to: url)
+        return try ModelDownloader.sha256Hex(of: url)
+    }
+
+    @Test func sha256MatchesKnownVectors() throws {
+        #expect(try fileHash(Data()) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+        #expect(try fileHash(Data("abc".utf8)) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        // Larger than one 4 MB read, so the hash is fed in several chunks.
+        let big = Data(repeating: 0x61, count: 5 << 20)
+        #expect(try fileHash(big) == SHA256.hash(data: big).hex)
     }
 }

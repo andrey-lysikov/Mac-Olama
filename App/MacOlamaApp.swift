@@ -35,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         WindowManager.shared.configure(container: container)
         NotificationService.shared.configure(container: container)
         panel = QuickPanelController(container: container)
+        WindowManager.shared.hidePanel = { [weak panel] in panel?.hide() }
         statusItem = StatusItemController(container: container, panel: panel)
         IntentBridge.shared.configure(container: container, panel: panel)
         spotlightIndexer = SpotlightIndexer(store: container.chatStore)

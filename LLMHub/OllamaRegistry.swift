@@ -1,7 +1,9 @@
 //  Copyright © AndreyLysikov
 //  SPDX-License-Identifier: Apache-2.0
 
+import CryptoKit
 import Foundation
+import SwiftSoup
 
 // Ollama registry as a second model source. Only `*-mlx*` tags are usable: they store safetensors, one tensor per blob,
 // plus config/tokenizer JSON layers. Weights quantized by modelopt (hf_quant_config.json) may not load in mlx-swift-lm (V19).
@@ -35,6 +37,19 @@ public enum ModelReference: Sendable, Hashable {
         }
     }
 
+    /// The inverse of `directoryName`: `ollama--name--tag` or `org--repo`. Lets a broken folder be downloaded again.
+    public init?(directoryName: String) {
+        let parts = directoryName.components(separatedBy: "--")
+        if parts.first == "remote" { return nil }  // a remote model is reconnected, not downloaded
+        if parts.first == "ollama", parts.count >= 3, let tag = parts.last {
+            self = .ollama(name: parts[1..<(parts.count - 1)].joined(separator: "/"), tag: tag)
+        } else if parts.count >= 2 {
+            self = .huggingFace(repoID: parts[0] + "/" + parts[1...].joined(separator: "--"))
+        } else {
+            return nil
+        }
+    }
+
     /// `org/repo`, HF URLs → Hugging Face; `name:tag` (tag containing "mlx") or `ollama.com/library/name:tag` → Ollama.
     public static func parse(_ input: String) -> ModelReference? {
         let s = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -54,11 +69,12 @@ public enum ModelReference: Sendable, Hashable {
         return .ollama(name: parts[0], tag: parts[1])
     }
 
-    /// Reconstructs a reference from a manifest (`source` + `repoID`).
-    public init(manifest: ModelManifest) {
+    /// Reconstructs a reference from a manifest (`source` + `repoID`); nil for a remote model, which has nothing to download.
+    public init?(manifest: ModelManifest) {
         switch manifest.source ?? .huggingFace {
         case .huggingFace: self = .huggingFace(repoID: manifest.repoID)
         case .ollama: self = ModelReference.parseOllama(manifest.repoID) ?? .huggingFace(repoID: manifest.repoID)
+        case .remote: return nil
         }
     }
 }
@@ -112,15 +128,10 @@ public struct OllamaManifest: Sendable, Decodable {
 public struct OllamaRegistryClient: Sendable {
     public let registryURL: URL
     public let siteURL: URL
-    let http: any HubHTTPClient
 
-    public init(
-        registryURL: URL = URL(string: "https://registry.ollama.ai")!, siteURL: URL = URL(string: "https://ollama.com")!,
-        http: any HubHTTPClient = URLSessionHubHTTPClient()
-    ) {
+    public init(registryURL: URL = URL(string: "https://registry.ollama.ai")!, siteURL: URL = URL(string: "https://ollama.com")!) {
         self.registryURL = registryURL
         self.siteURL = siteURL
-        self.http = http
     }
 
     static func namespaced(_ name: String) -> String { name.contains("/") ? name : "library/\(name)" }
@@ -137,7 +148,8 @@ public struct OllamaRegistryClient: Sendable {
         var r = URLRequest(url: url)
         r.setValue(accept, forHTTPHeaderField: "Accept")
         r.setValue("Mac-Olama/0.1", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await http.data(for: r)
+        let (data, raw) = try await URLSession.shared.data(for: r)
+        guard let response = raw as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         switch response.statusCode {
         case 200: return (data, response)
         case 404: throw HubError.notFound(url.path)
@@ -150,7 +162,8 @@ public struct OllamaRegistryClient: Sendable {
             manifestURL(name: name, tag: tag), accept: "application/vnd.docker.distribution.manifest.v2+json")
         var m = try JSONDecoder().decode(OllamaManifest.self, from: data)
         m.digest =
-            response.value(forHTTPHeaderField: "Docker-Content-Digest") ?? "sha256:" + SHA256Hasher.hex(of: data)
+            response.value(forHTTPHeaderField: "Docker-Content-Digest")
+            ?? "sha256:" + SHA256.hash(data: data).hex
         return m
     }
 
@@ -166,35 +179,29 @@ public struct OllamaRegistryClient: Sendable {
         return Self.parseTags(html: String(decoding: data, as: UTF8.self), name: name)
     }
 
-    /// Links `/library/<name>` in search results; the description is the first `<p>` inside the link block.
+    /// Links `/library/<name>` in search results; the description is the first `<p>` inside the link.
     static func parseSearch(html: String) -> [OllamaLibraryEntry] {
-        guard let linkRE = try? NSRegularExpression(pattern: #"href="/library/([a-z0-9._\-/]+)""#),
-            let pRE = try? NSRegularExpression(pattern: #"<p[^>]*>([\s\S]*?)</p>"#)
+        guard let document = try? SwiftSoup.parse(html, "https://ollama.com/"),
+            let links = try? document.select("a[href^=/library/]").array()
         else { return [] }
-        let ns = html as NSString
         var seen = Set<String>()
         var out: [OllamaLibraryEntry] = []
-        for m in linkRE.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
-            let name = ns.substring(with: m.range(at: 1))
-            guard !name.contains(":"), !seen.contains(name) else { continue }
+        for link in links {
+            guard let href = try? link.attr("href") else { continue }
+            let name = String(href.dropFirst("/library/".count))
+            guard !name.isEmpty, !name.contains(":"), !seen.contains(name) else { continue }
             seen.insert(name)
-            let window = NSRange(location: m.range.location, length: min(3000, ns.length - m.range.location))
-            var description = ""
-            if let pm = pRE.firstMatch(in: html, range: window) {
-                description = ns.substring(with: pm.range(at: 1))
-                    .replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
-                    .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-                    .trimmingCharacters(in: .whitespaces)
-            }
+            let description = (try? link.select("p").first()?.text()) ?? ""
             out.append(OllamaLibraryEntry(name: name, description: String(description.prefix(160))))
         }
         return out
     }
 
-    /// Tag rows: `<a href="/library/<name>:<tag>">` followed by "MLX 7.7GB …" or "GGUF 8.1GB …".
+    /// Tag rows read as text: "<name>:<tag>" followed by "MLX 7.7GB …" or "GGUF 8.1GB …". Text nodes are joined with spaces
+    /// because the tag, the badge and the size sit in sibling elements.
     static func parseTags(html: String, name: String) -> [OllamaTag] {
-        let text = html.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        guard let document = try? SwiftSoup.parse(html, "https://ollama.com/") else { return [] }
+        let text = HTMLText.spacedText(of: document)
         var seen = Set<String>()
         var out: [OllamaTag] = []
         let escaped = NSRegularExpression.escapedPattern(for: name)

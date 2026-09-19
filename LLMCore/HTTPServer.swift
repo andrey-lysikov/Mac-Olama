@@ -4,6 +4,7 @@
 import Darwin
 import Foundation
 import Synchronization
+import os
 
 // Minimal HTTP/1.1 server for a localhost API: blocking sockets, one thread per connection, keep-alive,
 // chunked streaming responses, CORS preflight. Replaces Hummingbird and its ~20 transitive packages.
@@ -189,23 +190,20 @@ public final class HTTPServer: Sendable {
         let getKey = "GET \(request.path)"
         let handler = routes.withLock { $0[key] ?? (request.method == "HEAD" ? $0[getKey] : nil) } ?? notFound.withLock { $0 }
         let mapper = errorMapper.withLock { $0 }
-        let box = ResultBox()
+        // A lock rather than `Mutex`: the result crosses into an escaping closure, and `Mutex` cannot be captured there.
+        let result = OSAllocatedUnfairLock(initialState: HTTPResponse(status: 500))
         let semaphore = DispatchSemaphore(value: 0)
         Task.detached {
-            do { box.set(try await handler(request)) } catch {
-                box.set(mapper?(error) ?? HTTPResponse.text("{\"error\":\"\(error)\"}", status: 500, contentType: "application/json"))
+            let response: HTTPResponse
+            do { response = try await handler(request) } catch {
+                response = mapper?(error) ?? HTTPResponse.text("{\"error\":\"\(error)\"}", status: 500, contentType: "application/json")
             }
+            result.withLock { $0 = response }
             semaphore.signal()
         }
         semaphore.wait()
-        return box.get()
+        return result.withLock { $0 }
     }
-}
-
-private final class ResultBox: @unchecked Sendable {
-    private var value = HTTPResponse(status: 500)
-    func set(_ v: HTTPResponse) { value = v }
-    func get() -> HTTPResponse { value }
 }
 
 /// Blocking reader/writer for one socket.
@@ -318,7 +316,7 @@ private final class Connection {
             guard writeRaw(Data(head.utf8)) else { return false }
             if isHead { return true }
             let semaphore = DispatchSemaphore(value: 0)
-            let result = ResultFlag()
+            let result = OSAllocatedUnfairLock(initialState: false)
             let fd = self.fd
             Task.detached {
                 var alive = true
@@ -330,11 +328,11 @@ private final class Connection {
                     alive = false
                 }
                 if alive { alive = Connection.writeRaw(fd, Data("0\r\n\r\n".utf8)) }
-                result.value = alive
+                result.withLock { [alive] in $0 = alive }
                 semaphore.signal()
             }
             semaphore.wait()
-            return result.value
+            return result.withLock { $0 }
         }
     }
 
@@ -359,8 +357,4 @@ private final class Connection {
         }
         return true
     }
-}
-
-private final class ResultFlag: @unchecked Sendable {
-    var value = false
 }

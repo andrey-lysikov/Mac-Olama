@@ -20,10 +20,12 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
     // Plain constants: `PanelPlacement` and the tests read them outside the main actor.
     nonisolated static let defaultWidth: CGFloat = 680
     nonisolated static let minWidth: CGFloat = 420
-    nonisolated static let minHeight: CGFloat = 56
+    nonisolated static let minHeight: CGFloat = 48  // below the one-line field, so the panel never pads above it
     /// Height of the last content report, so the panel can snap back to it after the user stops dragging an edge.
     private var contentHeight: CGFloat = minHeight
     private var isApplyingFrame = false
+    /// Waits for the end of a drag, see `windowDidMove`.
+    private var dragWatch: Task<Void, Never>?
 
     init(container: AppContainer) {
         self.container = container
@@ -50,7 +52,8 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
         panel.isMovableByWindowBackground = true
-        panel.level = .floating
+        // Above other apps' floating palettes too, like Spotlight; menus still open over it.
+        panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
@@ -63,11 +66,15 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
 
         let root = QuickPanelView(
             viewModel: viewModel, onClose: { [weak self] in self?.hide() },
-            onHeightChange: { [weak self] height in self?.fit(contentHeight: height) }
+            onHeightChange: { [weak self] height in self?.fit(contentHeight: height) },
+            onMakeKey: { [weak self] in self?.panel.makeKey() }
         )
         .environment(container)
         let hosting = NSHostingView(rootView: root)
         hosting.sizingOptions = []  // the window is sized by `fit(contentHeight:)`, not by Auto Layout
+        // The hidden title bar still counts as a safe area: the content got less height than the window, so the field
+        // was pushed up out of the glass. `ignoresSafeArea()` in SwiftUI did not reach it.
+        hosting.safeAreaRegions = []
         panel.contentView = hosting
     }
 
@@ -80,8 +87,14 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
     func show(prefill: String? = nil) {
         if let prefill { viewModel.input = prefill }
         position()
-        panel.makeKeyAndOrderFront(nil)
+        // The app is usually not active here (hotkey, status item, Safari): "regardless" orders the panel front anyway,
+        // and a non-activating panel takes the keyboard without pulling the app forward.
+        panel.orderFrontRegardless()
+        panel.makeKey()
+        // A status menu item dismisses its menu only after this call returns; repeat once it has.
+        Task { @MainActor [panel] in panel?.orderFrontRegardless() }
         viewModel.panelDidAppear()
+        container.checkModelAvailability()
         installFocusObserver()
     }
 
@@ -98,15 +111,16 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
 
     // Geometry: the user drags the panel anywhere and drags its edges; width and the height limit for answers are remembered.
 
-    /// Follows the SwiftUI content: the top edge stays where it is and the panel grows or shrinks downwards,
-    /// up to the height limit (the user's own, otherwise half of the screen).
+    /// Follows the SwiftUI content: the bottom edge (the field) stays where it is and the panel grows or shrinks upwards,
+    /// up to the height limit (the user's own, otherwise half of the screen) and never past the top of the screen.
     private func fit(contentHeight: CGFloat) {
         self.contentHeight = contentHeight
         guard !panel.inLiveResize else { return }
-        let height = min(max(contentHeight.rounded(.up), Self.minHeight), viewModel.maxPanelHeight)
         var frame = panel.frame
+        let screenTop = (panel.screen ?? NSScreen.main)?.visibleFrame.maxY ?? .greatestFiniteMagnitude
+        viewModel.heightLimit = max(min(viewModel.maxPanelHeight, screenTop - frame.minY), Self.minHeight)
+        let height = max(min(contentHeight.rounded(.up), viewModel.heightLimit), Self.minHeight)
         guard abs(frame.height - height) >= 1 else { return }
-        frame.origin.y = frame.maxY - height
         frame.size.height = height
         isApplyingFrame = true
         panel.setFrame(frame, display: true)
@@ -120,16 +134,27 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         fit(contentHeight: contentHeight)
     }
 
+    /// Dragged higher or lower: the room above the field changes, and with it how tall the transcript may be.
     func windowDidMove(_ notification: Notification) {
-        if !isApplyingFrame, panel.isVisible { saveGeometry() }
+        guard !isApplyingFrame, panel.isVisible else { return }
+        saveGeometry()
+        // Resizing while the panel is being dragged fights the drag: refit once the mouse button is released.
+        guard NSEvent.pressedMouseButtons & 1 != 0 else { return fit(contentHeight: contentHeight) }
+        guard dragWatch == nil else { return }
+        dragWatch = Task { [weak self] in
+            while NSEvent.pressedMouseButtons & 1 != 0 { try? await Task.sleep(for: .milliseconds(100)) }
+            guard let self else { return }
+            dragWatch = nil
+            fit(contentHeight: contentHeight)
+        }
     }
 
     private func saveGeometry() {
         let frame = panel.frame
-        container.settings.panelGeometry = [frame.minX, frame.maxY, frame.width, viewModel.maxPanelHeight].map(Double.init)
+        container.settings.panelGeometry = [frame.minX, frame.minY, frame.width, viewModel.maxPanelHeight, 1].map(Double.init)
     }
 
-    /// Remembered place and size if they still fit a screen; otherwise centred on the screen under the cursor, like Spotlight.
+    /// Remembered place and size if they still fit a screen; otherwise low on the screen under the cursor.
     private func position() {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main ?? NSScreen.screens[0]
@@ -140,10 +165,11 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         isApplyingFrame = true
         panel.setFrame(placed.frame, display: false)
         isApplyingFrame = false
+        fit(contentHeight: contentHeight)
     }
 
-    /// A display was unplugged or its resolution changed while the panel is open: recentre if it ended up off-screen.
-    /// `position()` falls back to the centre on its own because the remembered frame no longer fits any screen.
+    /// A display was unplugged or its resolution changed while the panel is open: move it back if it ended up off-screen.
+    /// `position()` falls back to the default place on its own because the remembered frame no longer fits any screen.
     private func screenParametersDidChange() {
         guard panel.isVisible, !NSScreen.screens.contains(where: { $0.visibleFrame.contains(panel.frame) }) else { return }
         position()
@@ -168,19 +194,21 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
 
 /// Pure geometry behind `position()`, separated so it can be unit-tested without NSScreen.
 enum PanelPlacement {
-    /// `saved` is `SettingsKey.panelGeometry`: left, top, width, height limit; anything else means "first run".
+    /// `saved` is `SettingsKey.panelGeometry`: left, bottom, width, height limit and the format marker 1. Four items are the
+    /// older top-anchored format (left, top, width, limit), converted with the current height; anything else is "first run".
     static func resolve(
         saved: [Double], panelHeight: CGFloat, visible: NSRect, screens: [NSRect]
     ) -> (frame: NSRect, maxHeight: CGFloat) {
+        let hasSaved = saved.count == 4 || saved.count == 5
         let width =
-            saved.count == 4
-            ? min(max(CGFloat(saved[2]), QuickPanelController.minWidth), visible.width) : QuickPanelController.defaultWidth
-        let maxHeight = saved.count == 4 ? min(max(CGFloat(saved[3]), 160), visible.height) : visible.height / 2
-        var frame = NSRect(
-            x: visible.midX - width / 2, y: visible.maxY - visible.height * 0.22 - panelHeight, width: width, height: panelHeight)
-        if saved.count == 4 {
-            let remembered = NSRect(x: CGFloat(saved[0]), y: CGFloat(saved[1]) - panelHeight, width: width, height: panelHeight)
-            // Off-screen (a display was unplugged, the resolution changed): fall back to the centre.
+            hasSaved ? min(max(CGFloat(saved[2]), QuickPanelController.minWidth), visible.width) : QuickPanelController.defaultWidth
+        let maxHeight = hasSaved ? min(max(CGFloat(saved[3]), 160), visible.height) : visible.height / 2
+        // Default: centred, the field a quarter of the screen above the bottom; answers grow the panel upwards from there.
+        var frame = NSRect(x: visible.midX - width / 2, y: visible.minY + visible.height / 4, width: width, height: panelHeight)
+        if hasSaved {
+            let bottom = saved.count == 5 ? CGFloat(saved[1]) : CGFloat(saved[1]) - panelHeight
+            let remembered = NSRect(x: CGFloat(saved[0]), y: bottom, width: width, height: panelHeight)
+            // Off-screen (a display was unplugged, the resolution changed): fall back to the default place.
             if screens.contains(where: { $0.contains(remembered) }) { frame = remembered }
         }
         return (frame, maxHeight)
@@ -245,14 +273,20 @@ final class QuickPanelViewModel {
     var input = ""
     /// Height limit of the whole panel: the user's choice, otherwise half of the screen. The transcript scrolls beyond it.
     var maxPanelHeight: CGFloat = 480
+    /// What the panel may really take: the limit above, cut by the room between the field and the top of the screen.
+    var heightLimit: CGFloat = 480
     var pendingImages: [PendingImage] = []
     var pendingDocuments: [DocumentInput] = []
-    private(set) var chat: Chat?
+    private(set) var chat: Chat? { didSet { container.panelChatID = chat?.id } }
     private(set) var messages: [Message] = []
     /// Reply text currently streaming, before it lands in `messages`.
     private(set) var streamingText = ""
-    /// What the model went off to do (search, open a page): its own line, never mixed into the answer.
-    private(set) var activity: AnswerText.Activity?
+    /// Steps and thinking of the running reply, shown above it; nil when nothing runs.
+    private(set) var progress: GenerationProgress?
+    /// Questions sent while the model was busy; they go out one by one after the current reply.
+    private(set) var queuedQuestions: [QueuedQuestion] = []
+    /// Thinking time of replies finished in this session, for their summary line (not stored with the message).
+    private(set) var thoughtSeconds: [UUID: Int] = [:]
     private(set) var isGenerating = false
     private(set) var errorMessage: String?
     /// Bumped when the transcript should jump back to the newest exchange: the panel was opened, or the chat changed.
@@ -299,7 +333,8 @@ final class QuickPanelViewModel {
             container.setActiveChat(chat?.id)
             messages = []
             streamingText = ""
-            activity = nil
+            progress = nil
+            queuedQuestions = []
             errorMessage = nil
             pendingImages = []
             pendingDocuments = []
@@ -311,21 +346,35 @@ final class QuickPanelViewModel {
         Task { await container.conversation.cancel(chatID: chat.id) }
     }
 
+    /// Sends the field, or queues it while the model is still answering or thinking.
     func send() {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !pendingImages.isEmpty || !pendingDocuments.isEmpty, !isGenerating else { return }
+        guard !text.isEmpty || !pendingImages.isEmpty || !pendingDocuments.isEmpty else { return }
         guard container.activeModel != nil else {
             errorMessage = String(localized: "No model selected. Download one from the menu.")
             return
         }
-        let images = pendingImages.map { ImageInput(data: $0.data, mimeType: $0.mimeType) }
-        let documents = pendingDocuments
+        let question = QueuedQuestion(
+            text: text, images: pendingImages.map { ImageInput(data: $0.data, mimeType: $0.mimeType) }, documents: pendingDocuments)
         input = ""
         pendingImages = []
         pendingDocuments = []
+        if isGenerating {
+            queuedQuestions.append(question)
+        } else {
+            start(question)
+        }
+    }
+
+    func removeQueued(_ id: UUID) {
+        queuedQuestions.removeAll { $0.id == id }
+    }
+
+    private func start(_ question: QueuedQuestion) {
+        let (text, images, documents) = (question.text, question.images, question.documents)
         errorMessage = nil
         streamingText = ""
-        activity = nil
+        progress = GenerationProgress()
         isGenerating = true
 
         streamTask = Task {
@@ -339,22 +388,33 @@ final class QuickPanelViewModel {
                         messages = (try? await container.chatStore.messages(chatID: chat.id)) ?? messages
                     case .token(let t):
                         streamingText += t
+                        progress?.token(answerStarted: !visibleStreamingText.isEmpty)
                     case .toolCallStarted(let call):
-                        // The call itself stays out of the transcript; the line says where the answer is going to come from.
-                        activity = AnswerText.activity(for: call, searchProvider: container.settings.searchProvider)
+                        // The call itself stays out of the transcript; the step says where the answer is going to come from.
+                        // Whatever the model wrote before the call is a preamble: only the answer after the results is shown.
+                        progress?.toolStarted(AnswerText.activity(for: call, searchProvider: container.settings.searchProvider))
+                        streamingText = ""
                     case .toolCallFinished:
-                        break
+                        progress?.toolFinished()
                     case .finished, .failed:
                         if case .failed(let message) = event { errorMessage = message }
+                        if case .finished(let message) = event {
+                            progress?.endThinking()
+                            thoughtSeconds[message.id] = progress?.reportedThoughtSeconds
+                            container.answerFinished(message)
+                        }
                         messages = (try? await container.chatStore.messages(chatID: chat.id)) ?? messages
                         streamingText = ""
-                        activity = nil
+                        progress = nil
                     }
                 }
             } catch {
                 errorMessage = error.localizedDescription
             }
+            progress = nil
             isGenerating = false
+            // The next waiting question goes out; after a failure the queue waits, the user sees the error first.
+            if errorMessage == nil, !queuedQuestions.isEmpty { start(queuedQuestions.removeFirst()) }
         }
     }
 

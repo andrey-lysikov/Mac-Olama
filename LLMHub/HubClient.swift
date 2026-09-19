@@ -126,21 +126,6 @@ public enum HubError: Error, Equatable {
 
 // HubClient
 
-/// HTTP abstraction so tests can run without network.
-public protocol HubHTTPClient: Sendable {
-    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse)
-}
-
-public struct URLSessionHubHTTPClient: HubHTTPClient {
-    let session: URLSession
-    public init(session: URLSession = .shared) { self.session = session }
-    public func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
-        return (data, http)
-    }
-}
-
 /// Model families suggested by the empty search field: display name → search text for each hub.
 /// `KeyValuePairs` is the ordered flavour of a dictionary literal, so the dropdown keeps this order.
 public enum RecommendedModels {
@@ -162,14 +147,10 @@ public enum RecommendedModels {
 public struct HubClient: Sendable {
     public let baseURL: URL
     public let token: String?
-    let http: any HubHTTPClient
 
-    public init(
-        baseURL: URL = URL(string: "https://huggingface.co")!, token: String? = nil, http: any HubHTTPClient = URLSessionHubHTTPClient()
-    ) {
+    public init(baseURL: URL = URL(string: "https://huggingface.co")!, token: String? = nil) {
         self.baseURL = baseURL
         self.token = token
-        self.http = http
     }
 
     static let decoder: JSONDecoder = {
@@ -236,7 +217,8 @@ public struct HubClient: Sendable {
     }
 
     func get(_ url: URL) async throws -> Data {
-        let (data, response) = try await http.data(for: request(url))
+        let (data, raw) = try await URLSession.shared.data(for: request(url))
+        guard let response = raw as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         switch response.statusCode {
         case 200: return data
         case 401, 403: throw HubError.gatedRepositoryRequiresToken(url.path)

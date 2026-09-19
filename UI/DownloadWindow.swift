@@ -12,13 +12,14 @@ import SwiftUI
 @Observable
 final class DownloadViewModel {
     enum Hub: String, CaseIterable, Identifiable {
-        case huggingFace, ollama, link
+        case huggingFace, ollama, link, api
         var id: String { rawValue }
         var title: String {
             switch self {
             case .huggingFace: ModelSource.huggingFace.displayName
             case .ollama: ModelSource.ollama.displayName
             case .link: String(localized: "By Link")
+            case .api: String(localized: "Connect by API")
             }
         }
         /// Black-and-white mark shown next to the title in the hub picker.
@@ -27,6 +28,7 @@ final class DownloadViewModel {
             case .huggingFace: Image(nsImage: GlyphImage.monochrome(ModelSource.huggingFace.glyph, pointSize: 14))
             case .ollama: Image(nsImage: GlyphImage.monochrome(ModelSource.ollama.glyph, pointSize: 14))
             case .link: Image(systemName: "link")
+            case .api: Image(systemName: "network")
             }
         }
         /// The search hubs stay bare: the dropdown of recommended models is the hint. A link has to be typed exactly.
@@ -34,6 +36,7 @@ final class DownloadViewModel {
             switch self {
             case .huggingFace, .ollama: ""
             case .link: String(localized: "Repository, name:tag or link")
+            case .api: String(localized: "Model name")
             }
         }
     }
@@ -73,8 +76,19 @@ final class DownloadViewModel {
         }
     }
 
+    /// A model being connected by API: typed into the models card, checked against the server on save.
+    struct RemoteDraft: Identifiable {
+        let id = UUID()
+        var name: String
+        var address = "http://localhost:11434"
+        var token = ""
+        var isSaving = false
+        var error: String?
+    }
+
     private let container: AppContainer
     var hub: Hub = .huggingFace
+    var remoteDrafts: [RemoteDraft] = []
     var query = ""
     /// On by default: only MLX builds are listed. Off widens the search to every repository or tag.
     var mlxOnly = true { didSet { if mlxOnly != oldValue, hasSearched { search() } } }
@@ -90,17 +104,18 @@ final class DownloadViewModel {
     }
 
     /// Names offered by the empty search field. "By Link" needs an exact identifier, so it offers nothing.
-    var suggestions: [String] { hub == .link ? [] : RecommendedModels.names }
+    var suggestions: [String] { hub == .link || hub == .api ? [] : RecommendedModels.names }
 
     /// A suggestion was taken from the dropdown: swap the family name for this hub's search text and search right away.
     func queryChanged() {
         let source: ModelSource = hub == .ollama ? .ollama : .huggingFace
-        guard hub != .link, let text = RecommendedModels.query(for: query, in: source) else { return }
+        guard hub != .link, hub != .api, let text = RecommendedModels.query(for: query, in: source) else { return }
         query = text
         search()
     }
 
     func search() {
+        if hub == .api { return addRemoteDraft() }
         searchTask?.cancel()
         detailTasks.values.forEach { $0.cancel() }
         detailTasks = [:]
@@ -122,6 +137,7 @@ final class DownloadViewModel {
                 case .huggingFace: try await searchHuggingFace(q)
                 case .ollama: try await searchOllama(q)
                 case .link: try await resolveLink(q)
+                case .api: break
                 }
             } catch is CancellationError {
                 return
@@ -137,6 +153,41 @@ final class DownloadViewModel {
             guard !Task.isCancelled else { return }
             isSearching = false
         }
+    }
+
+    // Connect by API
+
+    /// The name typed in the search field opens a row in the models card for the address and the token.
+    private func addRemoteDraft() {
+        let name = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            searchError = String(localized: "Type the model's name as the server knows it, e.g. qwen3:8b.")
+            return
+        }
+        searchError = nil
+        remoteDrafts.append(RemoteDraft(name: name))
+        query = ""
+    }
+
+    func saveRemote(_ id: UUID) {
+        guard let index = remoteDrafts.firstIndex(where: { $0.id == id }) else { return }
+        remoteDrafts[index].isSaving = true
+        remoteDrafts[index].error = nil
+        let draft = remoteDrafts[index]
+        Task {
+            do {
+                try await container.connectRemote(model: draft.name, address: draft.address, token: draft.token)
+                remoteDrafts.removeAll { $0.id == id }
+            } catch {
+                guard let i = remoteDrafts.firstIndex(where: { $0.id == id }) else { return }
+                remoteDrafts[i].isSaving = false
+                remoteDrafts[i].error = "\(error)"
+            }
+        }
+    }
+
+    func cancelRemote(_ id: UUID) {
+        remoteDrafts.removeAll { $0.id == id }
     }
 
     // `org/name` narrows the search to that author, so a recommended repository comes back first.
@@ -371,16 +422,20 @@ struct ModelLibraryView: View {
                         }
                         .onChange(of: vm.query) { _, _ in vm.queryChanged() }
                         .onSubmit { vm.search() }
+                    // "Connect by API" adds a model instead of searching: a check mark, not a magnifier.
                     Button {
                         vm.search()
                     } label: {
-                        Image(systemName: "magnifyingglass")
+                        Image(systemName: vm.hub == .api ? "checkmark.circle" : "magnifyingglass")
                     }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
                     .help(
-                        vm.hub == .link ? String(localized: "Check that the model exists and show its size") : String(localized: "Search")
+                        vm.hub == .api
+                            ? String(localized: "Add this model: enter its server address below")
+                            : vm.hub == .link
+                                ? String(localized: "Check that the model exists and show its size") : String(localized: "Search")
                     )
-                    .accessibilityLabel(String(localized: "Search"))
+                    .accessibilityLabel(vm.hub == .api ? String(localized: "Add") : String(localized: "Search"))
                 }
                 .padding(.horizontal, 8)
             }
@@ -389,7 +444,7 @@ struct ModelLibraryView: View {
             ToolbarItem(placement: .navigation) {
                 Toggle(String(localized: "MLX models only"), isOn: $vm.mlxOnly)
                     .toggleStyle(.checkbox)
-                    .disabled(vm.hub == .link)
+                    .disabled(vm.hub == .link || vm.hub == .api)
                     .help(String(localized: "Show only models built for MLX. Turn off to search every repository or tag."))
             }
             .sharedBackgroundVisibility(.hidden)
@@ -446,7 +501,7 @@ struct ModelLibraryView: View {
                 .help(verdict.detail)
                 .accessibilityLabel(verdict.detail)
             if installed {
-                Image(systemName: "checkmark").font(.system(size: Self.pictogramSize)).foregroundStyle(.secondary).frame(width: 36)
+                Image(systemName: "checkmark").font(.system(size: Self.pictogramSize)).foregroundStyle(.secondary).frame(width: 24)
                     .help(String(localized: "Installed"))
             } else {
                 symbolButton("arrow.down.circle", String(localized: "Download")) {
@@ -474,11 +529,11 @@ struct ModelLibraryView: View {
         tail.foregroundColor = .secondary
         line.append(name)
         line.append(tail)
-        // The hub mark stands to the left, as tall as both text lines together.
+        // The hub mark stands to the left of the two text lines, at half its former size.
         return HStack(alignment: .center, spacing: 12) {
             if let source {
                 // Emoji marks are drawn in greyscale so the lists stay monochrome like the rest of the pictograms.
-                Text(verbatim: source.glyph).font(.system(size: 32)).grayscale(1).frame(width: 40).help(source.displayName)
+                Text(verbatim: source.glyph).font(.system(size: 16)).grayscale(1).frame(width: 20).help(source.displayName)
             }
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
@@ -536,11 +591,46 @@ struct ModelLibraryView: View {
                 if index > 0 || !downloads.isEmpty { Divider() }
                 installedRow(model)
             }
-            if container.models.isEmpty, downloads.isEmpty {
+            // A broken model being downloaded again already has its download row above.
+            let broken = container.brokenModels.filter { model in
+                let repoID = ModelReference(directoryName: model.id)?.repoID.lowercased()
+                return !downloads.contains { $0.repoID.lowercased() == repoID }
+            }
+            ForEach(Array(broken.enumerated()), id: \.element.id) { index, model in
+                if index > 0 || !downloads.isEmpty || !container.models.isEmpty { Divider() }
+                brokenRow(model)
+            }
+            if let viewModel {
+                ForEach(Bindable(viewModel).remoteDrafts) { $draft in
+                    Divider()
+                    RemoteDraftRow(
+                        draft: $draft, onSave: { viewModel.saveRemote(draft.id) }, onCancel: { viewModel.cancelRemote(draft.id) })
+                }
+            }
+            if container.models.isEmpty, downloads.isEmpty, broken.isEmpty, viewModel?.remoteDrafts.isEmpty ?? true {
                 Text("No models yet. Click the empty search field to see recommended models, or search a hub.")
                     .foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 16)
             }
         }
+    }
+
+    /// A folder that cannot be loaded, as in the status menu's "Damaged": download it again (resumes) or delete it.
+    private func brokenRow(_ model: ModelCatalog.BrokenModel) -> some View {
+        let reference = ModelReference(directoryName: model.id)
+        return HStack(alignment: .center, spacing: 14) {
+            rowText(
+                source: reference?.source, repoID: reference?.repoID ?? model.id, sizeBytes: nil, quantization: nil,
+                detail: String(localized: "Damaged — download again or delete"))
+            Spacer(minLength: 8)
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: Self.pictogramSize)).foregroundStyle(.secondary)
+                .help(model.reason)
+            if reference != nil {
+                symbolButton("arrow.down.circle", String(localized: "Download Again")) { container.redownload(model) }
+            }
+            symbolButton("trash", String(localized: "Delete Model"), role: .destructive) { container.deleteBroken(model) }
+        }
+        .padding(.vertical, 12)
     }
 
     private func installedRow(_ model: ModelDescriptor) -> some View {
@@ -553,7 +643,10 @@ struct ModelLibraryView: View {
             VStack(alignment: .trailing, spacing: 6) {
                 HStack(spacing: 14) {
                     contextPicker(model)
-                    if let update {
+                    if model.source == .remote {
+                        // Served elsewhere: nothing to update here, the server owns the model.
+                        EmptyView()
+                    } else if let update {
                         // While the new revision downloads, the update pictogram turns into pause/continue and "cancel the update".
                         transferControls(update)
                         symbolButton("xmark.circle", String(localized: "Cancel Update")) { container.cancelDownload(repoID: update.repoID) }
@@ -718,13 +811,13 @@ struct ModelLibraryView: View {
         .pointerStyle(.link)
     }
 
-    /// Twice the body text size, shared by every pictogram in the lists (actions, verdicts, marks).
-    private static let pictogramSize: CGFloat = 28
+    /// Shared by every pictogram in the lists (actions, verdicts, marks); halved from 28 pt at the customer's request.
+    private static let pictogramSize: CGFloat = 14
 
     /// List actions are bare pictograms, not framed buttons.
     private func symbolButton(_ symbol: String, _ help: String, role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
         Button(role: role, action: action) {
-            Image(systemName: symbol).font(.system(size: Self.pictogramSize)).frame(width: 36, height: 36).contentShape(Rectangle())
+            Image(systemName: symbol).font(.system(size: Self.pictogramSize)).frame(width: 24, height: 24).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
@@ -740,7 +833,7 @@ struct ModelLibraryView: View {
 struct TokenSettingsView: View {
     @Binding var isPresented: Bool
     @Environment(AppContainer.self) private var container
-    @State private var hfToken = KeychainStore.get(.huggingFaceToken) ?? ""
+    @State private var hfToken = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -757,7 +850,7 @@ struct TokenSettingsView: View {
                 .help(String(localized: "Get a token on huggingface.co"))
                 .accessibilityLabel(String(localized: "Get a token on huggingface.co"))
             }
-            Text("Needed only for gated models. Create a token with the Read role and paste it here; it is stored in the Keychain.")
+            Text("Needed only for gated models. Create a token with the Read role and paste it here.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             SecureField(String(localized: "Access token"), text: $hfToken, prompt: Text(verbatim: "hf_…"))
                 .textFieldStyle(.roundedBorder)
@@ -769,6 +862,7 @@ struct TokenSettingsView: View {
         }
         .padding(16)
         .frame(width: 380)
+        .onAppear { hfToken = container.settings.huggingFaceToken ?? "" }
         // Coming back from the browser with a copied token: offer it right away.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             if hfToken.isEmpty, let copied = NSPasteboard.general.string(forType: .string), copied.hasPrefix("hf_") {
@@ -780,5 +874,53 @@ struct TokenSettingsView: View {
     private func save() {
         container.saveHuggingFaceTokenAndRetry(hfToken)
         isPresented = false
+    }
+}
+
+// RemoteDraftRow
+
+/// "Connect by API" row in the models card: the model's name, then the server address and an optional token.
+/// Save checks the server and the model; on success the row turns into an ordinary model row.
+private struct RemoteDraftRow: View {
+    @Binding var draft: DownloadViewModel.RemoteDraft
+    var onSave: () -> Void
+    var onCancel: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 14) {
+            Image(systemName: "network").font(.system(size: 16)).foregroundStyle(.secondary).frame(width: 20)
+            VStack(alignment: .leading, spacing: 6) {
+                TextField(String(localized: "Model name"), text: $draft.name)
+                    .textFieldStyle(.roundedBorder).font(.title3)
+                HStack(spacing: 8) {
+                    TextField(String(localized: "Address and port, e.g. http://localhost:11434"), text: $draft.address)
+                        .textFieldStyle(.roundedBorder)
+                    SecureField(String(localized: "Token (optional)"), text: $draft.token)
+                        .textFieldStyle(.roundedBorder).frame(maxWidth: 220)
+                }
+                if let error = draft.error {
+                    Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red).lineLimit(3)
+                }
+            }
+            .disabled(draft.isSaving)
+            if draft.isSaving {
+                ProgressView().controlSize(.small).frame(width: 24)
+            } else {
+                Button(action: onSave) {
+                    Image(systemName: "checkmark.circle").font(.system(size: 14)).frame(width: 24, height: 24).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .help(String(localized: "Save: check the model on the server and add it"))
+                .disabled(
+                    draft.name.trimmingCharacters(in: .whitespaces).isEmpty || draft.address.trimmingCharacters(in: .whitespaces).isEmpty
+                )
+                .keyboardShortcut(.defaultAction)
+            }
+            Button(action: onCancel) {
+                Image(systemName: "xmark.circle").font(.system(size: 14)).frame(width: 24, height: 24).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).foregroundStyle(.secondary).help(String(localized: "Cancel"))
+        }
+        .padding(.vertical, 12)
     }
 }

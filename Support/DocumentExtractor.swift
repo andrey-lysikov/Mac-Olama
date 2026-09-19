@@ -54,10 +54,10 @@ enum WebPageDocument {
         {
             return doc
         }
-        let page = try PageExtractor.extractText(
-            html: String(decoding: data, as: UTF8.self), maxCharacters: DocumentExtractor.maxCharacters)
+        let page = try PageExtractor.extract(
+            html: String(decoding: data, as: UTF8.self), url: http.url ?? url, maxCharacters: DocumentExtractor.maxCharacters)
         let name = page.title.isEmpty ? (url.host ?? url.absoluteString) : page.title
-        return DocumentInput(name: name, text: "URL: \(url.absoluteString)\n\n\(page.text)")
+        return DocumentInput(name: name, text: "URL: \(url.absoluteString)\n\n\(page.markdown)")
     }
 }
 

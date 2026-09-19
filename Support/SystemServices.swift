@@ -68,13 +68,12 @@ enum LaunchAtLogin {
 
 // KeychainStore
 
-/// Secrets in the Keychain (generic passwords). They never touch UserDefaults.
+/// Tokens of models connected by API, in the Keychain (generic passwords, one account per model).
 enum KeychainStore {
-    enum Key: String { case huggingFaceToken = "huggingface" }
     private static let service = "com.macolama.app"
 
-    static func get(_ key: Key) -> String? {
-        var query = base(key)
+    static func get(account: String) -> String? {
+        var query = base(account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
@@ -82,15 +81,15 @@ enum KeychainStore {
         return String(data: data, encoding: .utf8)
     }
 
-    static func set(_ value: String?, for key: Key) {
-        SecItemDelete(base(key) as CFDictionary)
+    static func set(_ value: String?, account: String) {
+        SecItemDelete(base(account) as CFDictionary)
         guard let value, !value.isEmpty else { return }
-        var add = base(key)
+        var add = base(account)
         add[kSecValueData as String] = Data(value.utf8)
         SecItemAdd(add as CFDictionary, nil)
     }
 
-    private static func base(_ key: Key) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: key.rawValue]
+    private static func base(_ account: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
     }
 }

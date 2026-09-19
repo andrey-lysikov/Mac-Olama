@@ -13,6 +13,9 @@ final class WindowManager: NSObject, NSWindowDelegate {
     static let shared = WindowManager()
     private var windows: [ID: NSWindow] = [:]
     private var container: AppContainer?
+    /// Hides the quick panel: it floats above everything and would cover the window being opened.
+    var hidePanel: (() -> Void)?
+    private var levelReset: Task<Void, Never>?
 
     func configure(container: AppContainer) {
         self.container = container
@@ -28,6 +31,12 @@ final class WindowManager: NSObject, NSWindowDelegate {
     func isOpen(_ id: ID) -> Bool {
         guard let window = windows[id] else { return false }
         return window.isVisible || window.isMiniaturized
+    }
+
+    /// Actually seen: shown, not minimized and not fully covered by other windows.
+    func isOnScreen(_ id: ID) -> Bool {
+        guard let window = windows[id] else { return false }
+        return window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)
     }
 
     /// The window itself, for views that need to observe it (they run inside it, so by then it exists).
@@ -46,12 +55,13 @@ final class WindowManager: NSObject, NSWindowDelegate {
             switch id {
             case .chats:
                 window = makeWindow(
-                    title: String(localized: "Chats"), size: NSSize(width: 1000, height: 660),
+                    id: id, title: String(localized: "Chats"), size: NSSize(width: 1000, height: 660),
                     root: AnyView(ChatsWindowView().environment(container)))
             }
             window.identifier = NSUserInterfaceItemIdentifier(id.rawValue)
             windows[id] = window
         }
+        hidePanel?()
         raise(window)
         // Two things land after this call returns: leaving accessory mode takes a turn of the run loop, and a status
         // menu item only dismisses its menu afterwards — both leave the window behind the previously active app.
@@ -66,14 +76,40 @@ final class WindowManager: NSObject, NSWindowDelegate {
 
     private func raise(_ window: NSWindow) {
         if window.isMiniaturized { window.deminiaturize(nil) }
-        // Ordering front "regardless" works even while another app is still active, which is the state right after
-        // a click in the status menu; `activate` then hands over the focus.
+        if !window.isOnActiveSpace {
+            switchSpace(to: window)
+            return
+        }
+        // Activation is cooperative since macOS 14 and may be refused, so the window floats above other apps until it
+        // succeeds or two seconds pass, then drops back to the normal level.
+        window.level = .floating
         window.orderFrontRegardless()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
+        levelReset?.cancel()
+        levelReset = Task { [weak window] in
+            for _ in 0..<20 where !NSApp.isActive { try? await Task.sleep(for: .milliseconds(100)) }
+            guard !Task.isCancelled else { return }  // a newer raise resets the level itself
+            // `makeKeyAndOrderFront` before the activation landed does not take the keyboard: repeat it once the app is active.
+            if NSApp.isActive { window?.makeKeyAndOrderFront(nil) }
+            window?.level = .normal
+        }
     }
 
-    private func makeWindow(title: String, size: NSSize, root: AnyView) -> NSWindow {
+    /// A window on another Space: AppKit switches Spaces only when an active app orders its window front, while
+    /// `orderFrontRegardless` on an inactive app just raises it over there. So activate first, then order it front.
+    private func switchSpace(to window: NSWindow) {
+        window.level = .normal
+        NSApp.activate()
+        levelReset?.cancel()
+        levelReset = Task { [weak window] in
+            for _ in 0..<20 where !NSApp.isActive { try? await Task.sleep(for: .milliseconds(50)) }
+            guard !Task.isCancelled else { return }
+            window?.makeKeyAndOrderFront(nil)  // VERIFY(mac): switches to the window's Space
+        }
+    }
+
+    private func makeWindow(id: ID, title: String, size: NSSize, root: AnyView) -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -85,10 +121,17 @@ final class WindowManager: NSObject, NSWindowDelegate {
         let hosting = NSHostingView(rootView: root)
         hosting.sceneBridgingOptions = [.toolbars]  // SwiftUI .toolbar content goes into this window's toolbar
         window.contentView = hosting
-        window.setFrameAutosaveName("MacOlama.\(title)")
         window.toolbarStyle = .unified
         window.delegate = self
-        window.center()
+        // Saved under the window ID: the localized title used before changed with the language. Its frame is taken over
+        // once, then every other saved frame (also of windows that no longer exist) is dropped.
+        let name = "MacOlama.\(id.rawValue)"
+        if !window.setFrameUsingName(name), !window.setFrameUsingName("MacOlama.\(title)") { window.center() }
+        window.setFrameAutosaveName(name)
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("NSWindow Frame MacOlama.") {
+            if key != "NSWindow Frame \(name)" { defaults.removeObject(forKey: key) }
+        }
         return window
     }
 
