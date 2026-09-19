@@ -35,6 +35,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             button.target = self
             button.action = #selector(handleClick(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            panel.statusItemWindow = button.window
         }
         observeState()
     }
@@ -52,8 +53,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// A left click shows one thing at a time: the chats window when it is already open, the panel otherwise.
     /// The menu items stay explicit — they open whichever of the two the user picked.
     private func activate() {
+        panel.statusItemWindow = item.button?.window  // in case the button had no window yet at launch
         guard WindowManager.shared.isOpen(.chats) else {
-            panel.toggle()
+            panel.show()  // an open panel stays open and takes the keyboard; Esc or a click elsewhere closes it
             return
         }
         panel.hide()
@@ -194,12 +196,14 @@ struct StatusMenuBuilder {
             sub.addItem(header(group.source.displayName))
             for model in group.models {
                 let fit = container.fit(for: model)
-                let size = ByteCountFormatter.string(fromByteCount: model.sizeBytes, countStyle: .file)
-                let stars = String(repeating: "★", count: fit.stars)
-                let pending = container.updates.pendingModelUpdates[model.repoID] != nil ? " ↑" : ""
-                let mi = NSMenuItem(
-                    title: "\(model.name)  —  \(size)  \(stars)\(pending)", action: #selector(MenuActions.selectModel(_:)),
-                    keyEquivalent: "")
+                // An unknown size (a model served over the API) is left out, and so is the fit estimate built on it.
+                var title = model.name
+                if model.sizeBytes > 0 {
+                    let size = ByteCountFormatter.string(fromByteCount: model.sizeBytes, countStyle: .file)
+                    title += "  —  \(size)  " + String(repeating: "★", count: fit.stars)
+                }
+                if container.updates.pendingModelUpdates[model.repoID] != nil { title += " ↑" }
+                let mi = NSMenuItem(title: title, action: #selector(MenuActions.selectModel(_:)), keyEquivalent: "")
                 mi.target = actions
                 mi.representedObject = model.id
                 // The model's icon (author, with the community that built it in the corner); the checkmark marks the model in use.

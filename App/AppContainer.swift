@@ -40,6 +40,15 @@ final class AppContainer {
     /// Bumped when the panel or the chats window gets a complete answer; the status item blinks if nobody sees it.
     private(set) var answersFinished = 0
     var windowChatID: UUID?
+    /// A chat the chats window should show when it comes up (the panel's "Open in Chats"); the window clears it.
+    var requestedWindowChatID: UUID?
+
+    /// Opens the chats window on this chat instead of whichever it showed last.
+    func openInChats(_ chatID: UUID?) {
+        showsModelLibrary = false
+        requestedWindowChatID = chatID
+        WindowManager.shared.open(.chats)
+    }
     /// Models connected by API whose server did not answer the last check; menus and pickers show them disabled.
     private(set) var unavailableModelIDs: Set<String> = []
     private var lastAvailabilityCheck: ContinuousClock.Instant?

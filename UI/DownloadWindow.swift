@@ -819,7 +819,7 @@ struct ModelLibraryView: View {
             ProgressView(value: download.progress?.fraction ?? 0)
             Text("Paused").font(.caption).foregroundStyle(.secondary)
         case .running:
-            if let p = download.progress {
+            if let p = download.progress, p.bytesTotal > 0 {  // until the hub has reported the size there is nothing to show
                 ProgressView(value: p.fraction)
                 Text(
                     verbatim:

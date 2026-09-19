@@ -64,6 +64,10 @@ struct QuickPanelView: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .onDrop(of: [.fileURL, .url, .image], isTargeted: nil) { providers in handleDrop(providers) }
         .onAppear { inputFocused = true }
+        .onChange(of: viewModel.focusToken) { _, _ in
+            inputFocused = true
+            FieldCaret.moveToEnd()
+        }
         // A new attachment (paste, drop, file picker, link) puts the caret in the field, ready for the question.
         .onChange(of: viewModel.pendingImages.count + viewModel.pendingDocuments.count) { old, new in
             guard new > old else { return }
@@ -108,7 +112,7 @@ struct QuickPanelView: View {
             HStack(spacing: 12) {
                 EngineActivityControl(state: viewModel.engineState, onStop: viewModel.stop)
                 Button {
-                    WindowManager.shared.open(.chats)
+                    container.openInChats(viewModel.chat?.id)
                 } label: {
                     Image(systemName: "bubble.left.and.bubble.right")
                 }
@@ -233,11 +237,8 @@ struct QuickPanelView: View {
             // Growing content stays pinned to its bottom, so the streamed answer never runs below the fold.
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(.bottom, for: .sizeChanges)
+            // The anchor above keeps the streamed answer in view; scrolling on every token as well made the view jump.
             .onChange(of: viewModel.messages.count) { _, _ in scrollToBottom(proxy) }
-            // After the layout of this token, not before it: scrolling in the same update reaches the old bottom.
-            .onChange(of: viewModel.visibleStreamingText) { _, _ in
-                Task { @MainActor in proxy.scrollTo("bottom", anchor: .bottom) }
-            }
             .onChange(of: viewModel.progress?.steps.count) { _, _ in scrollToBottom(proxy) }
             // Opening the panel keeps the transcript it had last time: start at the newest exchange, not where it was left.
             .onChange(of: viewModel.transcriptToken) { _, _ in scrollToBottom(proxy) }
@@ -258,7 +259,7 @@ struct QuickPanelView: View {
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(120))
-            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
+            proxy.scrollTo("bottom", anchor: .bottom)  // no animation: it fought the panel growing at the same time
         }
     }
 

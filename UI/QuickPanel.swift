@@ -89,8 +89,23 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         isVisible ? hide() : show()
     }
 
+    /// The menu bar icon's window, so a click on it is not taken for "clicked elsewhere".
+    weak var statusItemWindow: NSWindow?
+
+    private func isStatusItemClick(_ event: NSEvent?) -> Bool {
+        guard let event, let window = statusItemWindow else { return false }
+        return [.leftMouseDown, .rightMouseDown, .leftMouseUp, .rightMouseUp].contains(event.type) && event.window === window
+    }
+
     func show(prefill: String? = nil) {
         if let prefill { viewModel.input = prefill }
+        // Already on screen: stay where it is, just take the keyboard again (no hide-and-show).
+        if panel.isVisible {
+            panel.orderFrontRegardless()
+            panel.makeKey()
+            viewModel.panelDidAppear()
+            return
+        }
         position()
         // Lay out and size the panel before it is on screen, so it appears at its final height instead of growing a frame
         // later (the deferred `scheduleFit` is for layout passes; here, in an event handler, resizing directly is safe).
@@ -230,7 +245,12 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         guard container.settings.panelClosesOnFocusLoss else { return }
         focusObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: panel, queue: .main) {
             [weak self] _ in
-            MainActor.assumeIsolated { self?.hide() }
+            MainActor.assumeIsolated {
+                // A click on our own menu bar icon takes the focus too; the click decides what happens, not the auto-close
+                // (which used to hide the panel only for the click to show it again).
+                guard let self, !self.isStatusItemClick(NSApp.currentEvent) else { return }
+                self.hide()
+            }
         }
     }
 
@@ -353,7 +373,11 @@ final class QuickPanelViewModel {
         observeStore()
     }
 
+    /// Bumped on every show: the field takes the keyboard each time, not only the first time the view appears.
+    private(set) var focusToken = 0
+
     func panelDidAppear() {
+        focusToken += 1
         Task { await loadActiveChat() }
     }
 

@@ -75,11 +75,26 @@ final class ChatsViewModel {
     }
 
     private func loadMessages() async {
-        guard let id = selectedChatID else { messages = []; return }
-        messages = (try? await container.chatStore.messages(chatID: id)) ?? []
+        guard let id = selectedChatID else {
+            messages = []
+            loadedChatID = nil
+            return
+        }
+        let loaded = (try? await container.chatStore.messages(chatID: id)) ?? []
+        guard id == selectedChatID else { return }  // another chat was picked meanwhile; its own load follows
+        messages = loaded
+        loadedChatID = id
         isGenerating = await container.conversation.isGenerating(chatID: id)
         transcriptToken += 1
     }
+
+    /// This window is writing the current reply (it has its own token stream and progress). `isGenerating` is also true when
+    /// another surface writes to this chat; then the stored messages are all there is to show.
+    var streamsHere: Bool { progress != nil }
+
+    /// The chat whose messages are on screen; until it matches the selection the transcript is still loading.
+    private(set) var loadedChatID: UUID?
+    var isLoadingChat: Bool { selectedChatID != nil && loadedChatID != selectedChatID }
 
     /// The window is reused, so the transcript keeps the offset it was left at; raising it again starts at the newest message.
     /// Filtering by the window object keeps the notification out of the closure, which must not carry it across actors.
@@ -104,7 +119,9 @@ final class ChatsViewModel {
                 case .chatInserted, .chatUpdated, .chatDeleted:
                     await self.reload()
                 case .messageInserted(let cid, _), .messageUpdated(let cid, _), .messageDeleted(let cid, _):
-                    if cid == self.selectedChatID, !self.isGenerating { await self.loadMessages() }
+                    // Skipped only while this window streams the reply itself; one written by the panel (or Spotlight) is
+                    // followed through the store, its partial text saved every quarter second.
+                    if cid == self.selectedChatID, !self.streamsHere { await self.loadMessages() }
                 }
             }
         }
@@ -144,6 +161,8 @@ final class ChatsViewModel {
     /// Same as picking the model in the status menu: it becomes the app-wide model (checked there) and this chat and the
     /// panel's switch to it.
     func setModel(_ model: ModelDescriptor) {
+        // Shown (and used by the next question) at once; the store's own update arrives a moment later.
+        if let i = chats.firstIndex(where: { $0.id == selectedChatID }) { chats[i].modelID = model.id }
         container.chooseModel(model)
     }
 
@@ -354,6 +373,12 @@ private struct ChatsSplitView: View {
             if container.showsModelLibrary { ModelLibraryView() } else { detail }
         }
         .navigationSplitViewStyle(.balanced)
+        // "Open in Chats" from the panel: that chat, selected before the window's own choice can show another one.
+        .onChange(of: container.requestedWindowChatID, initial: true) { _, id in
+            guard let id else { return }
+            viewModel.selectedChatID = id
+            container.requestedWindowChatID = nil
+        }
         // The window is named after what it shows: the chat's short title, as in the sidebar, or the models section.
         .onChange(of: windowTitle, initial: true) { _, title in WindowManager.shared.window(.chats)?.title = title }
         // Showing the library (menu, notification, sidebar) clears the chat selection so only one section is highlighted.
@@ -492,7 +517,10 @@ private struct ChatsSplitView: View {
     private var detail: some View {
         // The chat's title is the window's title (`windowTitle`), not a line of its own above the transcript.
         VStack(alignment: .leading, spacing: 0) {
-            if viewModel.messages.isEmpty && viewModel.streamingText.isEmpty && viewModel.errorMessage == nil {
+            if viewModel.isLoadingChat {
+                // Nothing, rather than the empty-chat prompt flashing before the history arrives.
+                Spacer().frame(maxWidth: .infinity)
+            } else if viewModel.messages.isEmpty && viewModel.streamingText.isEmpty && viewModel.errorMessage == nil {
                 emptyState
             } else {
                 transcript
@@ -530,10 +558,14 @@ private struct ChatsSplitView: View {
         let visible = viewModel.messages.filter { $0.role == .user || $0.role == .assistant }
         return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
+                // Not lazy: a lazy stack guessed the heights of rows it had not drawn yet, so the scroll jumped while an
+                // answer streamed, rows stayed blank until another chat was opened and a reused row could draw flipped.
+                VStack(alignment: .leading, spacing: 18) {
                     ForEach(Array(visible.enumerated()), id: \.element.id) { position, m in
                         // Tool rounds fold into one summary line above the answer they led to.
-                        if m.toolCalls.isEmpty {
+                        if isStreamedPlaceholder(m) {
+                            EmptyView()
+                        } else if m.toolCalls.isEmpty {
                             ChatMessageView(
                                 message: m,
                                 summary: m.role == .assistant
@@ -566,12 +598,19 @@ private struct ChatsSplitView: View {
                 .padding(.horizontal, 16).padding(.vertical, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .onChange(of: viewModel.streamingText) { _, _ in proxy.scrollTo("bottom") }
-            .onChange(of: viewModel.messages.count) { _, _ in proxy.scrollTo("bottom") }
+            // Growing content stays pinned to the bottom by the anchor; no scroll per token, which made the view jump.
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .defaultScrollAnchor(.bottom, for: .sizeChanges)
+            .onChange(of: viewModel.messages.count) { _, _ in scrollToEnd(proxy) }
             // A freshly loaded history is laid out a frame later, so the jump to its end waits for that.
             .onAppear { scrollToEnd(proxy) }
             .onChange(of: viewModel.transcriptToken) { _, _ in scrollToEnd(proxy) }
         }
+    }
+
+    /// The stored copy of the reply being written: the streamed text stands for it, otherwise it shows as a stray "…".
+    private func isStreamedPlaceholder(_ message: Message) -> Bool {
+        viewModel.streamsHere && message.id == viewModel.messages.last?.id && message.role == .assistant && message.toolCalls.isEmpty
     }
 
     private func scrollToEnd(_ proxy: ScrollViewProxy) {
