@@ -17,6 +17,11 @@ public actor MLXEngine: InferenceEngine {
     public private(set) var loadedModel: ModelDescriptor?
     private var container: ModelContainer?
     private var currentTask: Task<Void, Never>?
+    /// The model's cache after the last generation, reused when the next prompt continues it (see `PromptSession`).
+    private var session: PromptSession?
+    /// Off switch for cache reuse. Symptom of a cache gone wrong: after tool rounds (not in the first round) the answer turns
+    /// incoherent, repeats itself or loses the question, while the same chat regenerated with this off is fine.
+    private static let reusesPromptCache = true
     /// Metal buffer cache limit after generation (bytes); nil keeps the MLX default.
     private let cacheLimitBytes: Int?
     private let imageResize = CGSize(width: 1024, height: 1024)
@@ -58,6 +63,7 @@ public actor MLXEngine: InferenceEngine {
         currentTask = nil
         container = nil
         loadedModel = nil
+        session = nil
         Memory.clearCache()  // release Metal buffers so memory actually returns to the system
     }
 
@@ -100,7 +106,16 @@ public actor MLXEngine: InferenceEngine {
                 if let block = AnswerText.reasoningBlocks.first(where: { trimmedEnd.hasSuffix($0.open) }) {
                     continuation.yield(.token(block.open))
                 }
-                let generation = try await container.generate(input: input, parameters: parameters)
+                // Only the part of the prompt the cache does not hold yet is prefilled (the tool result of the next round,
+                // the next question). Images are always prefilled whole: a cached prefix cannot carry them.
+                let promptTokens = input.text.tokens.asArray(Int32.self).map(Int.init)
+                let reusable = Self.reusesPromptCache && input.image == nil && input.video == nil && input.audio == nil
+                let previous = reusable ? self.session : nil
+                self.session = nil  // owned by this generation until it ends; a failure leaves none
+                let run = try await container.perform(nonSendable: input) { context, input in
+                    try Self.start(input: input, promptTokens: promptTokens, previous: previous, parameters: parameters, context: context)
+                }
+                let generation = run.stream
                 var finish: FinishReason = .stop
                 var sawToolCall = false
                 for await item in generation {
@@ -134,6 +149,10 @@ public actor MLXEngine: InferenceEngine {
                     }
                 }
                 if sawToolCall, finish == .stop { finish = .toolCalls }
+                // The loop may still be stepping after a cancel: the cache is read only once it has stopped.
+                run.loop.cancel()
+                await run.loop.value
+                if reusable { self.session = run.session.completed(with: run.recorder.tokens) }
                 continuation.yield(.finished(finish))
                 continuation.finish()
             } catch is CancellationError {
@@ -149,6 +168,45 @@ public actor MLXEngine: InferenceEngine {
     }
 
     // Conversion
+
+    // Prompt cache reuse
+
+    /// A generation under way: its stream, the loop feeding it, and what the cache will hold when it ends.
+    private struct Run: Sendable {
+        let stream: AsyncStream<Generation>
+        let loop: Task<Void, Never>
+        let recorder: TokenRecorder
+        let session: PromptSession
+    }
+
+    /// Picks what to prefill: the suffix after a reused prefix, or the whole prompt on a fresh cache. Runs inside
+    /// `perform`, i.e. with the model to itself for the prefill.
+    private static func start(
+        input: LMInput, promptTokens: [Int], previous: PromptSession?, parameters: GenerateParameters, context: ModelContext
+    ) throws -> Run {
+        var cache: [KVCache]
+        var state: LMOutput.State?
+        var kept = 0
+        if let previous, let reuse = previous.reusablePrefix(for: promptTokens) {
+            (cache, state, kept) = (previous.cache, previous.state, reuse)
+            // Trimming must leave the carried state valid too. Qwen-VL keeps its rope anchor offset-relative, so it survives;
+            // a model storing absolute positions would misplace the suffix (garbled text right after the reused part).
+            let surplus = previous.tokens.count - reuse
+            if surplus > 0 { trimPromptCache(cache, numTokens: surplus) }
+        } else {
+            cache = try context.model.newCache(parameters: parameters)
+        }
+        let suffix = kept > 0 ? LMInput(tokens: MLXArray(promptTokens[kept...].map(Int32.init))) : input
+        let iterator = try TokenIterator(input: suffix, model: context.model, cache: cache, state: state, parameters: parameters)
+        // Read right after the prefill, as mlx-swift-lm's ChatSession does: models that anchor positions (Qwen-VL rope
+        // deltas) need it to continue on this cache next time. Losing it fails loudly: `ContinuationStateError.missingState`.
+        state = iterator.state
+        let recorder = TokenRecorder()
+        let (stream, loop) = generateTask(
+            promptTokenCount: promptTokens.count - kept, modelConfiguration: context.configuration, tokenizer: context.tokenizer,
+            iterator: RecordingTokenIterator(base: iterator, recorder: recorder))
+        return Run(stream: stream, loop: loop, recorder: recorder, session: PromptSession(cache: cache, state: state, tokens: promptTokens))
+    }
 
     private static func makeUserInput(_ request: GenerationRequest, resize: CGSize) throws -> UserInput {
         var chat: [MLXLMCommon.Chat.Message] = []
@@ -208,5 +266,72 @@ public actor MLXEngine: InferenceEngine {
     private static func convert(_ call: ToolCall) -> MLXLMCommon.ToolCall {
         let dict = (try? JSONSerialization.jsonObject(with: Data(call.argumentsJSON.utf8))) as? [String: any Sendable] ?? [:]
         return MLXLMCommon.ToolCall(function: .init(name: call.name, arguments: dict), id: call.id)
+    }
+}
+
+// PromptSession
+
+/// The model's KV cache and the exact tokens it represents (prompt, then every generated token, each fed back as the
+/// next step's input). A new prompt that starts with these tokens only needs its remainder prefilled.
+// Ways it can go wrong: the token list drifts from what the cache holds (an iterator in mlx-swift-lm that feeds tokens it
+// does not yield, or stops feeding the last one), which `completed` catches through the attention offset; a recurrent
+// cache (Mamba) shared by two generations at once, which the `session = nil` hand-over in `generate` prevents; and one
+// word of difference from a cold run, which is not an error: chunked prefill rounds differently in a 4-bit model.
+private final class PromptSession: @unchecked Sendable {
+    let cache: [KVCache]
+    let state: LMOutput.State?
+    let tokens: [Int]
+
+    init(cache: [KVCache], state: LMOutput.State?, tokens: [Int]) {
+        self.cache = cache
+        self.state = state
+        self.tokens = tokens
+    }
+
+    /// How many leading tokens of `prompt` the cache can keep. A cache with recurrent layers (Qwen 3.5/3.6: Mamba-style
+    /// state) cannot be rewound, so it is reused only when the prompt continues it exactly; one that can be trimmed keeps
+    /// the common prefix. At least one prompt token must be left to prefill.
+    func reusablePrefix(for prompt: [Int]) -> Int? {
+        var common = 0
+        let limit = min(tokens.count, prompt.count - 1)
+        while common < limit, tokens[common] == prompt[common] { common += 1 }
+        if common == tokens.count { return common }
+        return canTrimPromptCache(cache) && common > 0 ? common : nil
+    }
+
+    /// The same cache after a generation: the recorded tokens are those it has fed. If the attention layers' offset
+    /// says otherwise (a change in mlx-swift-lm), the cache is dropped rather than trusted.
+    func completed(with generated: [Int]) -> PromptSession? {
+        let all = tokens + generated
+        let attention = cache.first { !($0 is ArraysCache) }
+        guard attention?.offset == all.count else { return nil }
+        return PromptSession(cache: cache, state: state, tokens: all)
+    }
+}
+
+/// Generated token ids, collected on the generation loop's thread and read after it has stopped.
+private final class TokenRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [Int] = []
+    func append(_ token: Int) { lock.withLock { storage.append(token) } }
+    var tokens: [Int] { lock.withLock { storage } }
+}
+
+/// `TokenIterator` that also records every token it yields (each has been fed to the model by then).
+private struct RecordingTokenIterator: TokenIteratorProtocol {
+    var base: TokenIterator
+    let recorder: TokenRecorder
+
+    var maxTokens: Int? { base.maxTokens }
+    var tokenCount: Int { base.tokenCount }
+    var promptPrefillTime: TimeInterval { base.promptPrefillTime }
+    var state: LMOutput.State? { base.state }
+    var speculativeDecodingTelemetry: SpeculativeDecodingTelemetry? { base.speculativeDecodingTelemetry }
+    mutating func discardGeneratedToken() { base.discardGeneratedToken() }
+
+    mutating func next() -> Int? {
+        let token = base.next()
+        if let token { recorder.append(token) }
+        return token
     }
 }

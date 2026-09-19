@@ -58,6 +58,8 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
+        // No show/hide animation: with the glass material it read as a flicker on every open and close.
+        panel.animationBehavior = .none
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
@@ -90,6 +92,10 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
     func show(prefill: String? = nil) {
         if let prefill { viewModel.input = prefill }
         position()
+        // Lay out and size the panel before it is on screen, so it appears at its final height instead of growing a frame
+        // later (the deferred `scheduleFit` is for layout passes; here, in an event handler, resizing directly is safe).
+        panel.contentView?.layoutSubtreeIfNeeded()
+        fit(contentHeight: contentHeight)
         // The app is usually not active here (hotkey, status item, Safari): "regardless" orders the panel front anyway,
         // and a non-activating panel takes the keyboard without pulling the app forward.
         panel.orderFrontRegardless()

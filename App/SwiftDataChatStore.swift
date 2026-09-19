@@ -105,16 +105,13 @@ final class MessageRecord {
 actor SwiftDataChatStore: ModelActor, ChatStore {
     nonisolated let modelExecutor: any ModelExecutor
     nonisolated let modelContainer: ModelContainer
-    nonisolated let changes: AsyncStream<ChatStoreChange>
-    private nonisolated let continuation: AsyncStream<ChatStoreChange>.Continuation
+    private nonisolated let broadcast = ChatStoreBroadcast()
+    nonisolated var changes: AsyncStream<ChatStoreChange> { broadcast.subscribe() }
 
     init(directory: URL) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let config = ModelConfiguration("MacOlama", url: directory.appendingPathComponent("MacOlama.store"))
         let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self, configurations: config)
-        let (stream, continuation) = AsyncStream.makeStream(of: ChatStoreChange.self, bufferingPolicy: .bufferingNewest(256))
-        self.changes = stream
-        self.continuation = continuation
         self.modelContainer = container
         self.modelExecutor = DefaultSerialModelExecutor(modelContext: ModelContext(container))
     }
@@ -149,21 +146,21 @@ actor SwiftDataChatStore: ModelActor, ChatStore {
     func insert(_ chat: Chat) async throws {
         modelContext.insert(ChatRecord(chat))
         try modelContext.save()
-        continuation.yield(.chatInserted(chat.id))
+        broadcast.yield(.chatInserted(chat.id))
     }
 
     func update(_ chat: Chat) async throws {
         guard let record = try chatRecord(chat.id) else { throw ChatStoreError.notFound(chat.id) }
         record.apply(chat)
         try modelContext.save()
-        continuation.yield(.chatUpdated(chat.id))
+        broadcast.yield(.chatUpdated(chat.id))
     }
 
     func deleteChat(id: UUID) async throws {
         guard let record = try chatRecord(id) else { return }
         modelContext.delete(record)
         try modelContext.save()
-        continuation.yield(.chatDeleted(id))
+        broadcast.yield(.chatDeleted(id))
     }
 
     func insert(_ message: Message) async throws {
@@ -172,7 +169,7 @@ actor SwiftDataChatStore: ModelActor, ChatStore {
         record.chat?.updatedAt = .now
         modelContext.insert(record)
         try modelContext.save()
-        continuation.yield(.messageInserted(chatID: message.chatID, messageID: message.id))
+        broadcast.yield(.messageInserted(chatID: message.chatID, messageID: message.id))
     }
 
     func update(_ message: Message) async throws {
@@ -180,7 +177,7 @@ actor SwiftDataChatStore: ModelActor, ChatStore {
         record.apply(message)
         record.chat?.updatedAt = .now
         try modelContext.save()
-        continuation.yield(.messageUpdated(chatID: message.chatID, messageID: message.id))
+        broadcast.yield(.messageUpdated(chatID: message.chatID, messageID: message.id))
     }
 
     func deleteMessage(id: UUID) async throws {
@@ -188,6 +185,6 @@ actor SwiftDataChatStore: ModelActor, ChatStore {
         let chatID = record.chatID
         modelContext.delete(record)
         try modelContext.save()
-        continuation.yield(.messageDeleted(chatID: chatID, messageID: id))
+        broadcast.yield(.messageDeleted(chatID: chatID, messageID: id))
     }
 }

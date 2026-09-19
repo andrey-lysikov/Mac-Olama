@@ -138,8 +138,33 @@ public protocol ChatStore: Sendable {
     func insert(_ message: Message) async throws
     func update(_ message: Message) async throws
     func deleteMessage(id: UUID) async throws
-    /// Change stream; the UI re-reads data on each event.
+    /// Change stream; the UI re-reads data on each event. Every access is a subscription of its own (`ChatStoreBroadcast`).
     var changes: AsyncStream<ChatStoreChange> { get }
+}
+
+/// Fans store changes out to every listener. An `AsyncStream` hands each element to one consumer only, and the panel, the
+/// chats window and the Spotlight indexer all listen: with one shared stream each saw only part of the changes.
+public final class ChatStoreBroadcast: @unchecked Sendable {
+    private let lock = NSLock()
+    private var listeners: [UUID: AsyncStream<ChatStoreChange>.Continuation] = [:]
+
+    public init() {}
+
+    public func subscribe() -> AsyncStream<ChatStoreChange> {
+        let (stream, continuation) = AsyncStream.makeStream(of: ChatStoreChange.self, bufferingPolicy: .bufferingNewest(256))
+        let id = UUID()
+        lock.withLock { listeners[id] = continuation }
+        continuation.onTermination = { [weak self] _ in
+            guard let self else { return }
+            self.lock.withLock { self.listeners[id] = nil }
+        }
+        return stream
+    }
+
+    public func yield(_ change: ChatStoreChange) {
+        let current = lock.withLock { Array(listeners.values) }
+        for listener in current { listener.yield(change) }
+    }
 }
 
 public enum ChatStoreChange: Sendable, Equatable {
@@ -157,14 +182,10 @@ public enum ChatStoreError: Error, Equatable {
 public actor InMemoryChatStore: ChatStore {
     private var chats: [UUID: Chat] = [:]
     private var messagesByChat: [UUID: [Message]] = [:]
-    private let continuation: AsyncStream<ChatStoreChange>.Continuation
-    public nonisolated let changes: AsyncStream<ChatStoreChange>
+    private nonisolated let broadcast = ChatStoreBroadcast()
+    public nonisolated var changes: AsyncStream<ChatStoreChange> { broadcast.subscribe() }
 
-    public init() {
-        let (stream, continuation) = AsyncStream.makeStream(of: ChatStoreChange.self, bufferingPolicy: .bufferingNewest(256))
-        self.changes = stream
-        self.continuation = continuation
-    }
+    public init() {}
 
     public func allChats(includeArchived: Bool) async throws -> [Chat] {
         chats.values.filter { includeArchived || !$0.isArchived }.sorted { $0.updatedAt > $1.updatedAt }
@@ -178,25 +199,25 @@ public actor InMemoryChatStore: ChatStore {
 
     public func insert(_ chat: Chat) async throws {
         chats[chat.id] = chat
-        continuation.yield(.chatInserted(chat.id))
+        broadcast.yield(.chatInserted(chat.id))
     }
 
     public func update(_ chat: Chat) async throws {
         guard chats[chat.id] != nil else { throw ChatStoreError.notFound(chat.id) }
         chats[chat.id] = chat
-        continuation.yield(.chatUpdated(chat.id))
+        broadcast.yield(.chatUpdated(chat.id))
     }
 
     public func deleteChat(id: UUID) async throws {
         chats[id] = nil
         messagesByChat[id] = nil
-        continuation.yield(.chatDeleted(id))
+        broadcast.yield(.chatDeleted(id))
     }
 
     public func insert(_ message: Message) async throws {
         messagesByChat[message.chatID, default: []].append(message)
         touch(message.chatID)
-        continuation.yield(.messageInserted(chatID: message.chatID, messageID: message.id))
+        broadcast.yield(.messageInserted(chatID: message.chatID, messageID: message.id))
     }
 
     public func update(_ message: Message) async throws {
@@ -208,13 +229,13 @@ public actor InMemoryChatStore: ChatStore {
         list[idx] = message
         messagesByChat[message.chatID] = list
         touch(message.chatID)
-        continuation.yield(.messageUpdated(chatID: message.chatID, messageID: message.id))
+        broadcast.yield(.messageUpdated(chatID: message.chatID, messageID: message.id))
     }
 
     public func deleteMessage(id: UUID) async throws {
         for (chatID, list) in messagesByChat where list.contains(where: { $0.id == id }) {
             messagesByChat[chatID] = list.filter { $0.id != id }
-            continuation.yield(.messageDeleted(chatID: chatID, messageID: id))
+            broadcast.yield(.messageDeleted(chatID: chatID, messageID: id))
         }
     }
 

@@ -324,3 +324,17 @@ import Testing
         #expect(coloured == ["let", "\"x\"", "// note", "return", "42"])
     }
 }
+
+@Suite struct ChatStoreTests {
+    @Test func everyListenerGetsEveryChange() async throws {
+        let store = InMemoryChatStore()
+        let first = store.changes
+        let second = store.changes
+        let chat = Chat(origin: .window)
+        try await store.insert(chat)
+        var a = first.makeAsyncIterator()
+        var b = second.makeAsyncIterator()
+        #expect(await a.next() == .chatInserted(chat.id))
+        #expect(await b.next() == .chatInserted(chat.id))
+    }
+}

@@ -303,9 +303,10 @@ public actor ConversationService {
         var tail: [EngineMessage] = []
         for (index, message) in history.enumerated().reversed() {
             var content = contentWithDocuments(message)
-            // Earlier reasoning is not sent back: templates drop it anyway, and it only eats the context.
-            if message.role == .assistant { content = AnswerText.visible(content) }
             let inCurrentTurn = index >= turnStart
+            // Earlier turns' reasoning is not sent back: templates drop it anyway, and it only eats the context. Inside the
+            // current turn it stays, as the templates keep it: the prompt then continues what the engine has cached.
+            if message.role == .assistant, !inCurrentTurn { content = AnswerText.visible(content) }
             if inCurrentTurn, message.role == .tool, content.count > toolShareCharacters {
                 // Keep the closing untrusted-data marker, it tells the model where the external text ends.
                 let closing = content.range(of: "</untrusted_content>", options: .backwards).map { String(content[$0.lowerBound...]) } ?? ""

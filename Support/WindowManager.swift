@@ -76,6 +76,12 @@ final class WindowManager: NSObject, NSWindowDelegate {
 
     private func raise(_ window: NSWindow) {
         if window.isMiniaturized { window.deminiaturize(nil) }
+        if !window.isVisible { window.orderFrontRegardless() }  // a window number the WindowServer knows
+        if Self.bringToFront(window) {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate()
+            return
+        }
         if !window.isOnActiveSpace {
             switchSpace(to: window)
             return
@@ -95,6 +101,26 @@ final class WindowManager: NSObject, NSWindowDelegate {
             window?.level = .normal
         }
     }
+
+    /// Makes this process frontmost with `window` in front, the way the Dock does, switching to the window's desktop.
+    /// Public activation is cooperative (may be refused) and never switches desktops for a menu bar app: its status item is
+    /// a window on every desktop, so the app always "has a window here". So this uses SkyLight's private
+    /// `_SLPSSetFrontProcessWithOptions` (as AltTab does), looked up at run time: without it the public path below is used.
+    private static func bringToFront(_ window: NSWindow) -> Bool {
+        guard let setFront = privateSetFrontProcess, window.windowNumber > 0 else { return false }
+        // The "current process" serial number: no deprecated Process Manager call is needed to name ourselves.
+        var psn = ProcessSerialNumber(highLongOfPSN: 0, lowLongOfPSN: UInt32(kCurrentProcess))
+        return setFront(&psn, UInt32(window.windowNumber), 0x200) == 0  // 0x200: kCPSUserGenerated, as a user click
+    }
+
+    private typealias SetFrontProcess = @convention(c) (UnsafeMutablePointer<ProcessSerialNumber>, UInt32, UInt32) -> Int32
+
+    private static let privateSetFrontProcess: SetFrontProcess? = {
+        guard let handle = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY),
+            let symbol = dlsym(handle, "_SLPSSetFrontProcessWithOptions")
+        else { return nil }
+        return unsafeBitCast(symbol, to: SetFrontProcess.self)
+    }()
 
     /// A window on another Space: AppKit switches Spaces only when an active app orders its window front, while
     /// `orderFrontRegardless` on an inactive app just raises it over there. So activate first, then order it front.
