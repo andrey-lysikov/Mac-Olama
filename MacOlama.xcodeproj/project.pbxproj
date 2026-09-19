@@ -7,14 +7,15 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		7F42628D305DD11C00005A57 /* Changelog.md in Resources */ = {isa = PBXBuildFile; fileRef = 7F42628A305DD11C00005A57 /* Changelog.md */; };
-		7F42628E305DD11C00005A57 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 7F42628B305DD11C00005A57 /* LICENSE */; };
-		7F42628F305DD11C00005A57 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 7F42628C305DD11C00005A57 /* README.md */; };
+		7FAA5827305E60610095ED87 /* MacOlamaSafari.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B100000000000000000000B3 /* MacOlamaSafari.appex */; };
+		7FAA5828305E60610095ED87 /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = D100000000000000000000E5 /* Markdown */; };
 		A100000000000000000000B1 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = D100000000000000000000E1 /* MLXLLM */; };
 		A100000000000000000000B2 /* MLXVLM in Frameworks */ = {isa = PBXBuildFile; productRef = D100000000000000000000E2 /* MLXVLM */; };
 		A100000000000000000000B3 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = D100000000000000000000E3 /* MLXLMCommon */; };
 		A100000000000000000000B4 /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = D100000000000000000000E4 /* Tokenizers */; };
-		A100000000000000000000B5 /* MacOlamaSafari.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B100000000000000000000B3 /* MacOlamaSafari.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A100000000000000000000B5 /* MacOlamaSafari.appex in Frameworks */ = {isa = PBXBuildFile; fileRef = B100000000000000000000B3 /* MacOlamaSafari.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A100000000000000000000B6 /* SwiftSoup in Frameworks */ = {isa = PBXBuildFile; productRef = D100000000000000000000E6 /* SwiftSoup */; };
+		A100000000000000000000B7 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = D100000000000000000000E7 /* SwiftMath */; };
 		A100000000000000000000C1 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000C1 /* SafariWebExtensionHandler.swift */; };
 		A100000000000000000000C2 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000C3 /* manifest.json */; };
 		A100000000000000000000C3 /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000C4 /* background.js */; };
@@ -46,7 +47,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
-				A100000000000000000000B5 /* MacOlamaSafari.appex in Embed Foundation Extensions */,
+				7FAA5827305E60610095ED87 /* MacOlamaSafari.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -84,7 +85,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				MLXEngine.swift,
-				OllamaImport.swift,
+				RemoteEngine.swift,
 				TokenizerBridge.swift,
 			);
 			target = E100000000000000000000E1 /* MacOlama */;
@@ -109,8 +110,7 @@
 				CheckHardwareList.swift,
 				HubClient.swift,
 				ModelDownloader.swift,
-				OllamaRegistry.swift,
-				SHA256.swift,
+				ModelScopeClient.swift,
 			);
 			target = E100000000000000000000E1 /* MacOlama */;
 		};
@@ -122,6 +122,7 @@
 				Assets.xcassets,
 				InfoPlist.xcstrings,
 				Localizable.xcstrings,
+				ServicesMenu.xcstrings,
 			);
 			target = E100000000000000000000E1 /* MacOlama */;
 		};
@@ -129,6 +130,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				DocumentExtractor.swift,
+				HTMLDocument.swift,
 				LocalTools.swift,
 				SystemServices.swift,
 				Updates.swift,
@@ -142,8 +144,14 @@
 			membershipExceptions = (
 				AppIntents.swift,
 				ChatsWindow.swift,
+				CodeHighlighter.swift,
 				DownloadWindow.swift,
+				FormulaView.swift,
+				GenerationProgress.swift,
+				MarkdownBlocks.swift,
 				MarkdownView.swift,
+				MathText.swift,
+				ModelIcons.swift,
 				QuickPanel.swift,
 				QuickPanelView.swift,
 				StatusItem.swift,
@@ -221,10 +229,14 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7FAA5828305E60610095ED87 /* Markdown in Frameworks */,
 				A100000000000000000000B1 /* MLXLLM in Frameworks */,
 				A100000000000000000000B2 /* MLXVLM in Frameworks */,
 				A100000000000000000000B3 /* MLXLMCommon in Frameworks */,
 				A100000000000000000000B4 /* Tokenizers in Frameworks */,
+				A100000000000000000000B5 /* MacOlamaSafari.appex in Frameworks */,
+				A100000000000000000000B6 /* SwiftSoup in Frameworks */,
+				A100000000000000000000B7 /* SwiftMath in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -312,6 +324,9 @@
 				D100000000000000000000E2 /* MLXVLM */,
 				D100000000000000000000E3 /* MLXLMCommon */,
 				D100000000000000000000E4 /* Tokenizers */,
+				D100000000000000000000E5 /* Markdown */,
+				D100000000000000000000E6 /* SwiftSoup */,
+				D100000000000000000000E7 /* SwiftMath */,
 			);
 			productName = MacOlama;
 			productReference = B100000000000000000000B1 /* Mac-Olama.app */;
@@ -394,6 +409,9 @@
 			packageReferences = (
 				7100000000000000000000B1 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
 				7100000000000000000000B2 /* XCRemoteSwiftPackageReference "swift-transformers" */,
+				7100000000000000000000B3 /* XCRemoteSwiftPackageReference "swift-markdown" */,
+				7100000000000000000000B4 /* XCRemoteSwiftPackageReference "SwiftSoup" */,
+				7100000000000000000000B5 /* XCRemoteSwiftPackageReference "SwiftMath" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F100000000000000000000F2 /* Products */;
@@ -412,9 +430,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				7F42628D305DD11C00005A57 /* Changelog.md in Resources */,
-				7F42628E305DD11C00005A57 /* LICENSE in Resources */,
-				7F42628F305DD11C00005A57 /* README.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -622,7 +637,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 0.2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -637,7 +652,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1;
+				MARKETING_VERSION = 0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.macolama.app;
 				PRODUCT_MODULE_NAME = MacOlama;
 				PRODUCT_NAME = "Mac-Olama";
@@ -654,7 +669,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 0.2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -669,7 +684,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1;
+				MARKETING_VERSION = 0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.macolama.app;
 				PRODUCT_MODULE_NAME = MacOlama;
 				PRODUCT_NAME = "Mac-Olama";
@@ -716,7 +731,7 @@
 			buildSettings = {
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 0.2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -729,7 +744,7 @@
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 0.1;
+				MARKETING_VERSION = 0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.macolama.app.safari;
 				PRODUCT_MODULE_NAME = MacOlamaSafari;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -743,7 +758,7 @@
 			buildSettings = {
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 0.2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -756,7 +771,7 @@
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 0.1;
+				MARKETING_VERSION = 0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.macolama.app.safari;
 				PRODUCT_MODULE_NAME = MacOlamaSafari;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -823,6 +838,30 @@
 				minimumVersion = 1.3.4;
 			};
 		};
+		7100000000000000000000B3 /* XCRemoteSwiftPackageReference "swift-markdown" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/swiftlang/swift-markdown.git";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.8.0;
+			};
+		};
+		7100000000000000000000B4 /* XCRemoteSwiftPackageReference "SwiftSoup" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/scinfu/SwiftSoup.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.13.9;
+			};
+		};
+		7100000000000000000000B5 /* XCRemoteSwiftPackageReference "SwiftMath" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/mgriebling/SwiftMath.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.7.3;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -845,6 +884,21 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 7100000000000000000000B2 /* XCRemoteSwiftPackageReference "swift-transformers" */;
 			productName = Tokenizers;
+		};
+		D100000000000000000000E5 /* Markdown */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7100000000000000000000B3 /* XCRemoteSwiftPackageReference "swift-markdown" */;
+			productName = Markdown;
+		};
+		D100000000000000000000E6 /* SwiftSoup */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7100000000000000000000B4 /* XCRemoteSwiftPackageReference "SwiftSoup" */;
+			productName = SwiftSoup;
+		};
+		D100000000000000000000E7 /* SwiftMath */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7100000000000000000000B5 /* XCRemoteSwiftPackageReference "SwiftMath" */;
+			productName = SwiftMath;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -1,3 +1,5 @@
+<img src="Resources/Assets.xcassets/AppIcon.appiconset/icon_128x128@2x.png" width="128" alt="icon">
+
 # Mac-Olama
 
 [![Release](https://img.shields.io/github/v/release/andrey-lysikov/Mac-Olama)](https://github.com/andrey-lysikov/Mac-Olama/releases/latest)
@@ -9,34 +11,17 @@ a chat window or Spotlight. Nothing leaves the computer unless you turn web sear
 
 ## Features
 
-- **Ask anywhere** — quick panel (left click on the menu bar icon or a system keyboard shortcut), chat window, Spotlight action "Ask Mac-Olama".
-- **Models** — search Hugging Face and the Ollama library, or paste a link; a verdict shows whether a model fits this Mac.
-  One download at a time with pause, resume after restart and per-model context size.
-- **Images and files** — drop images (vision models), PDF and text files into a question.
-- **Features for the model** (off by default) — web search (DuckDuckGo or Google), reading files in folders you allow, running Shortcuts with a confirmation.
-- **API** — Ollama-compatible and OpenAI-compatible server on `localhost:11434`.
-- **Memory-friendly** — the model is unloaded after an idle timeout, or kept resident if you choose "Never".
-- English and Russian interface, Liquid Glass design.
-
-## Install
-
-Download the dmg from the [latest release](https://github.com/andrey-lysikov/Mac-Olama/releases/latest) and drag the app to Applications.
-
-The application is not officially signed: on first launch allow it in **System Settings → Privacy & Security**.
-
-## Build
-
-Xcode 26+, Apple Silicon. Run `xcodebuild -downloadComponent MetalToolchain` once, open `MacOlama.xcodeproj` and run.
-Spotlight only sees the app from an indexed location, so copy the built app to `/Applications` to try the Spotlight action.
-Release dmg files are built by GitHub Actions (`.github/workflows/release.yml`) when the project version is raised.
-
-When Xcode asks about the `MLXHuggingFaceMacros` macro, choose **Trust & Enable**.
+- Quick panel (left click on the menu bar icon or a system keyboard shortcut), chat window, Spotlight action "Ask Mac-Olama".
+- Search Hugging Face or ModelScope (MLX builds first) for models, or connect it by API.
+- Drop images (vision models), PDF and text files into a question.
+- Wb search (DuckDuckGo or Google), reading files in folders you allow, running Shortcuts with a confirmation.
+- API: Ollama-compatible and OpenAI-compatible server on `localhost:11434`.
+- The models is unloaded after an idle timeout, or kept resident if you choose "Never".
+- English and Russian interface.
+- Liquid Glass support.
 
 ## Tech
 
-Swift 6, SwiftUI + AppKit, AppIntents, SwiftData. Inference: [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm);
-tokenizers: [swift-transformers](https://github.com/huggingface/swift-transformers). Everything else is in the project.
-
-## License
-
-Apache 2.0 — see [LICENSE](LICENSE).
+Swift 6, SwiftUI + AppKit, AppIntents, SwiftData, Apple Silicon only, for MacOS 26 and newer. Also: 
+- [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm);
+- [swift-transformers](https://github.com/huggingface/swift-transformers).

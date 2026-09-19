@@ -1,3 +1,12 @@
+## 0.5
+
+- HTML and Markdown reader
+- Panel now is about of message window
+- Allow add models by API
+- Check models and application for update
+- Update app icon
+- Remove Ollama and add ModelScope as models hub
+
 ## 0.1
 
 - First release: menu bar app, quick panel, chat window, Spotlight action
