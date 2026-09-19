@@ -86,6 +86,13 @@ struct QuickPanelView: View {
     // The model is the one picked in the status menu; the row holds only the field and its pictograms.
     private var inputRow: some View {
         HStack(alignment: .center, spacing: 10) {
+            // Attaching comes before the question, so it sits in front of the field; documents work with any model,
+            // images only with a VLM (the dialog offers them then).
+            Button(action: onChooseFiles) {
+                Image(systemName: "paperclip")
+            }
+            .buttonStyle(.plain).font(.system(size: 16)).foregroundStyle(.secondary)
+            .help(String(localized: "Attach file"))
             TextField(String(localized: "Ask a question…"), text: $viewModel.input, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 20, weight: .regular))
@@ -100,11 +107,6 @@ struct QuickPanelView: View {
                 }
             HStack(spacing: 12) {
                 EngineActivityControl(state: viewModel.engineState, onStop: viewModel.stop)
-                // Documents work with any model; images only with a VLM (the dialog offers them then).
-                Button(action: onChooseFiles) {
-                    Image(systemName: "paperclip")
-                }
-                .help(String(localized: "Attach file"))
                 Button {
                     WindowManager.shared.open(.chats)
                 } label: {
@@ -120,7 +122,7 @@ struct QuickPanelView: View {
                         ? String(localized: "Keep the panel open when you click outside it")
                         : String(localized: "Close the panel when you click outside it"))
                 Button(action: viewModel.clear) {
-                    Image(systemName: "xmark.circle")
+                    Image(systemName: "eraser.line.dashed")
                 }
                 .keyboardShortcut("k", modifiers: .command)
                 .help(String(localized: "Clear"))

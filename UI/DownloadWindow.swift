@@ -440,13 +440,15 @@ struct ModelLibraryView: View {
                         }
                         .onChange(of: vm.query) { _, _ in vm.queryChanged() }
                         .onSubmit { vm.search() }
-                    // "Connect by API" adds a model instead of searching: a check mark, not a magnifier.
+                    // "By link" and "Connect by API" take an exact name instead of searching: a check mark, not a magnifier.
                     Button {
                         vm.search()
                     } label: {
-                        Image(systemName: vm.hub == .api ? "checkmark.circle" : "magnifyingglass")
+                        Image(systemName: vm.hub == .api || vm.hub == .link ? "checkmark.circle" : "magnifyingglass")
+                            .font(.system(size: 16))
                     }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
+                    .padding(.trailing, 6)  // clear of the capsule's rounded end
                     .help(
                         vm.hub == .api
                             ? String(localized: "Add this model: enter its server address below")

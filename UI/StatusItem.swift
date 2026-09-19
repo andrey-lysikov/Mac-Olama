@@ -158,10 +158,6 @@ struct StatusMenuBuilder {
         let actions = MenuActions(container: container)
         menu.autoenablesItems = false
 
-        if case .generating = container.engineState {
-            menu.addItem(item(String(localized: "Stop"), "stop.circle", #selector(MenuActions.stopGeneration), actions, key: "."))
-            menu.addItem(.separator())
-        }
         menu.addItem(
             item(
                 String(localized: "Open Chat List"), "bubble.left.and.bubble.right", #selector(MenuActions.openChats), actions, key: "C",
@@ -392,7 +388,6 @@ final class MenuActions: NSObject {
         self.container = container
     }
 
-    @objc func stopGeneration() { Task { await container.engineManager.cancelCurrent() } }
     @objc func openChats() { WindowManager.shared.open(.chats) }
     @objc func openDownload() { WindowManager.shared.openModels() }
     @objc func toggleLaunchAtLogin() {
