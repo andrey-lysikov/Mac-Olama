@@ -7,7 +7,7 @@ import SwiftUI
 // StatusItemController
 
 /// Menu bar icon: left click opens the panel, right click the menu. Follows `AppContainer.engineState` through the tooltip
-/// and blinks while an answer is waiting that neither the panel nor the chats window showed.
+/// and shimmers (fades to half and back) while an answer is waiting that neither the panel nor the chats window showed.
 @MainActor
 final class StatusItemController: NSObject, NSMenuDelegate {
     private let container: AppContainer
@@ -15,6 +15,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let item: NSStatusItem
     private var observationTask: Task<Void, Never>?
     private var blinkTimer: Timer?
+    private var blinkStart = ContinuousClock.now
     private var seenAnswers = 0
     /// A template silhouette with the features cut out: the menu bar tints it for light and dark bars and for highlight.
     private static let icon: NSImage? = {
@@ -103,7 +104,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         guard container.answersFinished != seenAnswers else { return }
         seenAnswers = container.answersFinished
         guard !answerIsVisible, blinkTimer == nil else { return }
-        blinkTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
+        blinkStart = .now
+        blinkTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.blink() }
         }
     }
@@ -111,9 +113,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var answerIsVisible: Bool { panel.isVisible || WindowManager.shared.isOnScreen(.chats) }
 
     /// Opening the panel or the chats window some other way (shortcut, Spotlight, Dock) also counts as seeing the answer.
+    /// A soft shimmer, not a blink: the icon fades smoothly down to half and back, once every 1.6 s.
     private func blink() {
         guard let button = item.button, !answerIsVisible else { return stopBlinking() }
-        button.alphaValue = button.alphaValue < 1 ? 1 : 0.2
+        let phase = blinkStart.duration(to: .now) / .milliseconds(1600)
+        button.alphaValue = 0.75 + 0.25 * cos(2 * .pi * phase)
     }
 
     private func stopBlinking() {
