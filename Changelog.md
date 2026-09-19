@@ -1,4 +1,4 @@
-## 0.5
+## 0.2
 
 - HTML and Markdown reader
 - Panel now is about of message window
