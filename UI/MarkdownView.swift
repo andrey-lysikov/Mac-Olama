@@ -61,11 +61,22 @@ struct MarkdownView: View {
 }
 
 extension MarkdownView {
-    /// Text of a block: formulas typeset by SwiftMath, inline code with a light tint like the code cards.
+    /// Text of a block: formulas typeset by SwiftMath, inline code with a light tint like the code cards, links marked.
     fileprivate func text(_ attributed: AttributedString, size: CGFloat? = nil) -> Text {
         var styled = attributed
         for run in attributed.runs where run.inlinePresentationIntent?.contains(.code) == true {
             styled[run.range].backgroundColor = Color(nsColor: .quaternaryLabelColor)
+        }
+        // A link reads as one: accent colour, underline and a ↗ after it (clickable too). Backwards, so inserting keeps
+        // the ranges still to visit valid.
+        for (url, range) in styled.runs[\.link].reversed() {
+            guard let url else { continue }
+            styled[range].foregroundColor = .accentColor
+            styled[range].underlineStyle = .single
+            var arrow = AttributedString("\u{2009}\u{2197}\u{FE0E}")  // thin space, ↗ in text (not emoji) presentation
+            arrow.link = url
+            arrow.foregroundColor = .accentColor
+            styled.insert(arrow, at: range.upperBound)
         }
         return FormulaRenderer.text(styled, fontSize: size ?? baseFontSize, dark: colorScheme == .dark)
     }
