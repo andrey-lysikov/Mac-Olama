@@ -257,16 +257,6 @@
         }
       }
     },
-    "Ask a Question" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Задать вопрос"
-          }
-        }
-      }
-    },
     "Ask a question…" : {
       "localizations" : {
         "ru" : {
@@ -293,26 +283,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Прикрепить файлы"
-          }
-        }
-      }
-    },
-    "Attach image" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Прикрепить изображение"
-          }
-        }
-      }
-    },
-    "Auto-Close Panel" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Автозакрытие панели"
           }
         }
       }
@@ -637,16 +607,6 @@
         }
       }
     },
-    "Detailed Analysis" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Подробный анализ"
-          }
-        }
-      }
-    },
     "Done" : {
       "localizations" : {
         "ru" : {
@@ -943,16 +903,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Установлена"
-          }
-        }
-      }
-    },
-    "Keyboard Shortcut…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сочетание клавиш…"
           }
         }
       }
@@ -1918,16 +1868,6 @@
         }
       }
     },
-    "The model runs several searches, reads the best pages in full and compares sources; answers take longer" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Модель делает несколько запросов, читает лучшие страницы целиком и сравнивает источники; ответ готовится дольше"
-          }
-        }
-      }
-    },
     "The server did not answer in %lld s. Check the address and port." : {
       "localizations" : {
         "ru" : {
@@ -2334,6 +2274,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Нужен только для закрытых моделей. Создайте токен с ролью Read и вставьте его сюда."
+          }
+        }
+      }
+    },
+    "Attach file" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прикрепить файл"
+          }
+        }
+      }
+    },
+    "Keep the panel open when you click outside it" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не закрывать панель при клике вне её"
           }
         }
       }

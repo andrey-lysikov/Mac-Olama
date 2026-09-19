@@ -42,10 +42,9 @@ public actor ConversationService {
         public var maxDocumentCharacters = 24_000
         /// User-chosen context window per model id, in tokens; a missing entry = the model's own maximum.
         public var contextTokensByModel: [String: Int] = [:]
-        /// "Detailed Analysis" of web search: the guidance asks for several queries and sources instead of one quick look.
-        public var deepWebResearch = false
         public var defaultSampling: SamplingParams
-        public init(maxToolIterations: Int = 5, reservedTokensForReply: Int = 1024, defaultSampling: SamplingParams = .init()) {
+        /// Web research reformulates queries and reads several pages, each a tool round.
+        public init(maxToolIterations: Int = 10, reservedTokensForReply: Int = 1024, defaultSampling: SamplingParams = .init()) {
             self.maxToolIterations = maxToolIterations
             self.reservedTokensForReply = reservedTokensForReply
             self.defaultSampling = defaultSampling
@@ -236,7 +235,7 @@ public actor ConversationService {
 
     /// What the model cannot know by itself: today's date and its tools. Without it a model answers from stale
     /// training data and rarely thinks of searching.
-    static func guidance(toolSpecs: [ToolSpec], deepWebResearch: Bool = false, now: Date = .now) -> String {
+    static func guidance(toolSpecs: [ToolSpec], now: Date = .now) -> String {
         let date = now.formatted(Date.FormatStyle(date: .complete, time: .omitted).locale(Locale(identifier: "en_US")))
         var lines = [
             "Today is \(date). Your training data ends earlier, so your knowledge of recent events, prices, versions and people may be outdated."
@@ -247,15 +246,13 @@ public actor ConversationService {
                 "You have internet access through tools. Whenever the question is about something recent or time-sensitive, or you are not sure of the facts, call web_search first"
                     + (names.contains("fetch_url") ? ", open the most relevant results with fetch_url," : "")
                     + " and answer from what you found, naming the sources. Never say that you cannot browse the internet.")
-            if deepWebResearch {
-                lines.append(
-                    "Research thoroughly: if the first results are thin, search again with different wording"
-                        + (names.contains("fetch_url")
-                            ? "; read the full text of at least two or three of the best sources with fetch_url instead of relying on snippets"
-                            : "")
-                        + ". Compare the sources, point out where they disagree or what is uncertain, and give a detailed, structured answer "
-                        + "with the key facts, figures and dates, ending with a list of source links.")
-            }
+            lines.append(
+                "Research thoroughly: if the first results are thin, search again with different wording"
+                    + (names.contains("fetch_url")
+                        ? "; read the full text of at least two or three of the best sources with fetch_url instead of relying on snippets"
+                        : "")
+                    + ". Compare the sources, point out where they disagree or what is uncertain, and give a detailed, structured answer "
+                    + "with the key facts, figures and dates, ending with a list of source links.")
             lines.append("Never paste raw search results or page text into the answer; write the answer in your own words.")
         }
         if names.contains("search_files") || names.contains("read_file") {
@@ -275,7 +272,7 @@ public actor ConversationService {
         var used = 0
         // One system message only: several chat templates accept a single one. The chat's own prompt comes last, so it wins.
         let system = [
-            Self.guidance(toolSpecs: toolSpecs, deepWebResearch: configuration.deepWebResearch), chat.systemPrompt ?? "",
+            Self.guidance(toolSpecs: toolSpecs), chat.systemPrompt ?? "",
         ].filter { !$0.isEmpty }.joined(separator: "\n\n")
         result.append(EngineMessage(role: .system, content: system))
         used += Self.estimateTokens(system)

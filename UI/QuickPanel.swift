@@ -67,7 +67,9 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         let root = QuickPanelView(
             viewModel: viewModel, onClose: { [weak self] in self?.hide() },
             onHeightChange: { [weak self] height in self?.fit(contentHeight: height) },
-            onMakeKey: { [weak self] in self?.panel.makeKey() }
+            onMakeKey: { [weak self] in self?.panel.makeKey() },
+            onChooseFiles: { [weak self] in self?.chooseFiles() },
+            onToggleAutoClose: { [weak self] in self?.toggleAutoClose() }
         )
         .environment(container)
         let hosting = NSHostingView(rootView: root)
@@ -107,6 +109,32 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
     func hide() {
         panel.orderOut(nil)
         removeFocusObserver()
+    }
+
+    /// The lock on the panel: applies at once, while the panel is shown.
+    private func toggleAutoClose() {
+        container.settings.panelClosesOnFocusLoss.toggle()
+        installFocusObserver()
+    }
+
+    /// The open dialog goes above the panel (level `.statusBar`) and takes the keyboard; the panel must not auto-close
+    /// while the dialog is key, so the focus observer rests until it is dismissed.
+    private func chooseFiles() {
+        removeFocusObserver()
+        let dialog = NSOpenPanel()
+        dialog.allowedContentTypes = [.pdf, .text, .sourceCode, .json, .rtf] + (viewModel.canAttachImages ? [.image] : [])
+        dialog.allowsMultipleSelection = true
+        dialog.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+        NSApp.activate()
+        dialog.begin { [weak self] response in
+            guard let self else { return }
+            if response == .OK { dialog.urls.forEach { self.viewModel.attach(fileURL: $0) } }
+            guard panel.isVisible else { return }
+            panel.makeKey()
+            installFocusObserver()
+        }
+        dialog.orderFrontRegardless()
+        dialog.makeKey()  // VERIFY(mac): the dialog gets the keyboard while the app is an accessory
     }
 
     // Geometry: the user drags the panel anywhere and drags its edges; width and the height limit for answers are remembered.

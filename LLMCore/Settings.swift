@@ -48,7 +48,6 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case apiServerPort = "apiServerPort"  // Int, default 11434; auto-advanced when the port is taken
     case toolsEnabled = "toolsEnabled"  // Bool, default false
     case searchProvider = "searchProvider"  // String: "duckduckgo" (default) or "google"
-    case deepWebSearch = "deepWebSearch"  // Bool, default true: more results, longer pages, several sources per answer
     case panelClosesOnFocusLoss = "panelClosesOnFocusLoss"  // Bool, default true
     case fileToolsEnabled = "fileToolsEnabled"  // Bool, default false
     case shortcutsToolEnabled = "shortcutsToolEnabled"  // Bool, default false
@@ -76,7 +75,6 @@ public enum SettingsDefaults {
             SettingsKey.apiServerPort.rawValue: apiServerPort,
             SettingsKey.toolsEnabled.rawValue: false,
             SettingsKey.searchProvider.rawValue: searchProvider,
-            SettingsKey.deepWebSearch.rawValue: true,
             SettingsKey.panelClosesOnFocusLoss.rawValue: true,
             SettingsKey.fileToolsEnabled.rawValue: false,
             SettingsKey.shortcutsToolEnabled.rawValue: false,

@@ -300,9 +300,6 @@ final class AppContainer {
     private func applyConversationConfiguration() {
         var config = ConversationService.Configuration()
         config.contextTokensByModel = settings.modelContextTokens
-        config.deepWebResearch = settings.deepWebSearch
-        // Detailed search reformulates queries and reads several pages, each a tool round.
-        if settings.deepWebSearch { config.maxToolIterations = 10 }
         Task { await conversation.setConfiguration(config) }
     }
 
@@ -537,12 +534,6 @@ final class AppContainer {
         updateTools()
     }
 
-    func setDeepWebSearch(_ enabled: Bool) {
-        settings.deepWebSearch = enabled
-        updateTools()
-        applyConversationConfiguration()
-    }
-
     func setFileToolsEnabled(_ enabled: Bool) {
         settings.fileToolsEnabled = enabled
         updateTools()
@@ -571,7 +562,7 @@ final class AppContainer {
         var providers: [any ToolProvider] = []
         if settings.toolsEnabled {
             let provider: any SearchProvider = settings.searchProvider == "google" ? GoogleProvider() : DuckDuckGoProvider()
-            providers.append(WebToolProvider(provider: provider, configuration: settings.deepWebSearch ? .detailed : .init()))
+            providers.append(WebToolProvider(provider: provider, configuration: .init()))
         }
         if settings.fileToolsEnabled, !settings.allowedFolders.isEmpty {
             providers.append(
@@ -703,10 +694,6 @@ final class AppSettings {
     var searchProvider: String {
         get { string(.searchProvider) ?? SettingsDefaults.searchProvider }
         set { set(newValue, .searchProvider) }
-    }
-    var deepWebSearch: Bool {
-        get { bool(.deepWebSearch) }
-        set { set(newValue, .deepWebSearch) }
     }
     var fileToolsEnabled: Bool {
         get { bool(.fileToolsEnabled) }

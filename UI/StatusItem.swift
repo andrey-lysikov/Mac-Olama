@@ -61,7 +61,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     private func showMenu() {
-        let menu = StatusMenuBuilder(container: container, panel: panel).build()
+        let menu = StatusMenuBuilder(container: container).build()
         menu.delegate = self
         item.menu = menu
         item.button?.performClick(nil)
@@ -184,18 +184,16 @@ enum GlyphImage {
 @MainActor
 struct StatusMenuBuilder {
     let container: AppContainer
-    let panel: QuickPanelController
 
     func build() -> NSMenu {
         let menu = NSMenu()
-        let actions = MenuActions(container: container, panel: panel)
+        let actions = MenuActions(container: container)
         menu.autoenablesItems = false
 
         if case .generating = container.engineState {
             menu.addItem(item(String(localized: "Stop"), "stop.circle", #selector(MenuActions.stopGeneration), actions, key: "."))
             menu.addItem(.separator())
         }
-        menu.addItem(item(String(localized: "Ask a Question"), "sparkle.magnifyingglass", #selector(MenuActions.openPanel), actions))
         menu.addItem(
             item(
                 String(localized: "Open Chat List"), "bubble.left.and.bubble.right", #selector(MenuActions.openChats), actions, key: "C",
@@ -203,18 +201,12 @@ struct StatusMenuBuilder {
         menu.addItem(.separator())
         menu.addItem(submenu(String(localized: "Model"), "cpu", modelSubmenu(actions)))
         menu.addItem(submenu(String(localized: "Features"), "wand.and.stars", featuresSubmenu(actions)))
-        menu.addItem(.separator())
         menu.addItem(submenu(String(localized: "Unload After"), "timer", idleSubmenu(actions)))
-        menu.addItem(
-            toggle(
-                String(localized: "Auto-Close Panel"), "rectangle.badge.xmark", container.settings.panelClosesOnFocusLoss,
-                #selector(MenuActions.togglePanelFocus), actions, help: String(localized: "Close the panel when you click outside it")))
+        menu.addItem(.separator())
         menu.addItem(
             toggle(
                 String(localized: "Autostart"), "power", container.settings.launchAtLogin, #selector(MenuActions.toggleLaunchAtLogin),
                 actions))
-        menu.addItem(
-            item(String(localized: "Keyboard Shortcut…"), "keyboard", #selector(MenuActions.openKeyboardSettings), actions))
         menu.addItem(
             item(String(localized: "Check for Updates"), "arrow.triangle.2.circlepath", #selector(MenuActions.checkUpdates), actions))
         menu.addItem(.separator())
@@ -311,13 +303,6 @@ struct StatusMenuBuilder {
             mi.state = container.settings.toolsEnabled && selected ? .on : .off
             sub.addItem(mi)
         }
-        sub.addItem(.separator())
-        sub.addItem(
-            toggle(
-                String(localized: "Detailed Analysis"), "text.magnifyingglass", container.settings.deepWebSearch,
-                #selector(MenuActions.toggleDeepWebSearch), actions,
-                help: String(
-                    localized: "The model runs several searches, reads the best pages in full and compares sources; answers take longer")))
         return sub
     }
 
@@ -435,24 +420,14 @@ struct StatusMenuBuilder {
 @MainActor
 final class MenuActions: NSObject {
     private let container: AppContainer
-    private let panel: QuickPanelController
 
-    init(container: AppContainer, panel: QuickPanelController) {
+    init(container: AppContainer) {
         self.container = container
-        self.panel = panel
     }
 
     @objc func stopGeneration() { Task { await container.engineManager.cancelCurrent() } }
     @objc func openChats() { WindowManager.shared.open(.chats) }
-    @objc func openPanel() { panel.show() }
     @objc func openDownload() { WindowManager.shared.openModels() }
-    /// The panel hot key is an NSServices shortcut, assigned in System Settings → Keyboard → App Shortcuts.
-    @objc func openKeyboardSettings() {
-        // VERIFY(macOS26): deep link into the Shortcuts pane of Keyboard settings.
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension?Shortcuts") else { return }
-        NSWorkspace.shared.open(url)
-    }
-
     @objc func toggleLaunchAtLogin() {
         container.settings.launchAtLogin.toggle()
         LaunchAtLogin.sync(enabled: container.settings.launchAtLogin)
@@ -476,7 +451,6 @@ final class MenuActions: NSObject {
     @objc func setFileAccess(_ sender: NSMenuItem) {
         if let enabled = sender.representedObject as? Bool { container.setFileToolsEnabled(enabled) }
     }
-    @objc func toggleDeepWebSearch() { container.setDeepWebSearch(!container.settings.deepWebSearch) }
     @objc func toggleShortcutsTool() { container.setShortcutsToolEnabled(!container.settings.shortcutsToolEnabled) }
     @objc func removeAllowedFolder(_ sender: NSMenuItem) {
         if let path = sender.representedObject as? String { container.removeAllowedFolder(path) }
@@ -493,7 +467,6 @@ final class MenuActions: NSObject {
             container.setFileToolsEnabled(true)
         }
     }
-    @objc func togglePanelFocus() { container.settings.panelClosesOnFocusLoss.toggle() }
     @objc func checkUpdates() { container.updates.checkAll(force: true) }
     @objc func quit() { NSApp.terminate(nil) }
 }

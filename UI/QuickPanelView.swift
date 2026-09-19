@@ -13,6 +13,10 @@ struct QuickPanelView: View {
     var onHeightChange: (CGFloat) -> Void = { _ in }
     /// Makes the panel key, so a file dropped from Finder can hand the keyboard to the field.
     var onMakeKey: () -> Void = {}
+    /// The file dialog is run by the controller: it has to sit above the panel and keep the panel from auto-closing.
+    var onChooseFiles: () -> Void = {}
+    var onToggleAutoClose: () -> Void = {}
+    @Environment(AppContainer.self) private var container
     @State private var transcriptHeight: CGFloat = 0
     /// Field plus attachment chips: whatever of the height limit is left goes to the transcript.
     @State private var controlsHeight: CGFloat = 52
@@ -96,21 +100,25 @@ struct QuickPanelView: View {
                 }
             HStack(spacing: 12) {
                 EngineActivityControl(state: viewModel.engineState, onStop: viewModel.stop)
-                if viewModel.canAttachImages {
-                    Button {
-                        chooseFile()
-                    } label: {
-                        Image(systemName: "photo.badge.plus")
-                    }
-                    .help(String(localized: "Attach image"))
+                // Documents work with any model; images only with a VLM (the dialog offers them then).
+                Button(action: onChooseFiles) {
+                    Image(systemName: "doc.badge.plus")
                 }
+                .help(String(localized: "Attach file"))
                 Button {
                     WindowManager.shared.open(.chats)
                 } label: {
                     Image(systemName: "bubble.left.and.bubble.right")
                 }
                 .help(String(localized: "Open in Chats"))
-                .disabled(viewModel.messages.isEmpty)
+                // Closed lock: the panel stays open when you click elsewhere.
+                Button(action: onToggleAutoClose) {
+                    Image(systemName: container.settings.panelClosesOnFocusLoss ? "lock.open" : "lock")
+                }
+                .help(
+                    container.settings.panelClosesOnFocusLoss
+                        ? String(localized: "Keep the panel open when you click outside it")
+                        : String(localized: "Close the panel when you click outside it"))
                 Button(action: viewModel.clear) {
                     Image(systemName: "xmark.circle")
                 }
@@ -276,15 +284,6 @@ struct QuickPanelView: View {
         return true
     }
 
-    private func chooseFile() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.image, .pdf, .text, .sourceCode, .json, .rtf]
-        panel.allowsMultipleSelection = true
-        panel.begin { response in
-            guard response == .OK else { return }
-            for url in panel.urls { viewModel.attach(fileURL: url) }
-        }
-    }
 }
 
 // FieldCaret

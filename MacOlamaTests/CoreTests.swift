@@ -59,12 +59,10 @@ import Testing
         #expect(text.contains("Never say that you cannot browse"))
     }
 
-    @Test func detailedSearchAsksForSeveralSources() {
-        let quick = ConversationService.guidance(toolSpecs: [web, fetch])
-        let detailed = ConversationService.guidance(toolSpecs: [web, fetch], deepWebResearch: true)
-        #expect(!quick.contains("Research thoroughly"))
-        #expect(detailed.contains("Research thoroughly"))
-        #expect(detailed.contains("fetch_url"))
+    @Test func searchAsksForSeveralSources() {
+        let text = ConversationService.guidance(toolSpecs: [web, fetch])
+        #expect(text.contains("Research thoroughly"))
+        #expect(text.contains("read the full text"))
     }
 
     @Test func echoedToolResultsAreNotShown() {

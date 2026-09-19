@@ -136,19 +136,12 @@ public struct GoogleProvider: SearchProvider {
 /// `web_search` and `fetch_url` for tool calling. Results are wrapped as untrusted data for the model.
 public struct WebToolProvider: ToolProvider {
     public struct Configuration: Sendable {
-        public var maxResults = 5
-        public var maxPageCharacters = 6000
+        // Enough candidates to choose from and pages read far enough to compare sources.
+        public var maxResults = 8
+        public var maxPageCharacters = 12_000
         public var blockedHosts: Set<String> = ["localhost", "127.0.0.1", "0.0.0.0", "::1"]
         public var timeout: TimeInterval = 15
         public init() {}
-
-        /// "Detailed Analysis": more candidates to choose from and pages read far enough to compare sources.
-        public static var detailed: Configuration {
-            var configuration = Configuration()
-            configuration.maxResults = 8
-            configuration.maxPageCharacters = 12_000
-            return configuration
-        }
     }
 
     let provider: any SearchProvider
