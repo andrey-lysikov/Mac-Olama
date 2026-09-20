@@ -85,6 +85,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				MLXEngine.swift,
+				MTPDrafter.swift,
 				RemoteEngine.swift,
 				TokenizerBridge.swift,
 			);
@@ -631,13 +632,13 @@
 		9100000000000000000000C1 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MacOlama.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				ARCHS = arm64;  /* Apple Silicon only: MLX needs Metal on arm64 */
 				CURRENT_PROJECT_VERSION = 0.2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = NO;
@@ -664,13 +665,13 @@
 		9100000000000000000000C2 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MacOlama.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				ARCHS = arm64;  /* Apple Silicon only: MLX needs Metal on arm64 */
 				CURRENT_PROJECT_VERSION = 0.2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = NO;
@@ -731,9 +732,9 @@
 		9100000000000000000000E1 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
-				ARCHS = arm64;  /* Apple Silicon only: MLX needs Metal on arm64 */
 				CURRENT_PROJECT_VERSION = 0.2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
@@ -759,9 +760,9 @@
 		9100000000000000000000E2 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
-				ARCHS = arm64;  /* Apple Silicon only: MLX needs Metal on arm64 */
 				CURRENT_PROJECT_VERSION = 0.2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;

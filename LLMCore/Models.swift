@@ -154,6 +154,23 @@ public struct KVCacheProfile: Codable, Sendable, Equatable, Hashable {
 
 // ModelManifest
 
+/// What the checkpoint itself asks to be sampled with: `generation_config.json`, the file Hugging Face ships for
+/// exactly this, and failing that `config.json`. Read from disk when needed — old manifests do not carry it.
+public enum ModelDefaults {
+    public static func temperature(in directory: URL) -> Double? {
+        for name in ["generation_config.json", "config.json"] {
+            guard let data = try? Data(contentsOf: directory.appending(path: name)),
+                let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }
+            let text = root["text_config"] as? [String: Any] ?? root
+            if let value = (text["temperature"] as? NSNumber ?? root["temperature"] as? NSNumber)?.doubleValue, value >= 0 {
+                return value
+            }
+        }
+        return nil
+    }
+}
+
 /// `manifest.json` in the model folder. Written by the downloader, read by the catalog.
 public struct ModelManifest: Codable, Sendable, Equatable {
     public static let fileName = "manifest.json"

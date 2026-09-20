@@ -400,7 +400,7 @@ final class QuickPanelViewModel {
             messages = try await container.chatStore.messages(chatID: chat.id)
             transcriptToken += 1
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = ConversationService.describe(error)
         }
     }
 
@@ -494,7 +494,7 @@ final class QuickPanelViewModel {
                     }
                 }
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = ConversationService.describe(error)
             }
             progress = nil
             isGenerating = false

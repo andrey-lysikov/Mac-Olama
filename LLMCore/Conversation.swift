@@ -33,6 +33,19 @@ public enum ConversationError: Error, Equatable {
     case tooManyToolIterations
 }
 
+// The chat shows the reason in red, so these read as sentences rather than enum dumps.
+extension ConversationError: CustomStringConvertible {
+    public var description: String {
+        switch self {
+        case .noActiveModel: String(localized: "No model is chosen for this chat.")
+        case .chatNotFound: String(localized: "This chat no longer exists.")
+        case .unknownTool(let name): String(localized: "The model asked for an unknown tool: \(name)")
+        case .tooManyToolIterations:
+            String(localized: "The model kept calling tools without answering; the round limit was reached.")
+        }
+    }
+}
+
 /// Single entry point for generation used by the panel, chats window, intents and API.
 /// Owns the active chat, builds context, runs the tool-calling loop and persists partial replies.
 public actor ConversationService {
@@ -44,6 +57,11 @@ public actor ConversationService {
         public var maxDocumentCharacters = 24_000
         /// User-chosen context window per model id, in tokens; a missing entry = the model's own maximum.
         public var contextTokensByModel: [String: Int] = [:]
+        /// Temperature chosen per model in the models section; a request that brings its own sampling wins.
+        public var temperatureByModel: [String: Double] = [:]
+        /// Models answering with multi-token prediction. Their drafters verify against greedy decoding, so these
+        /// models sample nothing: same answer every time, several tokens per round.
+        public var speculativeModelIDs: Set<String> = []
         public var defaultSampling: SamplingParams
         /// Web research reformulates queries and reads several pages, each a tool round.
         public init(maxToolIterations: Int = 10, reservedTokensForReply: Int = 1024, defaultSampling: SamplingParams = .init()) {
@@ -143,7 +161,10 @@ public actor ConversationService {
         }
 
         let (stream, continuation) = AsyncStream.makeStream(of: ConversationEvent.self, bufferingPolicy: .unbounded)
-        let resolvedSampling = sampling ?? configuration.defaultSampling
+        var resolvedSampling = sampling ?? configuration.defaultSampling
+        if sampling == nil, let chosen = configuration.temperatureByModel[model.id] { resolvedSampling.temperature = chosen }
+        // Speculation has the last word: its drafts are verified against greedy decoding.
+        if configuration.speculativeModelIDs.contains(model.id) { resolvedSampling.temperature = 0 }
         let task = Task { [weak self] in
             guard let self else { return }
             await self.runGeneration(
@@ -177,7 +198,7 @@ public actor ConversationService {
                 let engineMessages = try buildContext(chat: chat, history: history, model: model, toolSpecs: toolSpecs)
                 let request = GenerationRequest(
                     messages: engineMessages, tools: toolSpecs, sampling: sampling, keepAlive: keepAlive, chatID: chat.id,
-                    contextTokens: effectiveContext(for: model))
+                    contextTokens: effectiveContext(for: model), speculates: configuration.speculativeModelIDs.contains(model.id))
 
                 var pendingCalls: [ToolCall] = []
                 var usage: GenerationUsage?
@@ -246,7 +267,20 @@ public actor ConversationService {
         } catch {
             assistant.isPartial = true
             try? await store.update(assistant)
-            continuation.yield(.failed("\(error)"))
+            continuation.yield(.failed(Self.describe(error)))
+        }
+    }
+
+    /// Why the model did not answer, in words the chat can show: our own errors say it themselves, a network failure
+    /// is named as one, and anything else falls back to the system's description.
+    public static func describe(_ error: Error) -> String {
+        switch error {
+        case let engine as EngineError: engine.description
+        case let conversation as ConversationError: conversation.description
+        case let url as URLError:
+            String(localized: "The model server did not answer: \(url.localizedDescription)")
+        case is CancellationError: String(localized: "The answer was stopped.")
+        default: error.localizedDescription
         }
     }
 

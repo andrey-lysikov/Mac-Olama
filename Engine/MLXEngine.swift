@@ -22,6 +22,15 @@ public actor MLXEngine: InferenceEngine {
     /// Off switch for cache reuse. Symptom of a cache gone wrong: after tool rounds (not in the first round) the answer turns
     /// incoherent, repeats itself or loses the question, while the same chat regenerated with this off is fine.
     private static let reusesPromptCache = true
+    /// Off switch for multi-token prediction. Drafted tokens are verified by the model itself, so the answer is the
+    /// one plain decoding would give; only the speed changes.
+    private static let usesSpeculativeDecoding = true
+    /// Tokens offered per speculative round (one bonus plus the drafted ones), the library's default; a drafter that
+    /// cannot go that wide clamps it.
+    private static let speculationBlockSize = 4
+    /// What is known about the loaded model's MTP drafter. `greedyOnly` remembers a drafter that was let go because
+    /// the request sampled: it is loaded again if a later request is greedy, rather than sitting in memory unused.
+    private var drafterState: DrafterState = .unknown
     /// Metal buffer cache limit after generation (bytes); nil keeps the MLX default.
     private let cacheLimitBytes: Int?
     private let imageResize = CGSize(width: 1024, height: 1024)
@@ -64,6 +73,7 @@ public actor MLXEngine: InferenceEngine {
         container = nil
         loadedModel = nil
         session = nil
+        drafterState = .unknown
         Memory.clearCache()  // release Metal buffers so memory actually returns to the system
     }
 
@@ -112,8 +122,11 @@ public actor MLXEngine: InferenceEngine {
                 let reusable = Self.reusesPromptCache && input.image == nil && input.video == nil && input.audio == nil
                 let previous = reusable ? self.session : nil
                 self.session = nil  // owned by this generation until it ends; a failure leaves none
-                let run = try await container.perform(nonSendable: input) { context, input in
-                    try Self.start(input: input, promptTokens: promptTokens, previous: previous, parameters: parameters, context: context)
+                let drafter = request.speculates ? await self.drafter(temperature: request.sampling.temperature) : nil
+                let run = try await container.perform(nonSendable: StartInput(input: input, drafter: drafter)) { context, start in
+                    try Self.start(
+                        input: start.input, promptTokens: promptTokens, previous: previous, parameters: parameters, context: context,
+                        drafter: start.drafter?.model)
                 }
                 let generation = run.stream
                 var finish: FinishReason = .stop
@@ -179,10 +192,58 @@ public actor MLXEngine: InferenceEngine {
         let session: PromptSession
     }
 
-    /// Picks what to prefill: the suffix after a reused prefix, or the whole prompt on a fresh cache. Runs inside
-    /// `perform`, i.e. with the model to itself for the prefill.
+    /// The prompt and, when the checkpoint has MTP heads, the drafter: neither MLX object is `Sendable`, so they cross
+    /// into the model's isolation together.
+    private struct StartInput {
+        let input: LMInput
+        let drafter: DrafterBox?
+    }
+
+    /// The drafter is kept with the model in this actor and used inside the model's isolation. Generations are
+    /// serialized by `EngineManager`, so the reference crosses once per generation and is touched nowhere else —
+    /// stated here the way mlx-swift-lm's own tests state it for drafter models.
+    private struct DrafterBox: @unchecked Sendable {
+        let model: any MTPDrafterModel
+    }
+
+    /// What is known about this model's drafter; see `drafterState`.
+    private enum DrafterState {
+        case unknown
+        case none
+        case loaded(any MTPDrafterModel)
+        case greedyOnly
+    }
+
+    /// The drafter to speculate with, loaded on the first generation of a model that has MTP heads and kept with it.
+    /// A drafter that insists on greedy decoding is let go while the request samples — it would only hold memory.
+    private func drafter(temperature: Double) async -> DrafterBox? {
+        guard Self.usesSpeculativeDecoding, let model = loadedModel else { return nil }
+        switch drafterState {
+        case .none: return nil
+        case .greedyOnly where temperature != 0: return nil
+        case .unknown, .greedyOnly:
+            guard let loaded = await MTPDrafter.load(modelDirectory: model.directory) else {
+                drafterState = .none
+                return nil
+            }
+            drafterState = .loaded(loaded)
+            return self.drafter(loaded, temperature: temperature)
+        case .loaded(let loaded):
+            return self.drafter(loaded, temperature: temperature)
+        }
+    }
+
+    private func drafter(_ loaded: any MTPDrafterModel, temperature: Double) -> DrafterBox? {
+        guard loaded.requiresGreedySampling, temperature != 0 else { return DrafterBox(model: loaded) }
+        drafterState = .greedyOnly
+        return nil
+    }
+
+    /// Picks what to prefill: the suffix after a reused prefix, or the whole prompt on a fresh cache, and how to
+    /// decode it. Runs inside `perform`, i.e. with the model to itself for the prefill.
     private static func start(
-        input: LMInput, promptTokens: [Int], previous: PromptSession?, parameters: GenerateParameters, context: ModelContext
+        input: LMInput, promptTokens: [Int], previous: PromptSession?, parameters: GenerateParameters, context: ModelContext,
+        drafter: (any MTPDrafterModel)?
     ) throws -> Run {
         var cache: [KVCache]
         var state: LMOutput.State?
@@ -197,13 +258,27 @@ public actor MLXEngine: InferenceEngine {
             cache = try context.model.newCache(parameters: parameters)
         }
         let suffix = kept > 0 ? LMInput(tokens: MLXArray(promptTokens[kept...].map(Int32.init))) : input
+        let recorder = TokenRecorder()
+        let prefill = promptTokens.count - kept
+        // Speculation has nowhere to put a carried state, so a cache that needs one (Qwen-VL rope anchors) keeps the
+        // plain path: reusing that cache saves more than drafting would.
+        if let drafter, state == nil {
+            let iterator = try MTPSpeculativeTokenIterator(
+                input: suffix, mainModel: context.model, drafter: drafter, mainCache: cache, parameters: parameters,
+                blockSize: speculationBlockSize)
+            let (stream, loop) = generateTask(
+                promptTokenCount: prefill, modelConfiguration: context.configuration, tokenizer: context.tokenizer,
+                iterator: RecordingTokenIterator(base: iterator, recorder: recorder))
+            return Run(
+                stream: stream, loop: loop, recorder: recorder,
+                session: PromptSession(cache: cache, state: iterator.state, tokens: promptTokens))
+        }
         let iterator = try TokenIterator(input: suffix, model: context.model, cache: cache, state: state, parameters: parameters)
         // Read right after the prefill, as mlx-swift-lm's ChatSession does: models that anchor positions (Qwen-VL rope
         // deltas) need it to continue on this cache next time. Losing it fails loudly: `ContinuationStateError.missingState`.
         state = iterator.state
-        let recorder = TokenRecorder()
         let (stream, loop) = generateTask(
-            promptTokenCount: promptTokens.count - kept, modelConfiguration: context.configuration, tokenizer: context.tokenizer,
+            promptTokenCount: prefill, modelConfiguration: context.configuration, tokenizer: context.tokenizer,
             iterator: RecordingTokenIterator(base: iterator, recorder: recorder))
         return Run(stream: stream, loop: loop, recorder: recorder, session: PromptSession(cache: cache, state: state, tokens: promptTokens))
     }
@@ -317,9 +392,9 @@ private final class TokenRecorder: @unchecked Sendable {
     var tokens: [Int] { lock.withLock { storage } }
 }
 
-/// `TokenIterator` that also records every token it yields (each has been fed to the model by then).
-private struct RecordingTokenIterator: TokenIteratorProtocol {
-    var base: TokenIterator
+/// A token iterator that also records every token it yields (each has been fed to the model by then).
+private struct RecordingTokenIterator<Base: TokenIteratorProtocol>: TokenIteratorProtocol {
+    var base: Base
     let recorder: TokenRecorder
 
     var maxTokens: Int? { base.maxTokens }

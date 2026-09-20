@@ -276,11 +276,11 @@ final class UpdateChecker {
                 }
             }
             guard let self, !Task.isCancelled else { return }
-            self.finishModels(found: found, reachable: reachable, force: force)
+            self.finishModels(found: found, reachable: reachable)
         }
     }
 
-    private func finishModels(found: [String: String], reachable: Bool, force: Bool) {
+    private func finishModels(found: [String: String], reachable: Bool) {
         container.settings.lastModelUpdateCheck = .now
         pendingModelUpdates = found
         for (repo, _) in found where container.downloaderIsIdle(repoID: repo) {
@@ -290,37 +290,43 @@ final class UpdateChecker {
                 category: .modelUpdate, userInfo: ["repoID": repo], identifier: "model-update-\(repo)"
             )
         }
-        if force, found.isEmpty {
-            NotificationService.shared.send(
-                title: String(localized: "Model updates"),
-                body: reachable
-                    ? String(localized: "All installed models are up to date.") : String(localized: "Could not reach the model hubs."))
-        }
     }
 
     /// Update pictogram of one downloaded model: compare its saved revision with the hub and download the new one if there is any.
+    /// What the last check said. Notifications can be switched off, and a pictogram that merely stops spinning tells
+    /// the user nothing, so the row shows this too.
+    enum ModelCheckResult: Equatable { case upToDate, unreachable, noRevision }
+
+    private(set) var modelCheckResults: [String: ModelCheckResult] = [:]
+
     func checkAndUpdate(_ model: ModelDescriptor) {
         guard !checkingModels.contains(model.repoID), container.downloaderIsIdle(repoID: model.repoID) else { return }
         checkingModels.insert(model.repoID)
+        modelCheckResults[model.repoID] = nil
         let (client, modelScope) = (container.hubClient, container.modelScopeClient)
         Task { [weak self] in
             defer { self?.checkingModels.remove(model.repoID) }
             guard let manifest = try? ModelManifest.load(from: model.directory), let reference = ModelReference(manifest: manifest)
-            else { return }
+            else {
+                self?.modelCheckResults[model.repoID] = .noRevision
+                return
+            }
             let latest = await Self.latestRevision(of: reference, client: client, modelScope: modelScope)
             guard let self else { return }
             guard let latest else {
-                NotificationService.shared.send(
-                    title: String(localized: "Model updates"),
-                    body: String(localized: "Could not check \(model.repoID): the hub is unreachable."))
+                self.modelCheckResults[model.repoID] = .unreachable
                 return
             }
-            if Self.isKnown(manifest.revision), latest != manifest.revision {
+            guard Self.isKnown(manifest.revision) else {
+                // Downloaded before revisions were recorded: there is nothing to compare, so no claim is made.
+                self.modelCheckResults[model.repoID] = .noRevision
+                return
+            }
+            if latest != manifest.revision {
                 self.updateModel(repoID: model.repoID)
             } else {
                 self.pendingModelUpdates[model.repoID] = nil
-                NotificationService.shared.send(
-                    title: String(localized: "Model updates"), body: String(localized: "\(model.repoID) is up to date."))
+                self.modelCheckResults[model.repoID] = .upToDate
             }
         }
     }
@@ -340,6 +346,7 @@ final class UpdateChecker {
     /// Re-downloads the repo; the downloader replaces the model folder atomically on completion.
     func updateModel(repoID: String) {
         pendingModelUpdates[repoID] = nil
+        modelCheckResults[repoID] = nil
         container.download(repoID: repoID)
     }
 

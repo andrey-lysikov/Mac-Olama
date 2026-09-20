@@ -185,6 +185,21 @@ public struct HubClient: Sendable {
         return c.url!
     }
 
+    /// MTP drafters published for a base model: the hub is asked for repositories tagged with that base model, built
+    /// for MLX and marked as prediction heads. Nothing is derived from the model's name.
+    public func drafterURL(baseModel: String, limit: Int = 10) -> URL {
+        var c = URLComponents(url: baseURL.appendingPathComponent("api/models"), resolvingAgainstBaseURL: false)!
+        c.queryItems = [
+            URLQueryItem(name: "filter", value: "base_model:\(baseModel)"),
+            URLQueryItem(name: "filter", value: "mlx"),
+            URLQueryItem(name: "filter", value: "mtp"),
+            URLQueryItem(name: "sort", value: "downloads"),
+            URLQueryItem(name: "direction", value: "-1"),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        return c.url!
+    }
+
     public func infoURL(repoID: String) -> URL {
         var c = URLComponents(url: baseURL.appendingPathComponent("api/models/\(repoID)"), resolvingAgainstBaseURL: false)!
         c.queryItems = [URLQueryItem(name: "blobs", value: "true")]
@@ -235,8 +250,28 @@ public struct HubClient: Sendable {
             [HubModelSummary].self, from: try await get(searchURL(query: query, author: author, limit: limit, mlxOnly: mlxOnly)))
     }
 
+    public func drafters(baseModel: String, limit: Int = 10) async throws -> [HubModelSummary] {
+        let found = try Self.decoder.decode([HubModelSummary].self, from: try await get(drafterURL(baseModel: baseModel, limit: limit)))
+        // A GGUF build cannot be loaded here, whatever its tags say.
+        return found.filter { !($0.tags ?? []).contains("gguf") }
+    }
+
     public func info(repoID: String) async throws -> HubModelInfo {
         try Self.decoder.decode(HubModelInfo.self, from: try await get(infoURL(repoID: repoID)))
+    }
+
+    /// Any file of a repository. `head` asks for its first bytes only, enough to read a safetensors header without
+    /// pulling the weights behind it.
+    public func file(repoID: String, path: String, revision: String = "main", head: Int? = nil) async throws -> Data {
+        let url = fileURL(repoID: repoID, path: path, revision: revision)
+        guard let head else { return try await get(url) }
+        var r = request(url)
+        r.setValue("bytes=0-\(head - 1)", forHTTPHeaderField: "Range")
+        let (data, raw) = try await URLSession.shared.data(for: r)
+        guard let response = raw as? HTTPURLResponse, response.statusCode == 200 || response.statusCode == 206 else {
+            throw URLError(.badServerResponse)
+        }
+        return data
     }
 
     public func config(repoID: String, revision: String = "main") async throws -> Data {

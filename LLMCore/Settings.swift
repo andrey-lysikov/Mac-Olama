@@ -62,6 +62,8 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case remoteTokens = "remoteTokens"  // [model id: token] of models connected by API; empty when a server needs none
     case extraTools = "extraTools"  // [String]: `ExtraTool` raw values the user switched on (calculator, macInfo, …)
     case huggingFaceToken = "huggingFaceToken"  // String?: Hugging Face access token for gated models
+    case modelTemperatures = "modelTemperatures"  // [model id: Double]; missing = the temperature the model ships with
+    case speculativeModels = "speculativeModels"  // [String]: model ids answering with MTP speculation (greedy decoding)
 }
 
 public enum SettingsDefaults {

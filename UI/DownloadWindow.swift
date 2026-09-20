@@ -472,6 +472,12 @@ struct ModelLibraryHeader: View {
 struct ModelLibraryView: View {
     @Bindable var viewModel: DownloadViewModel
     @Environment(AppContainer.self) private var container
+    /// The model whose MTP popover is open, the drafters the hub offers for it, and a repository typed by hand.
+    @State private var drafterTarget: String?
+    @State private var drafterRepo = ""
+    @State private var drafterCandidates: [String] = []
+    @State private var drafterSearch: Task<Void, Never>?
+    @State private var drafterSearching = false
 
     var body: some View {
         content(viewModel)
@@ -574,10 +580,19 @@ struct ModelLibraryView: View {
     }
 
     /// "lmstudio-community/Qwen3-8B-MLX-4bit · text, images → text · up to 32k context".
-    private func detail(repoID: String, kind: ModelKind?, contextLength: Int?) -> String {
+    /// Whether a drafter is installed for a model, and whether it is in use: the row says so in words, the pictogram
+    /// repeats it, so a model with MTP is told apart at a glance.
+    enum DrafterMark { case none, off, on }
+
+    private func detail(repoID: String, kind: ModelKind?, contextLength: Int?, drafter: DrafterMark = .none) -> String {
         var parts = [repoID]
         if let kind { parts.append(kind == .vlm ? String(localized: "text, images → text") : String(localized: "text → text")) }
         if let contextLength, contextLength > 0 { parts.append(String(localized: "up to \(contextLength / 1024)k context")) }
+        switch drafter {
+        case .none: break
+        case .off: parts.append(String(localized: "MTP off"))
+        case .on: parts.append(String(localized: "MTP"))
+        }
         return parts.joined(separator: " · ")
     }
 
@@ -627,6 +642,10 @@ struct ModelLibraryView: View {
                 if index > 0 || !downloads.isEmpty || !installedModels.isEmpty { Divider() }
                 brokenRow(model)
             }
+            ForEach(Array(container.strayDrafters.enumerated()), id: \.element.id) { _, drafter in
+                Divider()
+                strayDrafterRow(drafter)
+            }
             ForEach(Bindable(viewModel).remoteDrafts) { $draft in
                 Divider()
                 RemoteDraftRow(
@@ -640,6 +659,22 @@ struct ModelLibraryView: View {
     }
 
     /// A folder that cannot be loaded, as in the status menu's "Damaged": download it again (resumes) or delete it.
+    /// A drafter that was downloaded as if it were a model: it holds prediction heads only, so it answers nothing and
+    /// waits here until its model is installed, at which point it attaches by itself.
+    private func strayDrafterRow(_ drafter: ModelDescriptor) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            rowText(
+                source: drafter.source, owners: drafter.owners, repoID: drafter.repoID, sizeBytes: drafter.sizeBytes,
+                quantization: drafter.quantization,
+                detail: drafter.baseModel.map { String(localized: "MTP drafter · attaches itself to \($0)") }
+                    ?? String(localized: "MTP drafter · not a chat model"))
+            Spacer(minLength: 8)
+            Image(systemName: "bolt").font(.system(size: Self.pictogramSize)).foregroundStyle(.secondary)
+            symbolButton("trash", String(localized: "Delete Model"), role: .destructive) { container.deleteStrayDrafter(drafter) }
+        }
+        .padding(.vertical, 12)
+    }
+
     private func brokenRow(_ model: ModelCatalog.BrokenModel) -> some View {
         let reference = ModelReference(directoryName: model.id)
         return HStack(alignment: .center, spacing: 14) {
@@ -663,10 +698,14 @@ struct ModelLibraryView: View {
         let update = container.downloads.first { $0.repoID.lowercased() == model.repoID.lowercased() }
         // A model connected by API whose server does not answer: greyed out like in the menu, with a button to check again.
         let unavailable = !container.isAvailable(model)
+        // Spelled out rather than nested in the call: the type checker gives up on the expression otherwise.
+        var drafter = DrafterMark.none
+        if container.drafterIsInstalled(for: model) { drafter = container.isSpeculative(model) ? .on : .off }
+        let detailText = detail(repoID: model.repoID, kind: model.kind, contextLength: model.contextLength, drafter: drafter)
         return HStack(alignment: .center, spacing: 14) {
             rowText(
                 source: model.source, owners: model.owners, repoID: model.repoID, sizeBytes: model.sizeBytes,
-                quantization: model.quantization, detail: detail(repoID: model.repoID, kind: model.kind, contextLength: model.contextLength)
+                quantization: model.quantization, detail: detailText
             )
             .opacity(unavailable ? 0.4 : 1)
             .layoutPriority(1)  // a narrow window shortens the controls on the right, not the model's name
@@ -674,6 +713,8 @@ struct ModelLibraryView: View {
             VStack(alignment: .trailing, spacing: 6) {
                 HStack(spacing: 14) {
                     contextPicker(model).disabled(unavailable)
+                    temperaturePicker(model).disabled(unavailable)
+                    if container.canSpeculate(model) { speculationButton(model) }
                     if model.source == .remote {
                         // Served elsewhere: nothing to update here, the server owns the model; only its availability is checked.
                         if unavailable {
@@ -691,6 +732,9 @@ struct ModelLibraryView: View {
                     } else {
                         // Always there: checks the hub for a newer revision of this model and downloads it when there is one.
                         let checking = container.updates.checkingModels.contains(model.repoID)
+                        if !checking, let result = container.updates.modelCheckResults[model.repoID] {
+                            checkResultMark(result)
+                        }
                         symbolButton(
                             "arrow.triangle.2.circlepath",
                             container.updates.pendingModelUpdates[model.repoID] != nil
@@ -739,22 +783,167 @@ struct ModelLibraryView: View {
         .font(.caption.monospacedDigit()).foregroundStyle(.secondary).controlSize(.small)
     }
 
-    /// Context window saved for this model; sizes the model cannot reach are not offered.
+    /// Context window saved for this model; sizes the model cannot reach are not offered. Drawn like the chat's model
+    /// picker — a borderless menu showing just the current choice — so the row keeps its space for the model's name.
     private func contextPicker(_ model: ModelDescriptor) -> some View {
         let maximum = model.contextLength
         let sizes = [131_072, 65536, 32768, 16384, 8192, 4096].filter { size in maximum.map { size < $0 } ?? true }
-        let selection = Binding<Int>(
-            get: {
-                let saved = container.settings.modelContextTokens[model.id] ?? 0
-                return sizes.contains(saved) ? saved : 0
-            },
-            set: { container.setContextTokens($0, for: model) })
-        return Picker(String(localized: "Context"), selection: selection) {
-            Text(maximum.map { String(localized: "Maximum (\($0 / 1024)k)") } ?? String(localized: "Maximum")).tag(0)
-            ForEach(sizes, id: \.self) { Text(verbatim: "\($0 / 1024)k").tag($0) }
+        let saved = container.settings.modelContextTokens[model.id] ?? 0
+        let chosen = sizes.contains(saved) ? saved : 0
+        let maximumTitle = maximum.map { String(localized: "Maximum (\($0 / 1024)k)") } ?? String(localized: "Maximum")
+        return Menu {
+            // A toggle draws the check mark next to the size in use, as the model menu does.
+            Toggle(isOn: Binding(get: { chosen == 0 }, set: { _ in container.setContextTokens(0, for: model) })) {
+                Text(maximumTitle)
+            }
+            ForEach(sizes, id: \.self) { size in
+                Toggle(isOn: Binding(get: { chosen == size }, set: { _ in container.setContextTokens(size, for: model) })) {
+                    Text(verbatim: "\(size / 1024)k")
+                }
+            }
+        } label: {
+            Text(verbatim: chosen == 0 ? (maximum.map { "\($0 / 1024)k" } ?? String(localized: "Maximum")) : "\(chosen / 1024)k")
+                .font(.callout)
         }
-        .labelsHidden().fixedSize()
+        .menuStyle(.borderlessButton)
+        .fixedSize()
         .help(String(localized: "Context window for this model"))
+    }
+
+    /// The answer of the last update check, next to its button: notifications may not be shown at all.
+    private func checkResultMark(_ result: UpdateChecker.ModelCheckResult) -> some View {
+        let (symbol, help): (String, String) =
+            switch result {
+            case .upToDate: ("checkmark.circle", String(localized: "No update: the hub has the same revision"))
+            case .unreachable: ("exclamationmark.triangle", String(localized: "The hub did not answer"))
+            case .noRevision: ("questionmark.circle", String(localized: "No recorded revision: download the model again to compare"))
+            }
+        return Image(systemName: symbol)
+            .font(.system(size: Self.pictogramSize)).foregroundStyle(.secondary)
+            .help(help)
+            .accessibilityLabel(help)
+    }
+
+    /// Sampling temperature saved for this model. Until one is picked the model answers with the temperature its own
+    /// `generation_config.json` asks for. Drawn like the context menu, so the row stays short.
+    private func temperaturePicker(_ model: ModelDescriptor) -> some View {
+        let fromModel = container.defaultTemperature(for: model)
+        let chosen = container.temperature(for: model)
+        // Speculation verifies its drafts against greedy decoding, so it fixes the temperature at zero.
+        let greedy = container.drafterIsInstalled(for: model) && container.isSpeculative(model)
+        let shown = greedy ? 0 : (chosen ?? fromModel)
+        return Menu {
+            Toggle(isOn: Binding(get: { chosen == nil }, set: { _ in container.setTemperature(nil, for: model) })) {
+                Text(String(localized: "From the model (\(Self.temperatureText(fromModel)))"))
+            }
+            ForEach(Self.temperatures, id: \.self) { value in
+                Toggle(isOn: Binding(get: { chosen == value }, set: { _ in container.setTemperature(value, for: model) })) {
+                    Text(verbatim: Self.temperatureText(value))
+                }
+            }
+        } label: {
+            Text(verbatim: "t " + Self.temperatureText(shown)).font(.callout)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(greedy)
+        .help(
+            greedy
+                ? String(localized: "Fixed at 0 while MTP is on")
+                : String(localized: "Sampling temperature for this model"))
+    }
+
+    /// The usual steps: exact answers at 0, everyday chat around 0.6–0.8, loose writing above 1.
+    private static let temperatures: [Double] = [0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2]
+
+    private static func temperatureText(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(1)).locale(Locale(identifier: "en_US")))
+    }
+
+    /// Multi-token prediction for this model: the drafter's weights, installed inside the model's folder, and greedy
+    /// decoding, which its verification needs. Both live behind one pictogram, next to the context window.
+    private func speculationButton(_ model: ModelDescriptor) -> some View {
+        let installed = container.drafterIsInstalled(for: model)
+        let on = installed && container.isSpeculative(model)
+        let help =
+            installed
+            ? (on ? String(localized: "Faster answers are on") : String(localized: "A drafter is installed, MTP is off"))
+            : String(localized: "Faster answers (MTP): needs a drafter for this model")
+        return symbolButton(installed ? "bolt.fill" : "bolt", help) {
+            drafterRepo = ""
+            drafterTarget = drafterTarget == model.id ? nil : model.id
+            if drafterTarget != nil, !installed { findDrafters(for: model) }
+        }
+        .foregroundStyle(on ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+        .popover(
+            isPresented: Binding(get: { drafterTarget == model.id }, set: { if !$0 { drafterTarget = nil } }), arrowEdge: .bottom
+        ) {
+            speculationSettings(model, installed: installed)
+        }
+    }
+
+    private func speculationSettings(_ model: ModelDescriptor, installed: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(String(localized: "Faster answers (MTP)")).font(.headline)
+            if installed {
+                Toggle(
+                    String(localized: "Draft several tokens per round"),
+                    isOn: Binding(get: { container.isSpeculative(model) }, set: { container.setSpeculative($0, for: model) }))
+                Text(String(localized: "The model verifies every drafted token, so answers stay the same but stop varying."))
+                    .font(.caption).foregroundStyle(.secondary)
+                Button(String(localized: "Remove Drafter"), role: .destructive) {
+                    container.removeDrafter(for: model)
+                    drafterTarget = nil
+                }
+            } else {
+                Text(String(localized: "Prediction heads are published as a small separate repository for this checkpoint."))
+                    .font(.caption).foregroundStyle(.secondary)
+                if drafterSearching {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(String(localized: "Looking for a drafter…")).font(.callout)
+                    }
+                } else if drafterCandidates.isEmpty {
+                    Text(String(localized: "The hub lists no MLX drafter for this model.")).font(.callout)
+                }
+                // Found by the base model the hub records, so the repository never has to be typed out.
+                ForEach(drafterCandidates, id: \.self) { candidate in
+                    HStack(spacing: 8) {
+                        Text(verbatim: candidate).font(.callout).lineLimit(1).truncationMode(.middle)
+                        Spacer(minLength: 8)
+                        Button(String(localized: "Install")) {
+                            container.installDrafter(repoID: candidate, for: model)
+                            drafterTarget = nil
+                        }
+                    }
+                }
+                TextField(String(localized: "Drafter repository"), text: $drafterRepo)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { install(model) }
+                Button(String(localized: "Install Drafter")) { install(model) }
+                    .disabled(drafterRepo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(14)
+        .frame(width: 640, alignment: .leading)
+    }
+
+    private func install(_ model: ModelDescriptor) {
+        container.installDrafter(repoID: drafterRepo, for: model)
+        drafterTarget = nil
+    }
+
+    /// Asks the hub which drafters were published for this checkpoint and keeps the ones that fit it.
+    private func findDrafters(for model: ModelDescriptor) {
+        drafterSearch?.cancel()
+        drafterCandidates = []
+        drafterSearching = true
+        drafterSearch = Task {
+            let found = await container.drafterCandidates(for: model)
+            guard !Task.isCancelled else { return }
+            drafterCandidates = found
+            drafterSearching = false
+        }
     }
 
     /// Top line: the model and, at the right, its controls. Below: the progress bar across the full width, then the status text.

@@ -95,10 +95,13 @@ public struct GenerationRequest: Sendable {
     public var chatID: UUID?
     /// Context window in tokens (prompt + reply). nil = model maximum; engines bound their KV cache by it.
     public var contextTokens: Int?
+    /// Multi-token prediction is allowed for this request: the model has a drafter and the user switched it on.
+    /// Without it the engine leaves the drafter unloaded instead of paying for weights it may not use.
+    public var speculates: Bool
 
     public init(
         messages: [EngineMessage], tools: [ToolSpec] = [], sampling: SamplingParams = .init(), keepAlive: KeepAlive = .default,
-        chatID: UUID? = nil, contextTokens: Int? = nil
+        chatID: UUID? = nil, contextTokens: Int? = nil, speculates: Bool = false
     ) {
         self.messages = messages
         self.tools = tools
@@ -106,6 +109,7 @@ public struct GenerationRequest: Sendable {
         self.keepAlive = keepAlive
         self.chatID = chatID
         self.contextTokens = contextTokens
+        self.speculates = speculates
     }
 }
 

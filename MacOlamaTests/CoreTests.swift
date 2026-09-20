@@ -338,3 +338,60 @@ import Testing
         #expect(await b.next() == .chatInserted(chat.id))
     }
 }
+
+@Suite struct SpeculativeDecodingTests {
+    /// Qwen's MLX builds keep the config keys and drop the weights, so both have to be checked.
+    private let qwenConfig = Data(
+        #"{"model_type":"qwen3_5","text_config":{"mtp_num_hidden_layers":1,"mtp_use_dedicated_embeddings":false}}"#.utf8)
+
+    @Test func configKeysAreFoundAtAnyDepth() {
+        #expect(MTPDrafter.declaresHeads(qwenConfig))
+        #expect(MTPDrafter.declaresHeads(Data(#"{"num_nextn_predict_layers":2}"#.utf8)))
+        #expect(!MTPDrafter.declaresHeads(Data(#"{"mtp_num_hidden_layers":0}"#.utf8)))
+        // A flag is not a layer count, and a JSON boolean bridges to NSNumber.
+        #expect(!MTPDrafter.declaresHeads(Data(#"{"mtp_use_dedicated_embeddings":true}"#.utf8)))
+        #expect(!MTPDrafter.declaresHeads(Data(#"{"model_type":"gemma4_unified"}"#.utf8)))
+    }
+
+    @Test func onlyHeadsCountAsADrafter() {
+        let drafter = ["fc.weight", "layers.0.self_attn.q_proj.weight", "norm.weight", "pre_fc_norm_hidden.weight"]
+        let model = drafter + ["language_model.model.embed_tokens.weight", "lm_head.weight"]
+        #expect(MTPDrafter.isDrafterOnly(tensorNames: drafter, config: qwenConfig))
+        // A full model tagged "mtp" on the hub: it speaks for itself, so it is not a drafter.
+        #expect(!MTPDrafter.isDrafterOnly(tensorNames: model, config: qwenConfig))
+        #expect(!MTPDrafter.isDrafterOnly(tensorNames: drafter, config: Data(#"{"model_type":"qwen3_5"}"#.utf8)))
+        #expect(!MTPDrafter.isDrafterOnly(tensorNames: [], config: qwenConfig))
+    }
+
+    @Test func drafterMustMatchTheModelsWidth() {
+        #expect(MTPDrafter.hiddenSize(Data(#"{"text_config":{"hidden_size":4096}}"#.utf8)) == 4096)
+        #expect(MTPDrafter.hiddenSize(Data(#"{"hidden_size":2560}"#.utf8)) == 2560)
+        #expect(MTPDrafter.hiddenSize(Data(#"{"model_type":"x"}"#.utf8)) == nil)
+    }
+
+    @Test func tensorNamesComeOutOfASafetensorsHeader() throws {
+        let header = Data(#"{"fc.weight":{"dtype":"F16"},"__metadata__":{"format":"mlx"}}"#.utf8)
+        var file = Data()
+        withUnsafeBytes(of: UInt64(header.count).littleEndian) { file.append(contentsOf: $0) }
+        file.append(header)
+        #expect(Set(MTPDrafter.tensorNames(safetensorsHead: file)) == ["fc.weight", "__metadata__"])
+        #expect(MTPDrafter.tensorNames(safetensorsHead: Data([1, 2, 3])).isEmpty)
+        #expect(MTPDrafter.tensorNames(indexJSON: Data(#"{"weight_map":{"fc.weight":"model.safetensors"}}"#.utf8)) == ["fc.weight"])
+    }
+
+    @Test func headWeightsAreLookedUpInTheIndex() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let index = root.appendingPathComponent("model.safetensors.index.json")
+        let write = { (names: [String]) in
+            let map = names.reduce(into: [String: String]()) { $0[$1] = "model-00001.safetensors" }
+            try Data(JSONSerialization.data(withJSONObject: ["weight_map": map])).write(to: index)
+        }
+        try write(["language_model.layers.0.self_attn.q_proj.weight", "vision_tower.patch_embed.weight"])
+        #expect(!MTPDrafter.carriesHeadWeights(in: root))
+        try write(["language_model.layers.0.self_attn.q_proj.weight", "mtp.fc.weight"])
+        #expect(MTPDrafter.carriesHeadWeights(in: root))
+        #expect(!MTPDrafter.carriesHeadWeights(in: root.appendingPathComponent("missing")))
+    }
+}

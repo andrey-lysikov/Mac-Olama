@@ -71,7 +71,12 @@ public actor ModelDownloader {
     }
 
     /// Starts a download and streams events. A second call for the same reference fails the stream with `busy`.
-    public func download(_ reference: ModelReference, revision: String = "main") -> AsyncThrowingStream<DownloadEvent, Error> {
+    /// `into` installs the files somewhere other than `models/<repo>` — an MTP drafter goes inside its model's folder.
+    public func download(
+        _ reference: ModelReference, revision: String = "main", into destination: URL? = nil
+    )
+        -> AsyncThrowingStream<DownloadEvent, Error>
+    {
         let (stream, continuation) = AsyncThrowingStream.makeStream(of: DownloadEvent.self)
         let repoID = reference.repoID
         if activeTasks[repoID] != nil {
@@ -80,7 +85,7 @@ public actor ModelDownloader {
         }
         let task = Task { [self] in
             do {
-                try await self.run(reference, revision: revision, continuation: continuation)
+                try await self.run(reference, revision: revision, destination: destination, continuation: continuation)
                 continuation.finish()
             } catch is CancellationError {
                 continuation.finish(throwing: HubError.cancelled)
@@ -126,7 +131,8 @@ public actor ModelDownloader {
     }
 
     private func run(
-        _ reference: ModelReference, revision: String, continuation: AsyncThrowingStream<DownloadEvent, Error>.Continuation
+        _ reference: ModelReference, revision: String, destination: URL?,
+        continuation: AsyncThrowingStream<DownloadEvent, Error>.Continuation
     ) async throws {
         let repoID = reference.repoID
         let listing = try await listing(for: reference, revision: revision)
@@ -136,7 +142,7 @@ public actor ModelDownloader {
 
         let dirName = reference.directoryName
         let stagingDir = paths.downloads.appendingPathComponent(dirName, isDirectory: true)
-        let finalDir = paths.models.appendingPathComponent(dirName, isDirectory: true)
+        let finalDir = destination ?? paths.models.appendingPathComponent(dirName, isDirectory: true)
         let fm = FileManager.default
         try fm.createDirectory(at: stagingDir, withIntermediateDirectories: true)
 
@@ -182,7 +188,7 @@ public actor ModelDownloader {
         try manifest.save(to: stagingDir)
 
         if fm.fileExists(atPath: finalDir.path) { try fm.removeItem(at: finalDir) }
-        try fm.createDirectory(at: paths.models, withIntermediateDirectories: true)
+        try fm.createDirectory(at: finalDir.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fm.moveItem(at: stagingDir, to: finalDir)
         continuation.yield(.finished(manifest.descriptor(directory: finalDir)))
     }

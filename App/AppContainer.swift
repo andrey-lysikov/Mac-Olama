@@ -79,6 +79,8 @@ final class AppContainer {
         var sizeBytes: Int64?
         var progress: DownloadProgress?
         var phase: Phase = .queued
+        /// Set on an MTP drafter: the repo id of the model it belongs to. Its files go inside that model's folder.
+        var drafterFor: String?
         var error: String? { if case .failed(let message) = phase { message } else { nil } }
         var finished: Bool { phase == .finished }
         var isRunning: Bool { phase == .running }
@@ -100,6 +102,7 @@ final class AppContainer {
         var quantization: String?
         var sizeBytes: Int64?
         var paused: Bool
+        var drafterFor: String?
     }
 
     init() {
@@ -158,8 +161,19 @@ final class AppContainer {
     // Models
 
     func refreshModels() async {
-        let list = await catalog.refresh()
+        var list = await catalog.refresh()
+        // A drafter downloaded on its own is not a chat model: attach it to its model, or keep it out of the list.
+        if attachStrayDrafters(in: list) { list = await catalog.refresh() }
+        let strays = list.filter { $0.source != .remote && MTPDrafter.isDrafterOnly(directory: $0.directory) }
+        strayDrafters = strays
+        list = list.filter { model in !strays.contains { $0.id == model.id } }
         models = list
+        speculationCapable = Set(
+            list.filter { $0.source != .remote && MTPDrafter.declaresHeads(inModel: $0.directory) }.map(\.id))
+        modelTemperatures = Dictionary(
+            uniqueKeysWithValues: list.compactMap { model in
+                ModelDefaults.temperature(in: model.directory).map { (model.id, $0) }
+            })
         fillInBaseModels(list)
         brokenModels = await catalog.brokenModels
         if settings.activeModelID == nil || !list.contains(where: { $0.id == settings.activeModelID }) {
@@ -335,6 +349,21 @@ final class AppContainer {
         applyConversationConfiguration()
     }
 
+    /// What the checkpoint asks for, when it says anything; otherwise the app's own default.
+    func defaultTemperature(for model: ModelDescriptor) -> Double {
+        modelTemperatures[model.id] ?? SamplingParams().temperature
+    }
+
+    /// The temperature chosen for this model, or nil while it follows the checkpoint.
+    func temperature(for model: ModelDescriptor) -> Double? { settings.modelTemperatures[model.id] }
+
+    func setTemperature(_ value: Double?, for model: ModelDescriptor) {
+        var map = settings.modelTemperatures
+        map[model.id] = value
+        settings.modelTemperatures = map
+        applyConversationConfiguration()
+    }
+
     /// The window a model runs with: its saved choice capped by what the model supports.
     func contextTokens(for model: ModelDescriptor) -> Int? {
         guard let chosen = settings.modelContextTokens[model.id], chosen > 0 else { return model.contextLength }
@@ -344,6 +373,8 @@ final class AppContainer {
     private func applyConversationConfiguration() {
         var config = ConversationService.Configuration()
         config.contextTokensByModel = settings.modelContextTokens
+        config.temperatureByModel = settings.modelTemperatures
+        config.speculativeModelIDs = Set(settings.speculativeModels)
         Task { await conversation.setConfiguration(config) }
     }
 
@@ -387,7 +418,7 @@ final class AppContainer {
             // Anything not actively queued or running comes back paused, so a failed model never restarts on its own.
             StoredDownload(
                 repoID: $0.repoID, title: $0.title, quantization: $0.quantization, sizeBytes: $0.sizeBytes,
-                paused: !($0.phase == .running || $0.phase == .queued))
+                paused: !($0.phase == .running || $0.phase == .queued), drafterFor: $0.drafterFor)
         }
         guard stored != persistedDownloads else { return }
         persistedDownloads = stored
@@ -403,7 +434,7 @@ final class AppContainer {
         downloads = stored.filter { !installed.contains($0.repoID.lowercased()) }.map {
             ActiveDownload(
                 repoID: $0.repoID, title: $0.title, quantization: $0.quantization, sizeBytes: $0.sizeBytes,
-                phase: $0.paused ? .paused : .queued)
+                phase: $0.paused ? .paused : .queued, drafterFor: $0.drafterFor)
         }
         startNextDownloadIfIdle()
     }
@@ -431,24 +462,34 @@ final class AppContainer {
             let reference = ModelReference.parse(downloads[next].repoID)
         else { return }
         downloads[next].phase = .running
-        run(reference)
+        run(reference, drafterFor: downloads[next].drafterFor)
     }
 
-    private func run(_ reference: ModelReference) {
+    private func run(_ reference: ModelReference, drafterFor: String?) {
         let repoID = reference.repoID
+        let destination = drafterFor.flatMap { target in models.first { $0.repoID == target } }
+            .map { MTPDrafter.directory(forModel: $0.directory) }
+        if drafterFor != nil, destination == nil {
+            downloads.removeAll { $0.repoID == repoID }
+            return
+        }
         downloadTasks[repoID] = Task { [weak self] in
             guard let self else { return }
             do {
-                for try await event in await self.downloader.download(reference) {
+                for try await event in await self.downloader.download(reference, into: destination) {
                     guard let i = self.downloads.firstIndex(where: { $0.repoID == repoID }) else { break }
                     switch event {
                     case .progress(let p): self.downloads[i].progress = p
                     case .finished(let model):
+                        self.downloads.removeAll { $0.repoID == repoID }
+                        if let target = drafterFor, let folder = destination {
+                            await self.finishDrafter(at: folder, repoID: repoID, modelRepoID: target)
+                            break
+                        }
                         // The model now appears in the installed list, so its download row has done its job.
                         await self.refreshModels()
-                        self.downloads.removeAll { $0.repoID == repoID }
                         if self.settings.activeModelID == nil { self.setActiveModel(model) }
-                        NotificationService.shared.send(
+                        self.notifyAboutDownload(
                             title: String(localized: "Model downloaded"), body: String(localized: "\(model.name) is ready to use."),
                             category: .downloadFinished)
                     case .resolved, .fileFinished: break
@@ -465,7 +506,7 @@ final class AppContainer {
                     }
                     if case HubError.cancelled = error {
                     } else {
-                        NotificationService.shared.send(
+                        self.notifyAboutDownload(
                             title: String(localized: "Download failed"), body: "\(repoID): \(Self.describe(error))")
                     }
                 }
@@ -473,6 +514,140 @@ final class AppContainer {
             self.downloadTasks[repoID] = nil
             self.startNextDownloadIfIdle()
         }
+    }
+
+    /// Downloads report themselves through Notification Center only while the models section is not open: with it on
+    /// screen the row says the same thing, whether or not the window has focus.
+    private func notifyAboutDownload(title: String, body: String, category: NotificationService.Category = .info) {
+        guard !(showsModelLibrary && WindowManager.shared.isOpen(.chats)) else { return }
+        NotificationService.shared.send(title: title, body: body, category: category)
+    }
+
+    // Multi-token prediction: a drafter installed next to a model lets it answer several tokens per round.
+
+    /// Checkpoints that announce prediction heads; read once per catalog refresh.
+    private var speculationCapable: Set<String> = []
+
+    /// The temperature each checkpoint ships with, read once per catalog refresh; the fallback for models that say
+    /// nothing is the app's own default.
+    private var modelTemperatures: [String: Double] = [:]
+
+    /// Drafter repositories installed as if they were models: they cannot answer anything, so they are shown apart and
+    /// wait for their model. Attaching happens by itself once that model is installed.
+    private(set) var strayDrafters: [ModelDescriptor] = []
+
+    /// Moves every stray drafter into the folder of the model it was published for. True when something moved, so the
+    /// catalog is read again.
+    private func attachStrayDrafters(in list: [ModelDescriptor]) -> Bool {
+        let strays = list.filter { $0.source != .remote && MTPDrafter.isDrafterOnly(directory: $0.directory) }
+        guard !strays.isEmpty else { return false }
+        var moved = false
+        for drafter in strays {
+            guard let base = drafter.baseModel?.lowercased(),
+                let target = list.first(where: {
+                    $0.id != drafter.id && $0.source != .remote && $0.baseModel?.lowercased() == base
+                        && !MTPDrafter.isDrafterOnly(directory: $0.directory) && !MTPDrafter.isInstalled(forModel: $0.directory)
+                })
+            else { continue }
+            let destination = MTPDrafter.directory(forModel: target.directory)
+            do {
+                try FileManager.default.moveItem(at: drafter.directory, to: destination)
+            } catch {
+                continue
+            }
+            moved = true
+            setSpeculative(true, for: target)
+            notifyAboutDownload(
+                title: String(localized: "Faster answers are on"),
+                body: String(localized: "\(target.name) drafts several tokens per round; its answers no longer vary."),
+                category: .downloadFinished)
+        }
+        return moved
+    }
+
+    func deleteStrayDrafter(_ drafter: ModelDescriptor) {
+        try? FileManager.default.removeItem(at: drafter.directory)
+        Task { await refreshModels() }
+    }
+
+    /// Whether the switch belongs in this model's row at all: a drafter is installed, or the checkpoint could take one.
+    func canSpeculate(_ model: ModelDescriptor) -> Bool {
+        model.source != .remote && (drafterIsInstalled(for: model) || speculationCapable.contains(model.id))
+    }
+
+    func drafterIsInstalled(for model: ModelDescriptor) -> Bool { MTPDrafter.isInstalled(forModel: model.directory) }
+
+    func isSpeculative(_ model: ModelDescriptor) -> Bool { settings.speculativeModels.contains(model.id) }
+
+    /// Speculation needs both parts: the drafter's weights and greedy decoding, which is what the switch turns on.
+    func setSpeculative(_ on: Bool, for model: ModelDescriptor) {
+        var ids = Set(settings.speculativeModels)
+        if on { ids.insert(model.id) } else { ids.remove(model.id) }
+        settings.speculativeModels = Array(ids).sorted()
+        applyConversationConfiguration()
+        forgetDrafter(of: model)
+    }
+
+    /// Drafters the hub publishes for this model, kept to the ones that can actually be attached: prediction heads
+    /// only (no embeddings, no output head) and the same hidden size as the model. Tags alone are not trusted — a full
+    /// MLX model is often tagged `mtp` as well.
+    func drafterCandidates(for model: ModelDescriptor) async -> [String] {
+        guard let base = model.baseModel, !base.isEmpty, let width = MTPDrafter.hiddenSize(inModel: model.directory) else { return [] }
+        let client = hubClient
+        let found = (try? await client.drafters(baseModel: base)) ?? []
+        var fitting: [String] = []
+        for candidate in found.prefix(8) {
+            guard let config = try? await client.config(repoID: candidate.id), MTPDrafter.hiddenSize(config) == width else { continue }
+            var names = MTPDrafter.tensorNames(
+                indexJSON: (try? await client.file(repoID: candidate.id, path: "model.safetensors.index.json")) ?? Data())
+            if names.isEmpty {
+                // A repository small enough to ship one file has no index; its header is in the first megabyte.
+                let head = (try? await client.file(repoID: candidate.id, path: "model.safetensors", head: 1 << 20)) ?? Data()
+                names = MTPDrafter.tensorNames(safetensorsHead: head)
+            }
+            if MTPDrafter.isDrafterOnly(tensorNames: names, config: config) { fitting.append(candidate.id) }
+        }
+        return fitting
+    }
+
+    /// Queues a drafter repository for this model; it lands in the model's own folder, so it is never a model itself.
+    func installDrafter(repoID: String, for model: ModelDescriptor) {
+        guard let reference = ModelReference.parse(repoID) else { return }
+        let id = reference.repoID
+        guard downloaderIsIdle(repoID: id) else { return }
+        downloads.removeAll { $0.repoID == id }
+        downloads.append(ActiveDownload(repoID: id, title: model.name, drafterFor: model.repoID))
+        startNextDownloadIfIdle()
+    }
+
+    func removeDrafter(for model: ModelDescriptor) {
+        try? FileManager.default.removeItem(at: MTPDrafter.directory(forModel: model.directory))
+        setSpeculative(false, for: model)
+    }
+
+    /// A downloaded folder counts as a drafter only if the engine can build one from it; otherwise it is thrown away
+    /// rather than left to fail at generation time.
+    private func finishDrafter(at folder: URL, repoID: String, modelRepoID: String) async {
+        guard let model = models.first(where: { $0.repoID == modelRepoID }) else { return }
+        if await MTPDrafter.build(from: folder) == nil {
+            try? FileManager.default.removeItem(at: folder)
+            notifyAboutDownload(
+                title: String(localized: "Not an MTP drafter"),
+                body: String(localized: "\(repoID) does not hold prediction heads for \(model.name)."))
+            return
+        }
+        setSpeculative(true, for: model)
+        await refreshModels()
+        notifyAboutDownload(
+            title: String(localized: "Faster answers are on"),
+            body: String(localized: "\(model.name) drafts several tokens per round; its answers no longer vary."),
+            category: .downloadFinished)
+    }
+
+    /// The engine keeps the drafter with the loaded model, so a change takes effect on the next load.
+    private func forgetDrafter(of model: ModelDescriptor) {
+        guard engineState.modelID == model.id else { return }
+        Task { await engineManager.unload() }
     }
 
     // Base models (for the icons): models downloaded before `baseModel` was stored get it from their hub once.
@@ -795,6 +970,17 @@ final class AppSettings {
             return defaults.dictionary(forKey: SettingsKey.modelContextTokens.rawValue) as? [String: Int] ?? [:]
         }
         set { set(newValue, .modelContextTokens) }
+    }
+    var modelTemperatures: [String: Double] {
+        get {
+            access(keyPath: \.token)
+            return defaults.dictionary(forKey: SettingsKey.modelTemperatures.rawValue) as? [String: Double] ?? [:]
+        }
+        set { set(newValue, .modelTemperatures) }
+    }
+    var speculativeModels: [String] {
+        get { access(keyPath: \.token); return defaults.stringArray(forKey: SettingsKey.speculativeModels.rawValue) ?? [] }
+        set { set(newValue, .speculativeModels) }
     }
     var shortcutsToolEnabled: Bool {
         get { bool(.shortcutsToolEnabled) }

@@ -220,8 +220,12 @@ struct QuickPanelView: View {
                             message: Message(chatID: UUID(), role: .assistant, text: viewModel.visibleStreamingText, isPartial: true))
                     }
                     if let error = viewModel.errorMessage {
+                        // Why the answer did not come, in red where the answer would have been.
                         Label(error, systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.red).font(.callout)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     // End of the newest answer: every scroll below goes here.
                     Color.clear.frame(height: 0).id("bottom")

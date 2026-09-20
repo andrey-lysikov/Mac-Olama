@@ -330,7 +330,7 @@ final class ChatsViewModel {
                     }
                 }
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = ConversationService.describe(error)
             }
             isGenerating = false
             streamingText = ""
@@ -722,7 +722,12 @@ private struct ChatsSplitView: View {
                         .id("streaming")
                     }
                     if let e = viewModel.errorMessage {
-                        Label(e, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.callout)
+                        // Why the answer did not come, in red under the last message, and selectable so it can be quoted.
+                        Label(e, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.red).font(.callout)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }

@@ -4,6 +4,26 @@
     "" : {
       "shouldTranslate" : false
     },
+    "%@ does not hold prediction heads for %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В %1$@ нет голов предсказания для %2$@."
+          }
+        }
+      }
+    },
+    "%@ drafts several tokens per round; its answers no longer vary." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ предсказывает несколько токенов за раз; ответы перестают меняться от запуска к запуску."
+          }
+        }
+      }
+    },
     "%@ file %@?" : {
       "localizations" : {
         "ru" : {
@@ -104,6 +124,16 @@
         }
       }
     },
+    "A drafter is installed, MTP is off" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Драфтер установлен, MTP выключен"
+          }
+        }
+      }
+    },
     "About This Mac" : {
       "localizations" : {
         "ru" : {
@@ -180,16 +210,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Все допустимые порты заняты."
-          }
-        }
-      }
-    },
-    "All installed models are up to date." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Все установленные модели актуальны."
           }
         }
       }
@@ -465,6 +485,7 @@
       }
     },
     "Context" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -504,16 +525,6 @@
         }
       }
     },
-    "Could not check %@: the hub is unreachable." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось проверить %@: хаб недоступен."
-          }
-        }
-      }
-    },
     "Could not load the page: %@" : {
       "localizations" : {
         "ru" : {
@@ -530,16 +541,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось связаться с GitHub для проверки обновлений."
-          }
-        }
-      }
-    },
-    "Could not reach the model hubs." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось связаться с хабами моделей."
           }
         }
       }
@@ -684,6 +685,26 @@
         }
       }
     },
+    "Draft several tokens per round" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предсказывать несколько токенов за раз"
+          }
+        }
+      }
+    },
+    "Drafter repository" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Репозиторий драфтера"
+          }
+        }
+      }
+    },
     "Edit" : {
       "localizations" : {
         "ru" : {
@@ -720,6 +741,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Оценка занятого этим чатом контекста, размер окна контекста и остаток"
+          }
+        }
+      }
+    },
+    "Faster answers (MTP)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Быстрые ответы (MTP)"
+          }
+        }
+      }
+    },
+    "Faster answers (MTP): needs a drafter for this model" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Быстрые ответы (MTP): нужен драфтер для этой модели"
+          }
+        }
+      }
+    },
+    "Faster answers are on" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Быстрые ответы включены"
           }
         }
       }
@@ -764,12 +815,32 @@
         }
       }
     },
+    "Fixed at 0 while MTP is on" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фиксируется на 0, пока включён MTP"
+          }
+        }
+      }
+    },
     "Folder Access" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Доступ к папкам"
+          }
+        }
+      }
+    },
+    "From the model (%@)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Как в модели (%@)"
           }
         }
       }
@@ -835,7 +906,14 @@
       }
     },
     "Hide the chat list" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скрыть список чатов"
+          }
+        }
+      }
     },
     "Hub" : {
       "localizations" : {
@@ -873,6 +951,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Изображения: %lld"
+          }
+        }
+      }
+    },
+    "Install" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Установить"
+          }
+        }
+      }
+    },
+    "Install Drafter" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Установить драфтер"
           }
         }
       }
@@ -933,6 +1031,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Смотрю ваши файлы…"
+          }
+        }
+      }
+    },
+    "Looking for a drafter…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ищем драфтер…"
           }
         }
       }
@@ -1057,22 +1165,52 @@
         }
       }
     },
-    "Model updates" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Обновления моделей"
-          }
-        }
-      }
-    },
     "Models" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Модели"
+          }
+        }
+      }
+    },
+    "MTP" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MTP"
+          }
+        }
+      }
+    },
+    "MTP drafter · attaches itself to %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Драфтер MTP · прикрепится к %@"
+          }
+        }
+      }
+    },
+    "MTP drafter · not a chat model" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Драфтер MTP · не модель для чата"
+          }
+        }
+      }
+    },
+    "MTP off" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MTP выкл."
           }
         }
       }
@@ -1137,6 +1275,16 @@
         }
       }
     },
+    "No model is chosen for this chat." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для этого чата не выбрана модель."
+          }
+        }
+      }
+    },
     "No model is loaded." : {
       "localizations" : {
         "ru" : {
@@ -1177,12 +1325,42 @@
         }
       }
     },
+    "No recorded revision: download the model again to compare" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ревизия не записана: скачайте модель заново, чтобы сравнивать"
+          }
+        }
+      }
+    },
+    "No update: the hub has the same revision" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновлений нет: в хабе та же ревизия"
+          }
+        }
+      }
+    },
     "Not an MLX build: it may be large and may fail to load. Prefer an MLX conversion of this model." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Это не MLX-сборка: модель может быть большой и может не загрузиться. Лучше выбрать MLX-конвертацию этой модели."
+          }
+        }
+      }
+    },
+    "Not an MTP drafter" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это не драфтер MTP"
           }
         }
       }
@@ -1337,6 +1515,16 @@
         }
       }
     },
+    "Prediction heads are published as a small separate repository for this checkpoint." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Головы предсказания публикуются отдельным небольшим репозиторием для этой сборки модели."
+          }
+        }
+      }
+    },
     "Previous 7 days" : {
       "localizations" : {
         "ru" : {
@@ -1417,6 +1605,16 @@
         }
       }
     },
+    "Remove Drafter" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить драфтер"
+          }
+        }
+      }
+    },
     "Remove from queue" : {
       "localizations" : {
         "ru" : {
@@ -1493,6 +1691,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Запускаю быструю команду «%@»…"
+          }
+        }
+      }
+    },
+    "Sampling temperature for this model" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Температура сэмплирования для этой модели"
           }
         }
       }
@@ -1628,7 +1836,14 @@
       }
     },
     "Show the chat list" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать список чатов"
+          }
+        }
+      }
     },
     "Starting…" : {
       "localizations" : {
@@ -1721,6 +1936,46 @@
         }
       }
     },
+    "The answer was stopped." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ответ остановлен."
+          }
+        }
+      }
+    },
+    "The hub did not answer" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Хаб не ответил"
+          }
+        }
+      }
+    },
+    "The hub lists no MLX drafter for this model." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В хабе нет MLX-драфтера для этой модели."
+          }
+        }
+      }
+    },
+    "The model asked for an unknown tool: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель запросила неизвестный инструмент: %@"
+          }
+        }
+      }
+    },
     "The model computes in JavaScript instead of doing arithmetic in its head" : {
       "localizations" : {
         "ru" : {
@@ -1761,6 +2016,16 @@
         }
       }
     },
+    "The model kept calling tools without answering; the round limit was reached." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель вызывала инструменты, не отвечая: достигнут предел раундов."
+          }
+        }
+      }
+    },
     "The model may look up the weather (Open-Meteo)" : {
       "localizations" : {
         "ru" : {
@@ -1797,6 +2062,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Модель может запускать ваши быстрые команды; перед каждым запуском спрашивает разрешение"
+          }
+        }
+      }
+    },
+    "The model server did not answer: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер модели не ответил: %@"
+          }
+        }
+      }
+    },
+    "The model verifies every drafted token, so answers stay the same but stop varying." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель проверяет каждый предсказанный токен: ответ тот же, но перестаёт меняться от запуска к запуску."
           }
         }
       }
@@ -1877,6 +2162,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Эту сборку модели загрузить нельзя: её файлы весов не совпадают с тем, что ожидает текущая версия движка MLX. Попробуйте другую конвертацию этой же модели (другой автор или квантование). Подробности: %@"
+          }
+        }
+      }
+    },
+    "This chat no longer exists." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этого чата больше нет."
           }
         }
       }
@@ -2143,6 +2438,12 @@
     },
     "Would fit (about %@ of %@), but only %@ is free right now: close some apps or expect swapping." : {
       "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поместится (примерно %1$@ из %2$@), но сейчас свободно только %3$@: закройте часть приложений или ждите подкачки."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
