@@ -713,6 +713,7 @@ struct ModelLibraryView: View {
                 HStack(spacing: 14) {
                     contextPicker(model).disabled(unavailable)
                     temperaturePicker(model).disabled(unavailable)
+                    reasoningButton(model)
                     if container.canSpeculate(model) { speculationButton(model) }
                     if model.source == .remote {
                         // Served elsewhere: nothing to update here, the server owns the model; only its availability is checked.
@@ -859,6 +860,19 @@ struct ModelLibraryView: View {
 
     private static func temperatureText(_ value: Double) -> String {
         value.formatted(.number.precision(.fractionLength(1)).locale(Locale(identifier: "en_US")))
+    }
+
+    /// Whether the chat shows what this model says to itself before answering. Off by default: the thinking is long
+    /// and it is not the answer.
+    private func reasoningButton(_ model: ModelDescriptor) -> some View {
+        let shown = container.showsReasoning(modelID: model.id)
+        return symbolButton(
+            "brain",
+            shown ? String(localized: "The chat shows how this model thinks") : String(localized: "Show how this model thinks")
+        ) {
+            container.setShowsReasoning(!shown, for: model)
+        }
+        .foregroundStyle(shown ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
     }
 
     /// Multi-token prediction for this model: the drafter's weights, installed inside the model's folder, and greedy

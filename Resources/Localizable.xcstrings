@@ -75,16 +75,6 @@
         }
       }
     },
-    "%lld tok/s" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld ток/с"
-          }
-        }
-      }
-    },
     "1 hour" : {
       "localizations" : {
         "ru" : {
@@ -1846,6 +1836,16 @@
         }
       }
     },
+    "Show how this model thinks" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показывать, как модель думает"
+          }
+        }
+      }
+    },
     "Show only models built for MLX. Turn off to search every repository; MLX builds stay on top." : {
       "localizations" : {
         "ru" : {
@@ -1973,6 +1973,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ответ остановлен."
+          }
+        }
+      }
+    },
+    "The chat shows how this model thinks" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В чате видно, как модель думает"
           }
         }
       }

@@ -626,6 +626,13 @@ final class AppContainer {
 
     func isSpeculative(_ model: ModelDescriptor) -> Bool { settings.speculativeModels.contains(model.id) }
 
+    /// How long a reply of this model may run, so the transcript can say what the count is measured against.
+    func replyLimit(forModel id: String) -> Int? {
+        guard let model = models.first(where: { $0.id == id }), let context = contextTokens(for: model) ?? model.contextLength
+        else { return nil }
+        return ConversationService.replyBudget(context: context, atLeast: ConversationService.Configuration().reservedTokensForReply)
+    }
+
     /// Whether the transcript shows what this model says to itself before answering. Off unless asked: the thinking
     /// is long, and it is not the answer.
     func showsReasoning(modelID: String) -> Bool { settings.reasoningShown.contains(modelID) }
