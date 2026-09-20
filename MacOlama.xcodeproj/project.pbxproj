@@ -657,7 +657,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.2;
+				MARKETING_VERSION = 0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = ru.lysnet.macolama;
 				PRODUCT_MODULE_NAME = MacOlama;
 				PRODUCT_NAME = "Mac-Olama";
@@ -690,7 +690,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.2;
+				MARKETING_VERSION = 0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = ru.lysnet.macolama;
 				PRODUCT_MODULE_NAME = MacOlama;
 				PRODUCT_NAME = "Mac-Olama";
@@ -751,7 +751,7 @@
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 0.2;
+				MARKETING_VERSION = 0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = ru.lysnet.macolama.safari;
 				PRODUCT_MODULE_NAME = MacOlamaSafari;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -779,7 +779,7 @@
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 0.2;
+				MARKETING_VERSION = 0.3;
 				PRODUCT_BUNDLE_IDENTIFIER = ru.lysnet.macolama.safari;
 				PRODUCT_MODULE_NAME = MacOlamaSafari;
 				PRODUCT_NAME = "$(TARGET_NAME)";

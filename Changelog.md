@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3
+
+- Rewrite chat windows
+- Add MTP support
+- Increase size under messages
+- Add model temperature control
+- Dynamic t/s format
+- Toggle for showing LLM thinking
+- New settings page
+
+
 ## 0.2
 
 - HTML and Markdown reader
