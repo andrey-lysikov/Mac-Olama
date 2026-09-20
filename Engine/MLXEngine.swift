@@ -8,6 +8,7 @@ import MLXLLM
 import MLXLMCommon
 import MLXVLM
 import Tokenizers
+import os
 
 // Written against mlx-swift-lm 3.31.4 sources (ModelContainer.prepare/generate, UserInput(chat:), Generation, ToolCall).
 // Not compiled yet: the first Mac build may still surface small mismatches.
@@ -140,6 +141,7 @@ public actor MLXEngine: InferenceEngine {
                         sawToolCall = true
                         continuation.yield(.toolCall(Self.convert(call)))
                     case .info(let info):
+                        if drafter != nil { Self.logSpeculation(info) }
                         continuation.yield(
                             .usage(
                                 GenerationUsage(
@@ -235,8 +237,22 @@ public actor MLXEngine: InferenceEngine {
 
     private func drafter(_ loaded: any MTPDrafterModel, temperature: Double) -> DrafterBox? {
         guard loaded.requiresGreedySampling, temperature != 0 else { return DrafterBox(model: loaded) }
+        MTPDrafter.logger.info("drafter set aside: it needs greedy decoding, this request samples at \(temperature)")
         drafterState = .greedyOnly
         return nil
+    }
+
+    /// Whether the drafting actually paid off, from the library's own counters: the one honest answer to "is MTP on".
+    private static func logSpeculation(_ info: GenerateCompletionInfo) {
+        if let reason = info.passthroughReason {
+            MTPDrafter.logger.notice("speculation stopped: \(reason, privacy: .public)")
+            return
+        }
+        let proposed = info.proposedDraftTokens ?? 0
+        let accepted = info.acceptedDraftTokens ?? 0
+        MTPDrafter.logger.info(
+            "speculation: \(accepted) of \(proposed) drafted tokens accepted, \(info.generationTokenCount) generated at \(Int(info.tokensPerSecond)) tok/s"
+        )
     }
 
     /// Picks what to prefill: the suffix after a reused prefix, or the whole prompt on a fresh cache, and how to

@@ -28,7 +28,9 @@ public struct SamplingParams: Sendable, Equatable, Codable {
     public var repetitionPenalty: Double?
     public var seed: UInt64?
 
-    public init(temperature: Double = 0.7, topP: Double = 0.9, maxTokens: Int = 2048, repetitionPenalty: Double? = nil, seed: UInt64? = nil)
+    /// 8192 by default: a reasoning model spends thousands of tokens before the visible answer, and a lower limit
+    /// cuts the reply off while it is still thinking — which reads as no answer at all.
+    public init(temperature: Double = 0.7, topP: Double = 0.9, maxTokens: Int = 8192, repetitionPenalty: Double? = nil, seed: UInt64? = nil)
     {
         self.temperature = temperature
         self.topP = topP

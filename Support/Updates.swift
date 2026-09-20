@@ -36,6 +36,10 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
     private let logger = Logger(subsystem: "ru.lysnet.macolama", category: "notifications")
     private weak var container: AppContainer?
 
+    /// Set when the system says notifications are refused for this app: every message the app sends then goes nowhere,
+    /// so the menu offers to open the settings where that is changed.
+    private(set) var isDenied = false
+
     func configure(container: AppContainer) {
         self.container = container
         let center = UNUserNotificationCenter.current()
@@ -68,13 +72,30 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
                 intentIdentifiers: []),
             UNNotificationCategory(identifier: Category.info.rawValue, actions: [], intentIdentifiers: []),
         ])
-        center.requestAuthorization(options: [.alert, .sound, .badge]) { [logger] granted, error in
+        askAuthorization()
+    }
+
+    /// Asked at launch and before a message: while the answer is "not determined" macOS shows its own question, and a
+    /// refusal is remembered so the app can point at the settings instead of talking to a wall.
+    func askAuthorization() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { [logger] granted, error in
             if let error { logger.error("notification authorization failed: \(error)") }
-            if !granted { logger.notice("notifications not granted") }
+            Task { @MainActor in
+                NotificationService.shared.isDenied = !granted
+                if !granted { logger.notice("notifications not granted") }
+            }
         }
     }
 
+    /// Opens Notifications for this app in System Settings; the switch there is the only way back from a refusal.
+    func openSettings() {
+        let id = Bundle.main.bundleIdentifier ?? ""
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(id)") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     func send(title: String, body: String, category: Category = .info, userInfo: [String: String] = [:], identifier: String? = nil) {
+        if isDenied { askAuthorization() }  // the user may have allowed them since; this only re-asks, it never nags
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body

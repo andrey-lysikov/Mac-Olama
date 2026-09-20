@@ -202,7 +202,8 @@ struct QueuedQuestionsView: View {
                 HStack(alignment: .center, spacing: 8) {
                     Spacer(minLength: 40)
                     VStack(alignment: .trailing, spacing: 3) {
-                        Text(verbatim: question.summary).lineLimit(3)
+                        // A waiting question is read next to the answers, so it keeps their size.
+                        Text(verbatim: question.summary).lineLimit(3).font(.system(size: ChatMessageView.textSize))
                             .padding(.horizontal, 12).padding(.vertical, 7)
                             .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         Label(String(localized: "Queued"), systemImage: "clock").font(.caption2).foregroundStyle(.secondary)

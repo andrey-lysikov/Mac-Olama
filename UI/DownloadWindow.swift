@@ -472,9 +472,8 @@ struct ModelLibraryHeader: View {
 struct ModelLibraryView: View {
     @Bindable var viewModel: DownloadViewModel
     @Environment(AppContainer.self) private var container
-    /// The model whose MTP popover is open, the drafters the hub offers for it, and a repository typed by hand.
+    /// The model whose MTP popover is open and the drafters the hub offers for it.
     @State private var drafterTarget: String?
-    @State private var drafterRepo = ""
     @State private var drafterCandidates: [String] = []
     @State private var drafterSearch: Task<Void, Never>?
     @State private var drafterSearching = false
@@ -827,8 +826,8 @@ struct ModelLibraryView: View {
     private func temperaturePicker(_ model: ModelDescriptor) -> some View {
         let standard = container.defaultTemperature(for: model)
         let chosen = container.temperature(for: model)
-        // Speculation verifies its drafts against greedy decoding, so it fixes the temperature at zero.
-        let greedy = container.drafterIsInstalled(for: model) && container.isSpeculative(model)
+        // Only a drafter that cannot verify sampled tokens fixes the temperature at zero; others leave it alone.
+        let greedy = container.isSpeculative(model) && container.drafterNeedsGreedy(model)
         let shown = greedy ? 0 : (chosen ?? standard.value)
         let standardText = Self.temperatureText(standard.value)
         return Menu {
@@ -851,7 +850,7 @@ struct ModelLibraryView: View {
         .disabled(greedy)
         .help(
             greedy
-                ? String(localized: "Fixed at 0 while MTP is on")
+                ? String(localized: "This drafter only verifies greedy decoding, so the temperature stays at 0")
                 : String(localized: "Sampling temperature for this model"))
     }
 
@@ -872,7 +871,6 @@ struct ModelLibraryView: View {
             ? (on ? String(localized: "Faster answers are on") : String(localized: "A drafter is installed, MTP is off"))
             : String(localized: "Faster answers (MTP): needs a drafter for this model")
         return symbolButton(installed ? "bolt.fill" : "bolt", help) {
-            drafterRepo = ""
             drafterTarget = drafterTarget == model.id ? nil : model.id
             if drafterTarget != nil, !installed { findDrafters(for: model) }
         }
@@ -888,18 +886,38 @@ struct ModelLibraryView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(String(localized: "Faster answers (MTP)")).font(.headline)
             if installed {
+                // Which drafter is in place, and the way back: removing it returns this window to the hub's list.
+                HStack(spacing: 8) {
+                    Text(verbatim: container.installedDrafterRepo(for: model) ?? String(localized: "Installed drafter"))
+                        .font(.callout).lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    symbolButton("trash", String(localized: "Remove Drafter"), role: .destructive) {
+                        container.removeDrafter(for: model)
+                        findDrafters(for: model)
+                    }
+                }
                 Toggle(
                     String(localized: "Draft several tokens per round"),
                     isOn: Binding(get: { container.isSpeculative(model) }, set: { container.setSpeculative($0, for: model) }))
                 Text(String(localized: "The model verifies every drafted token, so answers stay the same but stop varying."))
                     .font(.caption).foregroundStyle(.secondary)
-                Button(String(localized: "Remove Drafter"), role: .destructive) {
-                    container.removeDrafter(for: model)
-                    drafterTarget = nil
+            } else if let download = container.drafterDownload(for: model) {
+                // Installing right now: the same row as any download, but said here, where the button was pressed.
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(verbatim: download.repoID).font(.callout).lineLimit(1).truncationMode(.middle)
+                }
+                if let error = download.error {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                } else if let progress = download.progress, progress.bytesTotal > 0 {
+                    ProgressView(value: Double(progress.bytesReceived), total: Double(progress.bytesTotal))
                 }
             } else {
                 Text(String(localized: "Prediction heads are published as a small separate repository for this checkpoint."))
                     .font(.caption).foregroundStyle(.secondary)
+                if let verdict = container.drafterVerdict(for: model) {
+                    Text(verdict).font(.caption).foregroundStyle(.red)
+                }
                 if drafterSearching {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
@@ -909,30 +927,21 @@ struct ModelLibraryView: View {
                     Text(String(localized: "The hub lists no MLX drafter for this model.")).font(.callout)
                 }
                 // Found by the base model the hub records, so the repository never has to be typed out.
+                // Picked like a model in the search list: the same pictogram starts the download.
                 ForEach(drafterCandidates, id: \.self) { candidate in
                     HStack(spacing: 8) {
                         Text(verbatim: candidate).font(.callout).lineLimit(1).truncationMode(.middle)
                         Spacer(minLength: 8)
-                        Button(String(localized: "Install")) {
+                        symbolButton("arrow.down.circle", String(localized: "Download")) {
                             container.installDrafter(repoID: candidate, for: model)
                             drafterTarget = nil
                         }
                     }
                 }
-                TextField(String(localized: "Drafter repository"), text: $drafterRepo)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { install(model) }
-                Button(String(localized: "Install Drafter")) { install(model) }
-                    .disabled(drafterRepo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(14)
         .frame(width: 640, alignment: .leading)
-    }
-
-    private func install(_ model: ModelDescriptor) {
-        container.installDrafter(repoID: drafterRepo, for: model)
-        drafterTarget = nil
     }
 
     /// Asks the hub which drafters were published for this checkpoint and keeps the ones that fit it.
@@ -957,7 +966,8 @@ struct ModelLibraryView: View {
                     source: ModelReference.parse(download.repoID)?.source,
                     owners: ModelOwners(repoID: download.repoID, baseModel: nil), repoID: download.repoID,
                     sizeBytes: download.sizeBytes ?? download.progress?.bytesTotal, quantization: download.quantization,
-                    detail: viewModel.destination(for: download.repoID))
+                    detail: download.drafterFor.map { String(localized: "MTP drafter for \($0)") }
+                        ?? viewModel.destination(for: download.repoID))
                 Spacer(minLength: 8)
                 downloadControls(download)
             }

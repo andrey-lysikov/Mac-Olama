@@ -65,6 +65,7 @@
       }
     },
     "%@ is up to date." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -220,6 +221,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Разрешить"
+          }
+        }
+      }
+    },
+    "Allow Notifications…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешить уведомления…"
+          }
+        }
+      }
+    },
+    "An update is available" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Есть обновление"
           }
         }
       }
@@ -404,6 +425,16 @@
         }
       }
     },
+    "Checking for an update…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверяю обновление…"
+          }
+        }
+      }
+    },
     "Checking size and architecture…" : {
       "localizations" : {
         "ru" : {
@@ -575,6 +606,16 @@
         }
       }
     },
+    "Default (%@)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По умолчанию (%@)"
+          }
+        }
+      }
+    },
     "Delete" : {
       "localizations" : {
         "ru" : {
@@ -695,16 +736,6 @@
         }
       }
     },
-    "Drafter repository" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Репозиторий драфтера"
-          }
-        }
-      }
-    },
     "Edit" : {
       "localizations" : {
         "ru" : {
@@ -811,16 +842,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Помещается, но впритык: нужно около %@ из %@; ожидается ~%lld ток/с, свободной памяти почти не останется."
-          }
-        }
-      }
-    },
-    "Fixed at 0 while MTP is on" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Фиксируется на 0, пока включён MTP"
           }
         }
       }
@@ -955,32 +976,22 @@
         }
       }
     },
-    "Install" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Установить"
-          }
-        }
-      }
-    },
-    "Install Drafter" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Установить драфтер"
-          }
-        }
-      }
-    },
     "Installed" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Установлена"
+          }
+        }
+      }
+    },
+    "Installed drafter" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Установленный драфтер"
           }
         }
       }
@@ -1181,6 +1192,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "MTP"
+          }
+        }
+      }
+    },
+    "MTP drafter for %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Драфтер MTP для %@"
           }
         }
       }
@@ -1936,6 +1957,16 @@
         }
       }
     },
+    "The answer stopped at the limit of %lld tokens." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ответ оборван: достигнут предел в %lld токенов."
+          }
+        }
+      }
+    },
     "The answer was stopped." : {
       "localizations" : {
         "ru" : {
@@ -2172,6 +2203,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Этого чата больше нет."
+          }
+        }
+      }
+    },
+    "This drafter only verifies greedy decoding, so the temperature stays at 0" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот драфтер проверяет только жадное декодирование, поэтому температура остаётся 0"
           }
         }
       }
@@ -2438,16 +2479,16 @@
     },
     "Would fit (about %@ of %@), but only %@ is free right now: close some apps or expect swapping." : {
       "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Поместится (примерно %1$@ из %2$@), но сейчас свободно только %3$@: закройте часть приложений или ждите подкачки."
-          }
-        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
             "value" : "Would fit (about %1$@ of %2$@), but only %3$@ is free right now: close some apps or expect swapping."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поместится (примерно %1$@ из %2$@), но сейчас свободно только %3$@: закройте часть приложений или ждите подкачки."
           }
         }
       }

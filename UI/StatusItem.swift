@@ -182,6 +182,12 @@ struct StatusMenuBuilder {
                 actions))
         menu.addItem(
             item(String(localized: "Check for Updates"), "arrow.triangle.2.circlepath", #selector(MenuActions.checkUpdates), actions))
+        // Only while messages are refused: without notifications the app has no way to report a finished download.
+        if NotificationService.shared.isDenied {
+            menu.addItem(
+                item(
+                    String(localized: "Allow Notifications…"), "bell.badge", #selector(MenuActions.openNotificationSettings), actions))
+        }
         menu.addItem(.separator())
         menu.addItem(item(String(localized: "Quit"), "xmark.circle", #selector(MenuActions.quit), actions, key: "q"))
         menu.items.forEach { $0.representedObject = actions }  // keep `actions` alive while the menu is open
@@ -481,5 +487,6 @@ final class MenuActions: NSObject {
         }
     }
     @objc func checkUpdates() { container.updates.checkAll(force: true) }
+    @objc func openNotificationSettings() { NotificationService.shared.openSettings() }
     @objc func quit() { NSApp.terminate(nil) }
 }

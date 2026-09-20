@@ -933,7 +933,8 @@ private struct ChatsSplitView: View {
 // ChatMessageView
 
 /// Chat transcript line: the user's text in a bubble on the right, the model's reply as plain Markdown on the left.
-private struct ChatMessageView: View {
+/// Not private: the panel and the queued questions read their size from this view, so one answer size rules them all.
+struct ChatMessageView: View {
     /// Reading size of the transcript; the panel keeps the system 13 pt, the window is for longer reading.
     static let textSize: CGFloat = 15
     let message: Message

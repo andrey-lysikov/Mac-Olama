@@ -353,20 +353,15 @@ import Testing
         #expect(!MTPDrafter.declaresHeads(Data(#"{"model_type":"gemma4_unified"}"#.utf8)))
     }
 
-    @Test func onlyHeadsCountAsADrafter() {
-        let drafter = ["fc.weight", "layers.0.self_attn.q_proj.weight", "norm.weight", "pre_fc_norm_hidden.weight"]
-        let model = drafter + ["language_model.model.embed_tokens.weight", "lm_head.weight"]
-        #expect(MTPDrafter.isDrafterOnly(tensorNames: drafter, config: qwenConfig))
-        // A full model tagged "mtp" on the hub: it speaks for itself, so it is not a drafter.
-        #expect(!MTPDrafter.isDrafterOnly(tensorNames: model, config: qwenConfig))
-        #expect(!MTPDrafter.isDrafterOnly(tensorNames: drafter, config: Data(#"{"model_type":"qwen3_5"}"#.utf8)))
-        #expect(!MTPDrafter.isDrafterOnly(tensorNames: [], config: qwenConfig))
-    }
-
-    @Test func drafterMustMatchTheModelsWidth() {
-        #expect(MTPDrafter.hiddenSize(Data(#"{"text_config":{"hidden_size":4096}}"#.utf8)) == 4096)
-        #expect(MTPDrafter.hiddenSize(Data(#"{"hidden_size":2560}"#.utf8)) == 2560)
-        #expect(MTPDrafter.hiddenSize(Data(#"{"model_type":"x"}"#.utf8)) == nil)
+    @Test func aDrafterIsRecognisedByItsArchitecture() async {
+        // The library's registries decide: `qwen3_5_mtp` is only ever a drafter, `qwen3_5` is a chat model as well.
+        #expect(await MTPDrafter.isDrafterType("qwen3_5_mtp"))
+        #expect(await MTPDrafter.isDrafterType("gemma4_unified_assistant"))
+        #expect(await MTPDrafter.isDrafterType("qwen3_5") == false)
+        #expect(await MTPDrafter.isDrafterType("gemma4_unified") == false)
+        #expect(await MTPDrafter.isDrafterType("nothing_like_this") == false)
+        #expect(MTPDrafter.modelType(inConfig: qwenConfig) == "qwen3_5")
+        #expect(MTPDrafter.modelType(inConfig: Data(#"{}"#.utf8)) == nil)
     }
 
     @Test func tensorNamesComeOutOfASafetensorsHeader() throws {
@@ -393,5 +388,16 @@ import Testing
         try write(["language_model.layers.0.self_attn.q_proj.weight", "mtp.fc.weight"])
         #expect(MTPDrafter.carriesHeadWeights(in: root))
         #expect(!MTPDrafter.carriesHeadWeights(in: root.appendingPathComponent("missing")))
+    }
+}
+
+@Suite struct ReplyBudgetTests {
+    /// The reply may use a quarter of the window: a flat limit cut reasoning models off mid-thought.
+    @Test func theBudgetFollowsTheContext() {
+        let budget = { ConversationService.replyBudget(context: $0, atLeast: 1024) }
+        #expect(budget(262_144) == 32768)  // capped, however wide the window is
+        #expect(budget(32768) == 8192)
+        #expect(budget(8192) == 2048)
+        #expect(budget(2048) == 1024)  // never below the reserve
     }
 }

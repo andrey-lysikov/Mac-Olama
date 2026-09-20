@@ -2,27 +2,29 @@
 //  SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import MLX
 import MLXLLM
 import MLXLMCommon
+import MLXNN
 import MLXVLM
 import os
 
-/// Multi-token prediction: a checkpoint that ships MTP heads drafts several tokens per round and the model verifies
-/// them in one pass — the same answer as plain decoding, fewer model calls. The heads sit in the model's own weight
-/// files, so the drafter loads from that folder and needs no second download.
+/// Multi-token prediction: a drafter proposes several tokens per round and the model verifies them in one pass — the
+/// same answer as plain decoding, fewer model calls. Drafters come in two shapes, so nothing here guesses from names
+/// or tensors: the library's own registries decide. Qwen ships prediction heads (`qwen3_5_mtp`), Gemma ships a small
+/// assistant model (`gemma4_unified_assistant`), and a checkpoint may also carry its heads inside its own weights.
 enum MTPDrafter {
-    private static let logger = Logger(subsystem: "com.macolama.app", category: "mtp")
+    static let logger = Logger(subsystem: "ru.lysnet.macolama", category: "mtp")
 
-    /// The library keeps drafter types in the registry its factory reads, and every family registers its own types.
-    /// Calling each registration is that API; which drafter is built is decided by the checkpoint, not by a list here.
+    /// Every family registers its drafter types with the library; this runs once and is awaited before any question.
     private static let registration = Task {
         await Qwen35TextMTPRegistration.register()
         await Qwen35VLMMTPRegistration.register()
         await Gemma4AssistantRegistration.register()
     }
 
-    /// Where a paired drafter repository is installed: a folder inside the model's own folder, so it is deleted with
-    /// the model and never shows up as a model of its own.
+    /// Where a paired drafter is installed: inside the model's own folder, so it is deleted with the model and never
+    /// appears as a model of its own.
     static let folderName = "drafter"
 
     static func directory(forModel directory: URL) -> URL { directory.appending(path: folderName) }
@@ -31,39 +33,157 @@ enum MTPDrafter {
         FileManager.default.fileExists(atPath: self.directory(forModel: directory).appending(path: "config.json").path)
     }
 
+    // What counts as a drafter
+
+    /// An architecture only a drafter uses: the drafter registry knows it and neither model factory does. `qwen3_5`
+    /// sits in both registries — it is a chat model that can also be read as a drafter — so it is not one by itself.
+    static func isDrafterType(_ modelType: String) async -> Bool {
+        await registration.value
+        guard await MTPDrafterTypeRegistry.shared.contains(modelType) else { return false }
+        let llm = await LLMModelFactory.shared.typeRegistry.contains(modelType)
+        let vlm = await VLMModelFactory.shared.typeRegistry.contains(modelType)
+        return !(llm || vlm)
+    }
+
+    static func modelType(inConfig config: Data) -> String? {
+        (try? JSONSerialization.jsonObject(with: config) as? [String: Any])?["model_type"] as? String
+    }
+
+    /// Whether a folder holds a drafter rather than a chat model.
+    static func isDrafter(directory: URL) async -> Bool {
+        guard let config = try? Data(contentsOf: directory.appending(path: "config.json")), let type = modelType(inConfig: config)
+        else { return false }
+        return await isDrafterType(type)
+    }
+
+    // Loading
+
     /// The drafter for an installed model: the paired repository when one is attached, otherwise the heads inside the
-    /// checkpoint itself. Nil when there are none. Never throws: speculation is an optimization, and the model has to
-    /// work without it.
+    /// checkpoint itself. Nil when there are none — speculation is an optimization and the model works without it.
     static func load(modelDirectory: URL) async -> (any MTPDrafterModel)? {
-        if isInstalled(forModel: modelDirectory) { return await build(from: directory(forModel: modelDirectory)) }
+        let name = modelDirectory.lastPathComponent
+        if isInstalled(forModel: modelDirectory) {
+            logger.info("\(name, privacy: .public): loading the paired drafter")
+            return await build(from: directory(forModel: modelDirectory), target: modelDirectory)
+        }
         let config = (try? Data(contentsOf: modelDirectory.appending(path: "config.json"))) ?? Data()
-        guard declaresHeads(config), carriesHeadWeights(in: modelDirectory) else { return nil }
-        return await build(from: modelDirectory)
+        guard declaresHeads(config) else {
+            logger.info("\(name, privacy: .public): no drafter, the config declares no prediction heads")
+            return nil
+        }
+        guard carriesHeadWeights(in: modelDirectory) else {
+            // The usual case for MLX conversions: the config keeps the keys, the heads themselves were dropped.
+            logger.info("\(name, privacy: .public): no drafter, the config declares heads but the weights hold none")
+            return nil
+        }
+        logger.info("\(name, privacy: .public): loading the heads inside the checkpoint")
+        return await build(from: modelDirectory, target: modelDirectory)
+    }
+
+    /// What a built drafter demands of the request, for the rest of the app: MLX types stay inside `Engine/`.
+    struct Traits: Sendable {
+        /// The library drops speculation at any temperature but 0 for such a drafter (Qwen's prediction heads).
+        var needsGreedy: Bool
+    }
+
+    /// Builds the drafter once to see whether it works and what it needs; used when a drafter is installed.
+    static func inspect(folder: URL, target: URL) async -> Traits? {
+        guard let model = await build(from: folder, target: target) else { return nil }
+        return Traits(needsGreedy: model.requiresGreedySampling)
     }
 
     /// Builds the drafter from a folder holding its config and weights; also the check that a freshly downloaded
     /// repository really is a drafter this engine can use.
-    static func build(from directory: URL) async -> (any MTPDrafterModel)? {
-        guard let config = try? Data(contentsOf: directory.appending(path: "config.json")) else { return nil }
+    static func build(from directory: URL, target: URL) async -> (any MTPDrafterModel)? {
+        let name = directory.lastPathComponent
+        guard let own = try? Data(contentsOf: directory.appending(path: "config.json")) else {
+            logger.error("\(name, privacy: .public): no config.json in the folder")
+            return nil
+        }
+        let vision = targetVision(at: target)
+        let sees = !vision.isEmpty
+        let config = aligned(own, withTargetVision: vision)
         await registration.value
         do {
             let base = try JSONDecoder.json5().decode(BaseConfiguration.self, from: config)
             let model = try await MTPDrafterTypeRegistry.shared.createModel(configuration: config, modelType: base.modelType)
+            // A text drafter paired with a vision model does not fail, it stops the process from inside the library.
+            guard String(reflecting: type(of: model)).hasPrefix("MLXVLM") == sees else {
+                logger.error("\(name, privacy: .public): drafter built for the other kind of target, not using it")
+                return nil
+            }
+            alignTensorNames(in: directory, to: model)
             try await loadWeights(modelDirectory: directory, model: model, perLayerQuantization: base.perLayerQuantization)
+            logger.info("\(name, privacy: .public): drafter ready, type \(base.modelType, privacy: .public)")
             return model
         } catch {
-            let folder = directory.lastPathComponent
-            logger.info("no MTP drafter in \(folder, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            logger.error("\(name, privacy: .public): drafter not built — \(error.localizedDescription, privacy: .public)")
             return nil
         }
     }
 
-    /// Whether this model could speculate at all: its own config announces prediction heads, so a drafter published
-    /// for this checkpoint fits it. Models without them never show the switch.
-    static func declaresHeads(inModel directory: URL) -> Bool {
-        guard let config = try? Data(contentsOf: directory.appending(path: "config.json")) else { return false }
-        return declaresHeads(config)
+    private static func targetVision(at directory: URL) -> [String: Any] {
+        guard let data = try? Data(contentsOf: directory.appending(path: "config.json")),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return [:] }
+        return root["vision_config"] as? [String: Any] ?? [:]
     }
+
+    /// The library chooses the text or the vision drafter by one thing: whether the drafter's config carries a
+    /// non-empty `vision_config`. Drafters published for a vision model often ship an empty one, and the text drafter
+    /// then meets a vision target and stops the process from inside. So that whole section is taken from the model
+    /// the drafter will serve — the real one, because the vision drafter decodes it.
+    private static func aligned(_ config: Data, withTargetVision vision: [String: Any]) -> Data {
+        guard var root = try? JSONSerialization.jsonObject(with: config) as? [String: Any] else { return config }
+        let own = root["vision_config"] as? [String: Any] ?? [:]
+        guard own.isEmpty != vision.isEmpty else { return config }
+        root["vision_config"] = vision
+        guard let merged = try? JSONSerialization.data(withJSONObject: root) else { return config }
+        logger.info("drafter config aligned with the target, images \(vision.isEmpty ? "off" : "on", privacy: .public)")
+        return merged
+    }
+
+    /// A drafter published on its own names its tensors the way its predictor sees them (`fc.weight`), while the model
+    /// keeps that predictor under one module and expects `mtp.fc.weight` — the same weights inside a checkpoint do
+    /// carry the prefix. Nothing loads otherwise: the model's own `sanitize` keeps only prefixed keys. So the files
+    /// are rewritten once, here, with the name of the module they belong to.
+    private static func alignTensorNames(in directory: URL, to model: any MTPDrafterModel) {
+        let roots = Set(model.children().flattened().map { $0.0.split(separator: ".").first.map(String.init) ?? $0.0 })
+        guard roots.count == 1, let root = roots.first else { return }
+        let names = tensorNames(inModelAt: directory)
+        guard !names.isEmpty, !names.contains(where: { $0.hasPrefix(root + ".") }) else { return }
+        let fm = FileManager.default
+        let files = ((try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "safetensors" }
+        do {
+            for file in files {
+                let (arrays, metadata) = try loadArraysAndMetadata(url: file)
+                let renamed = Dictionary(uniqueKeysWithValues: arrays.map { ("\(root).\($0.key)", $0.value) })
+                // Written beside the original and swapped in: the file being read must not be the file being written.
+                // The staging name keeps the `.safetensors` extension, which is what picks the format on save.
+                let staged = directory.appending(path: "renaming-" + file.lastPathComponent)
+                try save(arrays: renamed, metadata: metadata, url: staged)
+                _ = try fm.replaceItemAt(file, withItemAt: staged)
+            }
+            try rewriteIndex(in: directory, prefix: root)
+            logger.info("\(directory.lastPathComponent, privacy: .public): tensors renamed under \(root, privacy: .public)")
+        } catch {
+            logger.error("\(directory.lastPathComponent, privacy: .public): renaming failed — \(error.localizedDescription)")
+        }
+    }
+
+    /// The index lists every tensor by name; it has to agree with the files after they are rewritten.
+    private static func rewriteIndex(in directory: URL, prefix: String) throws {
+        let url = directory.appending(path: "model.safetensors.index.json")
+        guard let data = try? Data(contentsOf: url),
+            var json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let map = json["weight_map"] as? [String: Any]
+        else { return }
+        json["weight_map"] = Dictionary(uniqueKeysWithValues: map.map { ("\(prefix).\($0.key)", $0.value) })
+        try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]).write(to: url)
+    }
+
+    // Heads inside a checkpoint
 
     /// True when the config announces prediction heads. The key is found by name (`mtp_num_hidden_layers`,
     /// `num_nextn_predict_layers`), nested sections included, so no model or architecture names are kept here.
@@ -76,7 +196,7 @@ enum MTPDrafter {
         if let object = value as? [String: Any] {
             for (key, nested) in object {
                 let name = key.lowercased()
-                if name.contains("mtp") || name.contains("nextn"), let count = positiveCount(nested), count > 0 { return true }
+                if name.contains("mtp") || name.contains("nextn"), positiveCount(nested) != nil { return true }
                 if declaresHeads(in: nested) { return true }
             }
         }
@@ -90,76 +210,38 @@ enum MTPDrafter {
         return number.intValue
     }
 
-    /// Whether the weights really hold the heads: MLX builds routinely drop them while keeping the config keys, and a
-    /// drafter without weights either fails to load or drafts noise. The index names every tensor; without one the
-    /// safetensors headers are read (8-byte little-endian length, then JSON with the tensor names).
+    /// Whether the weights really hold the heads: MLX builds routinely drop them while keeping the config keys.
     static func carriesHeadWeights(in directory: URL) -> Bool {
-        tensorNames(inModelAt: directory).contains(where: isHeadTensor)
+        tensorNames(inModelAt: directory).contains { name in
+            name.split(separator: ".").contains { $0 == "mtp" || $0.hasPrefix("nextn") }
+        }
     }
 
-    /// A folder holding only prediction heads: a drafter repository someone downloaded as if it were a model. It has
-    /// no token embeddings and no output head, which every chat model has, so it cannot answer anything on its own.
-    static func isDrafterOnly(directory: URL) -> Bool {
-        let config = (try? Data(contentsOf: directory.appending(path: "config.json"))) ?? Data()
-        return isDrafterOnly(tensorNames: tensorNames(inModelAt: directory), config: config)
+    /// Tensor names of a checkpoint: from the safetensors index when there is one, otherwise from the file headers.
+    private static func tensorNames(inModelAt directory: URL) -> [String] {
+        if let data = try? Data(contentsOf: directory.appending(path: "model.safetensors.index.json")) {
+            let names = tensorNames(indexJSON: data)
+            if !names.isEmpty { return names }
+        }
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        return files.filter { $0.pathExtension == "safetensors" }.flatMap { file -> [String] in
+            guard let mapped = try? Data(contentsOf: file, options: .mappedIfSafe) else { return [] }
+            return tensorNames(safetensorsHead: Data(mapped.prefix(1 << 20)))
+        }
     }
 
-    /// The same judgement for a repository that is not downloaded yet: its config and the names of its tensors.
-    static func isDrafterOnly(tensorNames names: [String], config: Data) -> Bool {
-        guard !names.isEmpty, declaresHeads(config) else { return false }
-        return !names.contains { $0.contains("embed_tokens") || $0.contains("lm_head") }
-    }
-
-    /// Tensor names listed by a safetensors index (`weight_map`) or by a safetensors header.
     static func tensorNames(indexJSON: Data) -> [String] {
         guard let map = (try? JSONSerialization.jsonObject(with: indexJSON) as? [String: Any])?["weight_map"] as? [String: Any]
         else { return [] }
         return Array(map.keys)
     }
 
+    /// A safetensors file starts with the header's length (8 bytes, little-endian) and then that JSON.
     static func tensorNames(safetensorsHead data: Data) -> [String] {
         guard data.count > 8 else { return [] }
-        let length = data.prefix(8).reversed().reduce(UInt64(0)) { $0 << 8 | UInt64($1) }  // little-endian
+        let length = data.prefix(8).reversed().reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
         guard length > 0, Int(length) + 8 <= data.count else { return [] }
         let header = data.dropFirst(8).prefix(Int(length))
         return Array(((try? JSONSerialization.jsonObject(with: header)) as? [String: Any])?.keys ?? [:].keys)
-    }
-
-    /// Hidden size from a config, nested text section included: a drafter fits a model only if they match.
-    static func hiddenSize(_ configJSON: Data) -> Int? {
-        guard let root = try? JSONSerialization.jsonObject(with: configJSON) as? [String: Any] else { return nil }
-        let text = root["text_config"] as? [String: Any] ?? root
-        return (text["hidden_size"] as? NSNumber)?.intValue ?? (root["hidden_size"] as? NSNumber)?.intValue
-    }
-
-    static func hiddenSize(inModel directory: URL) -> Int? {
-        guard let config = try? Data(contentsOf: directory.appending(path: "config.json")) else { return nil }
-        return hiddenSize(config)
-    }
-
-    /// Every tensor name of a checkpoint, from the index when there is one, otherwise from the safetensors headers.
-    private static func tensorNames(inModelAt directory: URL) -> [String] {
-        let index = directory.appending(path: "model.safetensors.index.json")
-        if let data = try? Data(contentsOf: index),
-            let map = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["weight_map"] as? [String: Any]
-        {
-            return Array(map.keys)
-        }
-        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
-        return files.filter { $0.pathExtension == "safetensors" }.flatMap { tensorNames(in: $0) }
-    }
-
-    private static func isHeadTensor(_ name: String) -> Bool {
-        name.split(separator: ".").contains { $0 == "mtp" || $0.hasPrefix("nextn") }
-    }
-
-    private static func tensorNames(in file: URL) -> [String] {
-        guard let handle = try? FileHandle(forReadingFrom: file) else { return [] }
-        defer { try? handle.close() }
-        guard let size = try? handle.read(upToCount: 8), size.count == 8 else { return [] }
-        let length = size.reversed().reduce(UInt64(0)) { $0 << 8 | UInt64($1) }  // little-endian
-        guard length > 0, length < 64 << 20, let header = try? handle.read(upToCount: Int(length)) else { return [] }
-        let json = (try? JSONSerialization.jsonObject(with: header)) as? [String: Any]
-        return Array(json?.keys ?? [:].keys)
     }
 }

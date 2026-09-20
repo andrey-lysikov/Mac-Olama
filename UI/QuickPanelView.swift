@@ -402,7 +402,8 @@ struct MessageView: View {
             VStack(alignment: .leading, spacing: 6) {
                 AttachmentStrip(attachments: message.attachments)
                 if message.role == .user {
-                    Text(message.text).textSelection(.enabled)
+                    // The question is read alongside the answer, so it is set in the same size as it.
+                    Text(message.text).textSelection(.enabled).font(.system(size: ChatMessageView.textSize))
                 } else {
                     if let summary { ProgressSummaryLine(text: summary) }
                     // A reply that asked for tools has no answer of its own: its text is a preamble or echoed results.
@@ -410,8 +411,8 @@ struct MessageView: View {
                         if answer.isEmpty, !message.isPartial {
                             NoAnswerLine().padding(10)
                         } else {
-                            // Same reading size as the chats window (15 pt).
-                            MarkdownView(markdown: answer.isEmpty ? "…" : answer, baseFontSize: 15)
+                            // Same reading size as the chats window.
+                            MarkdownView(markdown: answer.isEmpty ? "…" : answer, baseFontSize: ChatMessageView.textSize)
                                 .padding(10)  // air around the answer text
                         }
                     }
