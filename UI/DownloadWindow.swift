@@ -732,9 +732,6 @@ struct ModelLibraryView: View {
                     } else {
                         // Always there: checks the hub for a newer revision of this model and downloads it when there is one.
                         let checking = container.updates.checkingModels.contains(model.repoID)
-                        if !checking, let result = container.updates.modelCheckResults[model.repoID] {
-                            checkResultMark(result)
-                        }
                         symbolButton(
                             "arrow.triangle.2.circlepath",
                             container.updates.pendingModelUpdates[model.repoID] != nil
@@ -752,6 +749,9 @@ struct ModelLibraryView: View {
                 if let update { updateProgress(update) }
                 if unavailable {
                     Text("The server does not answer").font(.caption).foregroundStyle(.secondary)
+                }
+                if let status = updateStatus(model) {
+                    Text(status).font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
@@ -810,31 +810,33 @@ struct ModelLibraryView: View {
         .help(String(localized: "Context window for this model"))
     }
 
-    /// The answer of the last update check, next to its button: notifications may not be shown at all.
-    private func checkResultMark(_ result: UpdateChecker.ModelCheckResult) -> some View {
-        let (symbol, help): (String, String) =
-            switch result {
-            case .upToDate: ("checkmark.circle", String(localized: "No update: the hub has the same revision"))
-            case .unreachable: ("exclamationmark.triangle", String(localized: "The hub did not answer"))
-            case .noRevision: ("questionmark.circle", String(localized: "No recorded revision: download the model again to compare"))
-            }
-        return Image(systemName: symbol)
-            .font(.system(size: Self.pictogramSize)).foregroundStyle(.secondary)
-            .help(help)
-            .accessibilityLabel(help)
+    /// What the update check is doing or found, written under the row's controls the way an unreachable server is.
+    private func updateStatus(_ model: ModelDescriptor) -> String? {
+        if container.updates.checkingModels.contains(model.repoID) { return String(localized: "Checking for an update…") }
+        if container.updates.pendingModelUpdates[model.repoID] != nil { return String(localized: "An update is available") }
+        switch container.updates.modelCheckResults[model.repoID] {
+        case .upToDate: return String(localized: "No update: the hub has the same revision")
+        case .unreachable: return String(localized: "The hub did not answer")
+        case .noRevision: return String(localized: "No recorded revision: download the model again to compare")
+        case nil: return nil
+        }
     }
 
     /// Sampling temperature saved for this model. Until one is picked the model answers with the temperature its own
     /// `generation_config.json` asks for. Drawn like the context menu, so the row stays short.
     private func temperaturePicker(_ model: ModelDescriptor) -> some View {
-        let fromModel = container.defaultTemperature(for: model)
+        let standard = container.defaultTemperature(for: model)
         let chosen = container.temperature(for: model)
         // Speculation verifies its drafts against greedy decoding, so it fixes the temperature at zero.
         let greedy = container.drafterIsInstalled(for: model) && container.isSpeculative(model)
-        let shown = greedy ? 0 : (chosen ?? fromModel)
+        let shown = greedy ? 0 : (chosen ?? standard.value)
+        let standardText = Self.temperatureText(standard.value)
         return Menu {
             Toggle(isOn: Binding(get: { chosen == nil }, set: { _ in container.setTemperature(nil, for: model) })) {
-                Text(String(localized: "From the model (\(Self.temperatureText(fromModel)))"))
+                // A model served elsewhere keeps no config here, so there is nothing of its own to follow.
+                Text(
+                    standard.fromModel
+                        ? String(localized: "From the model (\(standardText))") : String(localized: "Default (\(standardText))"))
             }
             ForEach(Self.temperatures, id: \.self) { value in
                 Toggle(isOn: Binding(get: { chosen == value }, set: { _ in container.setTemperature(value, for: model) })) {
@@ -842,7 +844,7 @@ struct ModelLibraryView: View {
                 }
             }
         } label: {
-            Text(verbatim: "t " + Self.temperatureText(shown)).font(.callout)
+            Text(verbatim: Self.temperatureText(shown) + "t").font(.callout)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
