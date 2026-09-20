@@ -26,8 +26,6 @@ struct GenerationProgress: Equatable {
     private(set) var firstThinkingToken: Date?
     /// Hidden tokens of the whole reply: without them the model did not reason, and the summary does not claim it did.
     private(set) var hiddenTokens = 0
-    /// Every token of the reply, the visible ones included: the panel shows this count while the spinner turns.
-    private(set) var totalTokens = 0
     private(set) var thoughtSeconds: TimeInterval = 0
 
     mutating func toolStarted(_ activity: AnswerText.Activity) {
@@ -44,7 +42,6 @@ struct GenerationProgress: Equatable {
 
     /// `answerStarted`: the visible answer is no longer empty, so the thinking stretch is over.
     mutating func token(answerStarted: Bool) {
-        totalTokens += 1
         if answerStarted {
             endThinking()
         } else if thinkingSince != nil {
@@ -113,7 +110,8 @@ struct GenerationProgressView: View {
             ForEach(progress.steps) { step in
                 HStack(spacing: 8) {
                     if step.done { Image(systemName: "checkmark").frame(width: 16) } else { ProgressView().controlSize(.small) }
-                    Text(step.done ? String(step.activity.text.trimmingSuffix("…")) : step.activity.text)
+                    // A finished step keeps its wording, without the ellipsis that says it is still running.
+                    Text(step.done ? step.activity.text.replacingOccurrences(of: "…", with: "") : step.activity.text)
                         .lineLimit(2).truncationMode(.middle)
                 }
             }
@@ -167,12 +165,6 @@ struct ProgressSummaryLine: View {
     }
 }
 
-extension String {
-    fileprivate func trimmingSuffix(_ suffix: String) -> Substring {
-        hasSuffix(suffix) ? dropLast(suffix.count) : Substring(self)
-    }
-}
-
 // Questions asked while the model is still busy
 
 /// A question sent while a reply is being written: it waits and goes out, in order, once the reply is finished,
@@ -196,6 +188,8 @@ struct QueuedQuestion: Identifiable, Equatable {
 
 /// Waiting questions under the running reply, each with a way to take it back.
 struct QueuedQuestionsView: View {
+    /// A waiting question reads at the size of the answers, the system's text size included.
+    @ScaledMetric(relativeTo: .body) private var scaledText: CGFloat = ChatMessageView.textSize
     let questions: [QueuedQuestion]
     var onRemove: (UUID) -> Void
 
@@ -206,7 +200,7 @@ struct QueuedQuestionsView: View {
                     Spacer(minLength: 40)
                     VStack(alignment: .trailing, spacing: 3) {
                         // A waiting question is read next to the answers, so it keeps their size.
-                        Text(verbatim: question.summary).lineLimit(3).font(.system(size: ChatMessageView.textSize))
+                        Text(verbatim: question.summary).lineLimit(3).font(.system(size: scaledText))
                             .padding(.horizontal, 12).padding(.vertical, 7)
                             .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         Label(String(localized: "Queued"), systemImage: "clock").font(.caption2).foregroundStyle(.secondary)

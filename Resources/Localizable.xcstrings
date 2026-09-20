@@ -115,6 +115,16 @@
         }
       }
     },
+    "A busy port moves the server to the next free one" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Если порт занят, сервер берёт следующий свободный"
+          }
+        }
+      }
+    },
     "A drafter is installed, MTP is off" : {
       "localizations" : {
         "ru" : {
@@ -125,12 +135,32 @@
         }
       }
     },
+    "A longer page is cut to this many characters" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Страница длиннее обрезается до этого числа символов"
+          }
+        }
+      }
+    },
     "About This Mac" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Об этом Mac"
+          }
+        }
+      }
+    },
+    "Access to the models API" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступ к API моделей"
           }
         }
       }
@@ -195,6 +225,26 @@
         }
       }
     },
+    "After idling" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Через"
+          }
+        }
+      }
+    },
+    "All" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Все"
+          }
+        }
+      }
+    },
     "All candidate ports are busy." : {
       "localizations" : {
         "ru" : {
@@ -215,22 +265,22 @@
         }
       }
     },
-    "Allow Notifications…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Разрешить уведомления…"
-          }
-        }
-      }
-    },
     "An update is available" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Есть обновление"
+          }
+        }
+      }
+    },
+    "Answer other programs" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отвечать другим программам"
           }
         }
       }
@@ -261,6 +311,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Дописать в"
+          }
+        }
+      }
+    },
+    "Apply" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Применить"
           }
         }
       }
@@ -456,11 +516,22 @@
       }
     },
     "Click to remove" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Нажмите, чтобы убрать"
+          }
+        }
+      }
+    },
+    "Close the panel when it loses focus" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закрывать панель при потере фокуса"
           }
         }
       }
@@ -596,6 +667,17 @@
         }
       }
     },
+    "Data" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данные"
+          }
+        }
+      }
+    },
     "Default (%@)" : {
       "localizations" : {
         "ru" : {
@@ -646,12 +728,32 @@
         }
       }
     },
+    "Do not unload" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не выгружать"
+          }
+        }
+      }
+    },
     "Done" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Готово"
+          }
+        }
+      }
+    },
+    "Double-click the field, then press the keys" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дважды щёлкните поле и нажмите клавиши"
           }
         }
       }
@@ -796,16 +898,6 @@
         }
       }
     },
-    "Features" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Функции"
-          }
-        }
-      }
-    },
     "File" : {
       "localizations" : {
         "ru" : {
@@ -836,12 +928,22 @@
         }
       }
     },
-    "Folder Access" : {
+    "Folder access" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Доступ к папкам"
+          }
+        }
+      }
+    },
+    "Folders the model may read" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Папки, доступные модели"
           }
         }
       }
@@ -926,6 +1028,16 @@
         }
       }
     },
+    "How many searches and pages the model may take before it answers" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сколько поисков и страниц модель может сделать, прежде чем ответить"
+          }
+        }
+      }
+    },
     "Hub" : {
       "localizations" : {
         "ru" : {
@@ -956,6 +1068,17 @@
         }
       }
     },
+    "images" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "картинки"
+          }
+        }
+      }
+    },
     "Images: %lld" : {
       "localizations" : {
         "ru" : {
@@ -982,6 +1105,27 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Установленный драфтер"
+          }
+        }
+      }
+    },
+    "Interface" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Интерфейс"
+          }
+        }
+      }
+    },
+    "k" : {
+      "comment" : "thousands suffix of a token count",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "к"
           }
         }
       }
@@ -1045,6 +1189,20 @@
           }
         }
       }
+    },
+    "M" : {
+      "comment" : "millions suffix of a token count",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "М"
+          }
+        }
+      }
+    },
+    "Mac-Olama" : {
+      "shouldTranslate" : false
     },
     "Mac-Olama update" : {
       "localizations" : {
@@ -1136,6 +1294,16 @@
         }
       }
     },
+    "Model permissions" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешения моделей"
+          }
+        }
+      }
+    },
     "Model size is unknown." : {
       "localizations" : {
         "ru" : {
@@ -1186,16 +1354,6 @@
         }
       }
     },
-    "MTP drafter for %@" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Драфтер MTP для %@"
-          }
-        }
-      }
-    },
     "MTP drafter · attaches itself to %@" : {
       "localizations" : {
         "ru" : {
@@ -1212,6 +1370,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Драфтер MTP · не модель для чата"
+          }
+        }
+      }
+    },
+    "MTP drafter for %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Драфтер MTP для %@"
           }
         }
       }
@@ -1246,16 +1414,6 @@
         }
       }
     },
-    "Never" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Никогда"
-          }
-        }
-      }
-    },
     "New Chat" : {
       "localizations" : {
         "ru" : {
@@ -1267,6 +1425,7 @@
       }
     },
     "No folders yet" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -1386,22 +1545,22 @@
         }
       }
     },
+    "not set" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "не задано"
+          }
+        }
+      }
+    },
     "Nothing found." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ничего не найдено."
-          }
-        }
-      }
-    },
-    "Off" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выключено"
           }
         }
       }
@@ -1422,6 +1581,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ollama %1$@ занимает порт %2$lld; API Mac-Olama займёт следующий свободный порт."
+          }
+        }
+      }
+    },
+    "Ollama and OpenAI-compatible clients reach the models through this app" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Клиенты Ollama и OpenAI-совместимые обращаются к моделям через это приложение"
           }
         }
       }
@@ -1476,6 +1645,16 @@
         }
       }
     },
+    "Open the panel with" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открывать панель по"
+          }
+        }
+      }
+    },
     "Opening the page…" : {
       "localizations" : {
         "ru" : {
@@ -1492,6 +1671,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Прочитано страниц: %lld"
+          }
+        }
+      }
+    },
+    "Panel behaviour" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поведение панели"
           }
         }
       }
@@ -1526,12 +1715,32 @@
         }
       }
     },
+    "Port" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Порт"
+          }
+        }
+      }
+    },
     "Prediction heads are published as a small separate repository for this checkpoint." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Головы предсказания публикуются отдельным небольшим репозиторием для этой сборки модели."
+          }
+        }
+      }
+    },
+    "Press the keys" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нажмите клавиши"
           }
         }
       }
@@ -1567,11 +1776,22 @@
       }
     },
     "Read Files in These Folders" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Читать файлы в этих папках"
+          }
+        }
+      }
+    },
+    "Read from a page" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Читать со страницы"
           }
         }
       }
@@ -1636,6 +1856,16 @@
         }
       }
     },
+    "Remove from the list" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Убрать из списка"
+          }
+        }
+      }
+    },
     "Rename Chat" : {
       "localizations" : {
         "ru" : {
@@ -1682,6 +1912,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Репозиторий или ссылка"
+          }
+        }
+      }
+    },
+    "Requests in a row" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запросов подряд"
+          }
+        }
+      }
+    },
+    "Reset" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сбросить"
           }
         }
       }
@@ -1766,6 +2016,16 @@
         }
       }
     },
+    "Search results per query" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Результатов поиска на запрос"
+          }
+        }
+      }
+    },
     "Searches: %lld" : {
       "localizations" : {
         "ru" : {
@@ -1822,6 +2082,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ошибка сервера %1$lld: %2$@"
+          }
+        }
+      }
+    },
+    "Settings" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройки"
           }
         }
       }
@@ -1902,6 +2172,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Системный промпт…"
+          }
+        }
+      }
+    },
+    "t/s" : {
+      "comment" : "tokens per second, after the number",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "т/с"
           }
         }
       }
@@ -2098,11 +2379,22 @@
       }
     },
     "The model may run your shortcuts; it asks before each run" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Модель может запускать ваши быстрые команды; перед каждым запуском спрашивает разрешение"
+          }
+        }
+      }
+    },
+    "The model may run yours, asking each time" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может их запускать, спрашивая каждый раз"
           }
         }
       }
@@ -2227,6 +2519,16 @@
         }
       }
     },
+    "This Mac only" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только этот Mac"
+          }
+        }
+      }
+    },
     "This model does not accept images." : {
       "localizations" : {
         "ru" : {
@@ -2337,22 +2639,22 @@
         }
       }
     },
-    "Unload After" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выгружать через"
-          }
-        }
-      }
-    },
     "Unload Now" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Выгрузить сейчас"
+          }
+        }
+      }
+    },
+    "Unload the model automatically" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автоматически выгружать модель"
           }
         }
       }
@@ -2467,7 +2769,17 @@
         }
       }
     },
-    "Web Search" : {
+    "Web pages" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Веб-страницы"
+          }
+        }
+      }
+    },
+    "Web search" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {

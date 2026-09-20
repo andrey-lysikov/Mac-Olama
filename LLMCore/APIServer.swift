@@ -148,7 +148,8 @@ public final class APIServer: Sendable {
         // Stable pseudo-digest from the repo id; clients only use it as an opaque identifier.
         var h: UInt64 = 0xcbf29ce484222325
         for b in m.repoID.utf8 { h ^= UInt64(b); h = h &* 0x100000001b3 }
-        return "sha256:" + String(repeating: "0", count: 48) + String(h, radix: 16).leftPadded(to: 16)
+        let digits = String(h, radix: 16)
+        return "sha256:" + String(repeating: "0", count: 64 - digits.count) + digits
     }
 
     private func tags() async -> OllamaTagsResponse {
@@ -670,8 +671,4 @@ struct APIError: Error {
         self.status = status
         self.message = message
     }
-}
-
-extension String {
-    func leftPadded(to width: Int) -> String { count >= width ? self : String(repeating: "0", count: width - count) + self }
 }

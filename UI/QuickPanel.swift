@@ -71,6 +71,7 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         panel.minSize = NSSize(width: Self.minWidth, height: Self.minHeight)
         panel.onEscape = { [weak self] in self?.hide() }
         panel.onPasteAttachment = { [weak self] in self?.viewModel.pasteFromClipboard() ?? false }
+        panel.onNewChat = { [weak self] in self?.viewModel.clear() }
 
         let root = QuickPanelView(
             viewModel: viewModel, onClose: { [weak self] in self?.hide() },
@@ -123,7 +124,6 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         // A status menu item dismisses its menu only after this call returns; repeat once it has.
         Task { @MainActor [panel] in panel?.orderFrontRegardless() }
         viewModel.panelDidAppear()
-        container.checkModelAvailability()
         installFocusObserver()
     }
 
@@ -294,6 +294,8 @@ final class QuickPanel: NSPanel {
     var onEscape: (() -> Void)?
     /// Returns true when ⌘V was consumed by attaching a copied image or file instead of pasting text.
     var onPasteAttachment: (() -> Bool)?
+    /// ⌘N starts a new chat here, as it does in the chats window.
+    var onNewChat: (() -> Void)?
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
@@ -321,6 +323,10 @@ final class QuickPanel: NSPanel {
             case 6: flags.contains(.shift) ? Selector(("redo:")) : Selector(("undo:"))  // Z
             default: nil
             }
+        if event.keyCode == 45, flags == .command {  // N: a new chat, as in the chats window
+            onNewChat?()
+            return true
+        }
         guard let action else { return false }
         if event.keyCode == 9, onPasteAttachment?() == true { return true }
         return NSApp.sendAction(action, to: nil, from: self)

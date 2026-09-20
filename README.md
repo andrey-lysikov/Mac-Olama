@@ -11,17 +11,25 @@ a chat window. Nothing leaves the computer unless you turn web search on.
 
 ## Features
 
-- Quick panel (left click on the menu bar icon or a system keyboard shortcut) and a chat window.
+- Quick panel (left click on the menu bar icon or ⌥Space, which you can change in the settings) and a chat window.
 - Search Hugging Face or ModelScope (MLX builds first) for models, or connect it by API.
 - Drop images (vision models), PDF and text files into a question.
-- Wb search (DuckDuckGo or Google), reading files in folders you allow, running Shortcuts with a confirmation.
-- API: Ollama-compatible and OpenAI-compatible server on `localhost:11434`.
+- Web search (DuckDuckGo or Google), reading files in folders you allow, running Shortcuts with a confirmation.
+- API: Ollama-compatible and OpenAI-compatible server on `localhost:11434`; the port, the interface and whether it
+  answers at all are in the settings.
 - The models is unloaded after an idle timeout, or kept resident if you choose "Never".
 - English and Russian interface.
 - Liquid Glass support.
 
 ## Tech
 
-Swift 6, SwiftUI + AppKit, AppIntents, SwiftData, Apple Silicon only, for MacOS 26 and newer. Also: 
+Swift 6, SwiftUI + AppKit, SwiftData, Apple Silicon only, for MacOS 26 and newer. Also: 
 - [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm);
 - [swift-transformers](https://github.com/huggingface/swift-transformers).
+
+## Icon
+
+The app icon is `Resources/AppIcon.icon` (Icon Composer), with the rendered sizes in
+`Resources/Assets.xcassets/AppIcon.appiconset`; the drawing it was traced from is in `Design/`. The menu bar uses the
+`sparkles` system symbol — the same mark the answers carry in the transcript — so it follows light and dark menu bars
+on its own.

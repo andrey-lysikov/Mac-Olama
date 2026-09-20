@@ -27,18 +27,7 @@ final class ModelIcons {
     @ObservationIgnored private var unavailable: Set<String> = []
     @ObservationIgnored private var loading: Set<String> = []
     @ObservationIgnored private var composed: [String: NSImage] = [:]
-    @ObservationIgnored private var greyscale: [String: NSImage] = [:]
     nonisolated private static let logger = Logger(subsystem: "ru.lysnet.macolama", category: "icons")
-
-    /// The account's avatar in greyscale, for the lists and menus.
-    func greyAvatar(_ owner: String) -> NSImage? {
-        let key = owner.lowercased()
-        if let image = greyscale[key] { return image }
-        guard let colour = avatar(owner) else { return nil }
-        let mono = Self.monochrome(colour) ?? colour
-        greyscale[key] = mono
-        return mono
-    }
 
     /// The account's avatar in colour (the hub picker), or nil while it loads (or when the account has none).
     func avatar(_ owner: String) -> NSImage? {
@@ -54,10 +43,11 @@ final class ModelIcons {
         return nil
     }
 
-    /// Author's avatar with the community's in the lower right corner, or the community's alone when the author is unknown.
+    /// Author's avatar with the community's in the lower right corner, or the community's alone when the author is
+    /// unknown. In colour, as the accounts publish them: the greyscale copy read as a defect, not as restraint.
     func icon(for owners: ModelOwners, size: CGFloat) -> NSImage? {
-        let author = owners.author.flatMap(greyAvatar)
-        let community = owners.community.flatMap(greyAvatar)
+        let author = owners.author.flatMap(avatar)
+        let community = owners.community.flatMap(avatar)
         guard let main = author ?? community else { return nil }
         let badge = author != nil ? community : nil
         let key = "\(owners.author ?? "")|\(owners.community ?? "")|\(size)|\(badge != nil)"
@@ -103,7 +93,6 @@ final class ModelIcons {
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try? png.write(to: file(for: key), options: .atomic)
             avatars[key] = image
-            greyscale.removeAll()
             composed.removeAll()
             revision += 1
         }

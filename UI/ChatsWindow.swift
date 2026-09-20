@@ -66,7 +66,7 @@ final class ChatsViewModel {
         Task {
             await reload()
             // Opened from "Model Library…": stay on the models section instead of auto-selecting a chat.
-            if selectedChatID == nil, !container.showsModelLibrary { selectedChatID = container.settings.activeChatID ?? chats.first?.id }
+            if selectedChatID == nil, container.section == .chat { selectedChatID = container.settings.activeChatID ?? chats.first?.id }
         }
     }
 
@@ -108,7 +108,6 @@ final class ChatsViewModel {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard WindowManager.shared.window(.chats)?.isKeyWindow == true else { return }
-                self?.container.checkModelAvailability()
                 self?.transcriptToken += 1
                 self?.focusToken += 1
             }
@@ -135,7 +134,7 @@ final class ChatsViewModel {
     // Chats
 
     func newChat() {
-        container.showsModelLibrary = false
+        container.section = .chat
         Task {
             let chat = try? await container.conversation.newChat(origin: .window)
             await reload()
@@ -247,7 +246,7 @@ final class ChatsViewModel {
             guard event.keyCode == 9, flags == .command else { return event }  // V, in any keyboard layout
             let handled = MainActor.assumeIsolated { () -> Bool in
                 guard let self, NSApp.keyWindow?.identifier?.rawValue == WindowManager.ID.chats.rawValue,
-                    !self.container.showsModelLibrary
+                    self.container.section == .chat
                 else { return false }
                 return self.pasteFromClipboard()
             }
@@ -362,6 +361,8 @@ struct ChatsWindowView: View {
 }
 
 private struct ChatsSplitView: View {
+    /// The composer reads at the size of the messages above it, the system's text size included.
+    @ScaledMetric(relativeTo: .body) private var scaledText: CGFloat = ChatMessageView.textSize
     @Bindable var viewModel: ChatsViewModel
     @Environment(AppContainer.self) private var container
     @State private var renaming: Chat?
@@ -399,7 +400,7 @@ private struct ChatsSplitView: View {
         // The window is named after what it shows: the chat's short title, as in the sidebar, or the models section.
         .onChange(of: windowTitle, initial: true) { _, title in WindowManager.shared.window(.chats)?.title = title }
         // Showing the library (menu, notification, sidebar) clears the chat selection so only one section is highlighted.
-        .onChange(of: container.showsModelLibrary) { _, shown in if shown { viewModel.selectedChatID = nil } }
+        .onChange(of: container.section) { _, section in if section != .chat { viewModel.selectedChatID = nil } }
         .onChange(of: viewModel.focusToken) { _, _ in
             composerFocused = true
             FieldCaret.moveToEnd()
@@ -421,6 +422,7 @@ private struct ChatsSplitView: View {
             Spacer(minLength: 0)
             roundButton("square.and.pencil", String(localized: "New Chat")) { viewModel.newChat() }
                 .keyboardShortcut("n", modifiers: .command)
+                .keyboardShortcut("n", modifiers: .command)
             roundButton("sidebar.left", String(localized: "Hide the chat list")) { showsSidebar.toggle() }
         }
         .padding(.horizontal, 12)
@@ -433,7 +435,7 @@ private struct ChatsSplitView: View {
                 Color.clear.frame(width: 72, height: 1)
                 roundButton("sidebar.left", String(localized: "Show the chat list")) { showsSidebar.toggle() }
             }
-            if container.showsModelLibrary, let models {
+            if container.section == .models, let models {
                 ModelLibraryHeader(viewModel: models)
             } else {
                 Text(verbatim: windowTitle).font(.headline).lineLimit(1).truncationMode(.middle)
@@ -485,10 +487,10 @@ private struct ChatsSplitView: View {
     private var detailColumn: some View {
         VStack(spacing: 0) {
             detailStrip
-            if container.showsModelLibrary, let models {
-                ModelLibraryView(viewModel: models)
-            } else {
-                detail
+            switch container.section {
+            case .models: if let models { ModelLibraryView(viewModel: models) }
+            case .settings: SettingsSectionView()
+            case .chat: detail
             }
         }
         // The window itself is transparent for the sidebar's sake, so this column brings its own reading background.
@@ -496,7 +498,8 @@ private struct ChatsSplitView: View {
     }
 
     private var windowTitle: String {
-        if container.showsModelLibrary { return String(localized: "Models") }
+        if container.section == .models { return String(localized: "Models") }
+        if container.section == .settings { return String(localized: "Settings") }
         return viewModel.selectedChat.map { $0.title.isEmpty ? String(localized: "Untitled chat") : $0.title }
             ?? String(localized: "New Chat")
     }
@@ -569,7 +572,7 @@ private struct ChatsSplitView: View {
                             }
                             Button(String(localized: "Open in Panel")) { container.setActiveChat(chat.id) }
                             Button(String(localized: "System Prompt…")) {
-                                container.showsModelLibrary = false
+                                container.section = .chat
                                 viewModel.selectedChatID = chat.id
                                 systemPromptText = chat.systemPrompt ?? ""
                                 showSystemPrompt = true
@@ -584,7 +587,7 @@ private struct ChatsSplitView: View {
         // A list draws an opaque background of its own, which hid the sidebar material underneath.
         .scrollContentBackground(.hidden)
         // Picking a chat always leaves the model library.
-        .onChange(of: viewModel.selectedChatID) { _, id in if id != nil { container.showsModelLibrary = false } }
+        .onChange(of: viewModel.selectedChatID) { _, id in if id != nil { container.section = .chat } }
         .safeAreaInset(edge: .bottom, spacing: 0) { modelsEntry }
         .alert(String(localized: "Rename Chat"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField(String(localized: "Title"), text: $renameText)
@@ -596,35 +599,40 @@ private struct ChatsSplitView: View {
     }
 
     /// Pinned at the very bottom of the sidebar (a safe-area inset, so the list stays the sidebar column itself):
-    /// opens the model library in the detail area.
+    /// the two permanent sections of the window, settings above the model library.
     private var modelsEntry: some View {
         VStack(spacing: 0) {
             Divider()
-            Button {
-                container.showsModelLibrary = true
-                viewModel.selectedChatID = nil
-            } label: {
-                Label(String(localized: "Models"), systemImage: "square.stack.3d.up")
-                    // Heavier than a chat row: this is the sidebar's one permanent section, not one of the list items.
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 10).padding(.vertical, 7)
-                    // Selected like a sidebar row: accent fill, not the grey `.selection` material.
-                    .foregroundStyle(container.showsModelLibrary ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-                    .background(
-                        container.showsModelLibrary ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear),
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    )
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(8)
+            sectionEntry(.settings, title: String(localized: "Settings"), symbol: "gearshape")
+            sectionEntry(.models, title: String(localized: "Models"), symbol: "square.stack.3d.up")
         }
         // Its own height and background: the list scrolls under this strip without showing through it, and a small
         // window shrinks the list, never the strip.
         .frame(minHeight: 40)
         // The same material as the sidebar: it is translucent in the same way and the rows do not show through it.
         .background(SidebarBackground())
+    }
+
+    private func sectionEntry(_ section: AppContainer.Section, title: String, symbol: String) -> some View {
+        Button {
+            container.section = section
+            viewModel.selectedChatID = nil
+        } label: {
+            Label(title, systemImage: symbol)
+                // Heavier than a chat row: these are the sidebar's permanent sections, not items of the list.
+                .font(.system(size: 15, weight: .semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                // Selected like a sidebar row: accent fill, not the grey `.selection` material.
+                .foregroundStyle(container.section == section ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                .background(
+                    container.section == section ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear),
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8).padding(.vertical, 4)
     }
 
     private var groupedChats: [(String, [Chat])] {
@@ -746,6 +754,9 @@ private struct ChatsSplitView: View {
             // A freshly loaded history is laid out a frame later, so the jump to its end waits for that.
             .onAppear { scrollToEnd(proxy) }
             .onChange(of: viewModel.transcriptToken) { _, _ in scrollToEnd(proxy) }
+            // Questions put in the queue are pinned above the composer: the transcript loses that much height, and
+            // without this the end of the reply being written is pushed out of sight.
+            .onChange(of: viewModel.queuedHere.count) { _, _ in scrollToEnd(proxy) }
         }
     }
 
@@ -773,7 +784,7 @@ private struct ChatsSplitView: View {
             if !viewModel.pendingImages.isEmpty || !viewModel.pendingDocuments.isEmpty { pendingAttachments }
             TextField(String(localized: "Ask a question…"), text: $viewModel.input, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: ChatMessageView.textSize))
+                .font(.system(size: scaledText))
                 .lineLimit(1...10)
                 .focused($composerFocused)
                 .onKeyPress(.return, phases: .down) { press in
@@ -799,7 +810,7 @@ private struct ChatsSplitView: View {
                     modelPicker
                 }
                 if viewModel.isGenerating {
-                    ProgressView().controlSize(.small)
+                    // No spinner here: the transcript above already shows the reply being written.
                     Button(action: viewModel.stop) {
                         Image(systemName: "stop.fill")
                     }
@@ -873,7 +884,8 @@ private struct ChatsSplitView: View {
                     isOn: Binding(get: { m.id == viewModel.activeModel?.id }, set: { _ in viewModel.setModel(m) })
                 ) {
                     Label {
-                        Text(verbatim: m.kind == .vlm ? "\(m.name) · VLM" : m.name)
+                        // Just the name: whether the model understands pictures is written out in the models section.
+                        Text(verbatim: m.name)
                     } icon: {
                         modelImage(m)
                     }
@@ -940,6 +952,8 @@ private struct ChatsSplitView: View {
 /// Chat transcript line: the user's text in a bubble on the right, the model's reply as plain Markdown on the left.
 /// Not private: the panel and the queued questions read their size from this view, so one answer size rules them all.
 struct ChatMessageView: View {
+    /// Follows the system text size (Accessibility → Display → Text size): 15 pt while it is at the default.
+    @ScaledMetric(relativeTo: .body) private var scaledText: CGFloat = ChatMessageView.textSize
     /// Reading size of the transcript; the panel keeps the system 13 pt, the window is for longer reading.
     static let textSize: CGFloat = 15
     let message: Message
@@ -956,12 +970,17 @@ struct ChatMessageView: View {
     /// they are measured against. Nothing is spelled out in words, so it reads the same in both languages.
     /// `nonisolated`: plain arithmetic over strings, called from wherever a count is shown — the view's own
     /// main-actor isolation would otherwise trap when it is used off the main thread.
+    /// The units are localized: the Russian transcript reads т/с, к and М.
+    nonisolated static let perSecond = String(localized: "t/s", comment: "tokens per second, after the number")
+    nonisolated static let thousands = String(localized: "k", comment: "thousands suffix of a token count")
+    nonisolated static let millions = String(localized: "M", comment: "millions suffix of a token count")
+
     nonisolated static func pace(tokensPerSecond: Double?, tokens: Int?, limit: Int?) -> String? {
         var inner: String?
         if let tokens { inner = limit.map { "\(compact(tokens))/\(compact($0))" } ?? compact(tokens) }
         switch (tokensPerSecond, inner) {
-        case (let speed?, let inner?): return "\(Int(speed))t/s (\(inner))"
-        case (let speed?, nil): return "\(Int(speed))t/s"
+        case (let speed?, let inner?): return "\(Int(speed))\(perSecond) (\(inner))"
+        case (let speed?, nil): return "\(Int(speed))\(perSecond)"
         case (nil, let inner?): return inner
         case (nil, nil): return nil
         }
@@ -973,10 +992,11 @@ struct ChatMessageView: View {
         case ..<1000: "\(value)"
         case ..<1_000_000:
             Double(value) / 1000 < 10
-                ? String(format: "%.1fk", Double(value) / 1000) : "\(Int((Double(value) / 1000).rounded()))k"
+                ? String(format: "%.1f", Double(value) / 1000) + thousands : "\(Int((Double(value) / 1000).rounded()))\(thousands)"
         default:
             Double(value) / 1_000_000 < 10
-                ? String(format: "%.1fM", Double(value) / 1_000_000) : "\(Int((Double(value) / 1_000_000).rounded()))M"
+                ? String(format: "%.1f", Double(value) / 1_000_000) + millions
+                : "\(Int((Double(value) / 1_000_000).rounded()))\(millions)"
         }
     }
 
@@ -994,7 +1014,7 @@ struct ChatMessageView: View {
                 VStack(alignment: .trailing, spacing: 6) {
                     AttachmentStrip(attachments: message.attachments)
                     if !message.text.isEmpty {
-                        Text(message.text).textSelection(.enabled).font(.system(size: Self.textSize))
+                        Text(message.text).textSelection(.enabled).font(.system(size: scaledText))
                             .padding(.horizontal, 14).padding(.vertical, 9)
                             .background(.quaternary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                     }
@@ -1006,7 +1026,7 @@ struct ChatMessageView: View {
                 if let reasoning {
                     // Set apart and quieter than the answer: it is the model's thinking, not what it says.
                     Text(reasoning)
-                        .font(.system(size: Self.textSize - 2)).foregroundStyle(.secondary).textSelection(.enabled)
+                        .font(.system(size: scaledText - 2)).foregroundStyle(.secondary).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(10)
                         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -1016,7 +1036,7 @@ struct ChatMessageView: View {
                     if answer.isEmpty, !message.isPartial {
                         NoAnswerLine()
                     } else {
-                        MarkdownView(markdown: answer.isEmpty ? "…" : answer, baseFontSize: Self.textSize)
+                        MarkdownView(markdown: answer.isEmpty ? "…" : answer, baseFontSize: scaledText)
                     }
                 }
                 if !message.isPartial, message.toolCalls.isEmpty {

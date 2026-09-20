@@ -21,9 +21,14 @@ final class WindowManager: NSObject, NSWindowDelegate {
         self.container = container
     }
 
-    /// The model library is a section of the chats window, not a window of its own.
+    /// The model library and the settings are sections of the chats window, not windows of their own.
     func openModels() {
-        container?.showsModelLibrary = true
+        container?.section = .models
+        open(.chats)
+    }
+
+    func openSettings() {
+        container?.section = .settings
         open(.chats)
     }
 

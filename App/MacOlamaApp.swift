@@ -32,6 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         container = AppContainer()
 
         WindowManager.shared.configure(container: container)
+        // The panel's shortcut: registered now and again whenever the settings change it.
+        container.hotkeyChanged = { [weak self] in self?.applyHotkey() }
         NotificationService.shared.configure(container: container)
         panel = QuickPanelController(container: container)
         WindowManager.shared.hidePanel = { [weak panel] in panel?.hide() }
@@ -40,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         servicesProvider = ServicesProvider(panel: panel)
         NSApp.servicesProvider = servicesProvider
         NSUpdateDynamicServices()
+        applyHotkey()
 
         LaunchAtLogin.sync(enabled: container.settings.launchAtLogin)
         container.start()
@@ -57,6 +60,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// An agent app gets no main menu for free, and without an Edit menu text fields lose ⌘A/⌘C/⌘V/⌘X/⌘Z.
     /// The menu bar shows it only while the chats window is open (activation policy `.regular`).
+    private func applyHotkey() {
+        GlobalHotkey.shared.register(container.hotkey) { [weak self] in self?.panel.toggle() }
+    }
+
     private func installMainMenu() {
         let main = NSMenu()
         func add(_ title: String, _ items: [NSMenuItem]) {

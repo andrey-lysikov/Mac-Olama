@@ -124,13 +124,23 @@ public struct ModelFitReport: Sendable, Equatable {
     public var contextTokens: Int = 0
     public var warnings: [String]
 
+    /// How much context the estimate assumes when the user has not chosen a window. A model may declare 260k, but the
+    /// attention cache only grows with the conversation, and a chat that long is rare — the same 32k the reply budget
+    /// is capped at. A window chosen in the models section is used as it is.
+    public static let assumedContext = 32768
+    /// Without a KV profile the cache is guessed from the model's size; that guess was calibrated on short chats and
+    /// runs away at long ones, so it is asked about a shorter window.
+    public static let assumedContextWithoutProfile = 8192
+
     /// `kvCache` comes from the model's own `config.json`; without it the old rule of thumb is used. `availableBytes` is
-    /// what the machine can hand out right now (0 = do not take it into account).
+    /// what the machine can hand out right now (0 = do not take it into account). `chosenContext` is the window the
+    /// model is set to run with, when there is one.
     public static func evaluate(
         modelBytes: Int64, contextLength: Int?, hardware: HardwareProfile, kvCache: KVCacheProfile? = nil,
-        availableBytes: UInt64 = 0
+        availableBytes: UInt64 = 0, chosenContext: Int? = nil
     ) -> ModelFitReport {
-        let context = min(contextLength ?? 8192, 8192)
+        let ceiling = kvCache != nil ? assumedContext : assumedContextWithoutProfile
+        let context = chosenContext ?? min(contextLength ?? ceiling, ceiling)
         let kv: Int64
         if let kvCache {
             kv = kvCache.bytes(context: context)

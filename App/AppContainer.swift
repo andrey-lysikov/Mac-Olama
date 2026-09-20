@@ -1,6 +1,7 @@
 //  Copyright © AndreyLysikov
 //  SPDX-License-Identifier: Apache-2.0
 
+import AppKit
 import Foundation
 import Observation
 import os
@@ -32,7 +33,9 @@ final class AppContainer {
     private(set) var apiStatus: APIStatus = .disabled
     private(set) var downloads: [ActiveDownload] = [] { didSet { persistDownloads() } }
     /// The chats window shows the model library instead of a chat (set from the menu, notifications and the sidebar).
-    var showsModelLibrary = false
+    /// What the chats window shows on the right: the chat, the model library or the settings.
+    enum Section: Equatable { case chat, models, settings }
+    var section: Section = .chat
     /// Raised whenever an action turns out to need a Hugging Face token; the model library answers by opening the token popover.
     var tokenPromptRequested = false
     /// Chats on screen right now (the panel's and the one open in the chats window): a model picked in the menu goes to them.
@@ -45,7 +48,7 @@ final class AppContainer {
 
     /// Opens the chats window on this chat instead of whichever it showed last.
     func openInChats(_ chatID: UUID?) {
-        showsModelLibrary = false
+        section = .chat
         requestedWindowChatID = chatID
         WindowManager.shared.open(.chats)
     }
@@ -146,8 +149,15 @@ final class AppContainer {
             keepModelLoadedIfPinned()
             restoreDownloads()
             removeOrphanedStaging()
+            checkModelAvailability(force: true)
             await startAPI()
             updates.start()
+        }
+        // A Mac that slept had no network: the connected servers are asked about once, when it comes back.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkModelAvailability(force: true) }
         }
     }
 
@@ -180,8 +190,9 @@ final class AppContainer {
         }
     }
 
-    /// Checks the servers of models connected by API. Called when the panel or the chats window opens, at most every 30 s:
-    /// local models are on disk and need no check. `force`: the check button of an unavailable model skips the 30 s.
+    /// Checks the servers of models connected by API: once at launch, once after the Mac wakes, every minute while the
+    /// models section is open, and on the check button of an unavailable model. Local models are on disk and need none.
+    /// `force` skips the 30 s that keeps two checks in a row from both going out.
     func checkModelAvailability(force: Bool = false) {
         let remotes = models.filter { $0.source == .remote }
         guard availabilityTask == nil else { return }
@@ -189,8 +200,10 @@ final class AppContainer {
         if !force, let last = lastAvailabilityCheck, last.duration(to: .now) < .seconds(30) { return }
         let targets = remotes.compactMap { model in (try? RemoteEndpoint.load(from: model.directory)).map { (model, $0) } }
         availabilityTask = Task {
+            defer { availabilityTask = nil }
             // nil probe = up but refused us (no token sent); a probe = up, with what the server serves now.
             let results = await withTaskGroup(of: (ModelDescriptor, RemoteEndpoint, RemoteEngine.Probe?, up: Bool).self) { group in
+                let logger = logger  // the probes run in a task group, so the logger travels with them
                 for (model, endpoint) in targets {
                     group.addTask {
                         // With its token, so a server that only answers authenticated requests is checked properly;
@@ -198,10 +211,15 @@ final class AppContainer {
                         do {
                             let probe = try await RemoteEngine.probe(
                                 baseURL: endpoint.baseURL, model: endpoint.model, token: RemoteTokens.token(for: model.id))
+                            logger.info(
+                                "remote \(model.repoID, privacy: .public): server serves \(probe.model, privacy: .public)")
                             return (model, endpoint, probe, true)
                         } catch RemoteError.http(let status, _) where status == 401 || status == 403 {
+                            logger.info("remote \(model.repoID, privacy: .public): up, but refused the check (\(status))")
                             return (model, endpoint, nil, true)
                         } catch {
+                            logger.info(
+                                "remote \(model.repoID, privacy: .public): unreachable — \(String(describing: error), privacy: .public)")
                             return (model, endpoint, nil, false)
                         }
                     }
@@ -217,7 +235,6 @@ final class AppContainer {
             }
             if changed { await refreshModels() }
             lastAvailabilityCheck = .now
-            availabilityTask = nil
         }
     }
 
@@ -226,16 +243,17 @@ final class AppContainer {
     private func updateRemote(_ model: ModelDescriptor, endpoint: RemoteEndpoint, probe: RemoteEngine.Probe) -> Bool {
         let repoID = "\(endpoint.hostAndPort)/\(probe.model)"
         let kind: ModelKind = probe.supportsVision ? .vlm : .llm
+        // llama-server answers `/props` with `{}` on some builds: what it does not report keeps the value it had.
+        let contextLength = probe.contextLength ?? model.contextLength
         let same =
-            probe.model == endpoint.model && repoID == model.repoID && kind == model.kind && probe.contextLength == model.contextLength
-            && probe.supportsTools == model.supportsTools
+            probe.model == endpoint.model && repoID == model.repoID && kind == model.kind && contextLength == model.contextLength
         guard !same, var manifest = try? ModelManifest.load(from: model.directory) else { return false }
         var updated = endpoint
         updated.model = probe.model
         manifest.repoID = repoID
         manifest.kind = kind
-        manifest.contextLength = probe.contextLength
-        manifest.supportsTools = probe.supportsTools
+        manifest.contextLength = contextLength
+        if probe.supportsTools { manifest.supportsTools = true }
         do {
             try updated.save(to: model.directory)
             try manifest.save(to: model.directory)
@@ -243,6 +261,7 @@ final class AppContainer {
             logger.error("Could not update remote model \(model.id): \(error)")
             return false
         }
+        logger.info("remote \(model.repoID, privacy: .public): renamed to \(repoID, privacy: .public)")
         if engineState.modelID == model.id { Task { await engineManager.unload() } }  // next question reconnects with the new model
         return true
     }
@@ -372,7 +391,7 @@ final class AppContainer {
     }
 
     private func applyConversationConfiguration() {
-        var config = ConversationService.Configuration()
+        var config = ConversationService.Configuration(maxToolIterations: settings.toolIterations)
         config.contextTokensByModel = settings.modelContextTokens
         config.temperatureByModel = settings.modelTemperatures
         config.speculativeModelIDs = Set(settings.speculativeModels)
@@ -392,7 +411,7 @@ final class AppContainer {
     func fit(for model: ModelDescriptor) -> ModelFitReport {
         ModelFitReport.evaluate(
             modelBytes: model.sizeBytes, contextLength: model.contextLength, hardware: hardware, kvCache: model.kvCache,
-            availableBytes: HardwareProfile.availableMemoryBytes())
+            availableBytes: HardwareProfile.availableMemoryBytes(), chosenContext: settings.modelContextTokens[model.id])
     }
 
     // Downloads (shared by the download window, menu, notifications and the update checker)
@@ -448,7 +467,8 @@ final class AppContainer {
         let wanted = Set(downloads.compactMap { ModelReference.parse($0.repoID)?.directoryName })
         let folders = (try? fm.contentsOfDirectory(at: paths.downloads, includingPropertiesForKeys: nil)) ?? []
         for folder in folders where !wanted.contains(folder.lastPathComponent) {
-            let size = Self.megabytes(of: folder)
+            let files = (fm.enumerator(at: folder, includingPropertiesForKeys: [.fileSizeKey])?.allObjects as? [URL]) ?? []
+            let size = files.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) } / (1 << 20)
             do {
                 try fm.removeItem(at: folder)
                 logger.info("dropped an abandoned download: \(folder.lastPathComponent, privacy: .public), \(size) MB freed")
@@ -456,14 +476,6 @@ final class AppContainer {
                 logger.error("could not drop \(folder.lastPathComponent, privacy: .public): \(error.localizedDescription)")
             }
         }
-    }
-
-    private static func megabytes(of folder: URL) -> Int {
-        let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.fileSizeKey])
-        let bytes = (files?.allObjects as? [URL] ?? []).reduce(0) { total, url in
-            total + ((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
-        }
-        return bytes / (1 << 20)
     }
 
     /// Rows in display order: the running download first, then paused and queued ones, then failed and finished.
@@ -546,7 +558,7 @@ final class AppContainer {
     /// Downloads report themselves through Notification Center only while the models section is not open: with it on
     /// screen the row says the same thing, whether or not the window has focus.
     private func notifyAboutDownload(title: String, body: String, category: NotificationService.Category = .info) {
-        guard !(showsModelLibrary && WindowManager.shared.isOpen(.chats)) else { return }
+        guard !(section == .models && WindowManager.shared.isOpen(.chats)) else { return }
         NotificationService.shared.send(title: title, body: body, category: category)
     }
 
@@ -910,6 +922,63 @@ final class AppContainer {
         updateTools()
     }
 
+    /// The shortcut that opens the panel from any app. Set here, not in System Settings: a service's shortcut cannot
+    /// be given to this app there. `hotkeyChanged` is the app delegate re-registering it.
+    var hotkey: GlobalHotkey.Combination {
+        .init(keyCode: settings.hotkeyKeyCode, modifiers: settings.hotkeyModifiers)
+    }
+
+    var hotkeyChanged: (() -> Void)?
+
+    /// Registers the stored combination again: the settings field switches it off while it listens for a new one.
+    func restoreHotkey() { hotkeyChanged?() }
+
+    func setHotkey(_ combination: GlobalHotkey.Combination) {
+        settings.hotkeyKeyCode = combination.keyCode
+        settings.hotkeyModifiers = combination.modifiers
+        hotkeyChanged?()
+    }
+
+    /// How many rounds of tools the model may take before it has to answer: each round is a search or a page read.
+    func setToolIterations(_ rounds: Int) {
+        settings.toolIterations = min(max(rounds, 1), 20)
+        applyConversationConfiguration()
+    }
+
+    func setPageCharacters(_ characters: Int) {
+        settings.pageCharacters = min(max(characters, 2000), 60000)
+        updateTools()
+    }
+
+    func setSearchResults(_ count: Int) {
+        settings.searchResults = min(max(count, 3), 12)
+        updateTools()
+    }
+
+    func setPanelClosesOnFocusLoss(_ closes: Bool) { settings.panelClosesOnFocusLoss = closes }
+
+    /// The port the local API listens on. Changing it restarts the server; a busy port still moves to the next free one.
+    /// Whether other programs may reach the models through this app at all.
+    func setAPIEnabled(_ enabled: Bool) {
+        guard enabled != settings.apiServerEnabled else { return }
+        settings.apiServerEnabled = enabled
+        Task { await startAPI() }
+    }
+
+    /// The interface the API answers on. "127.0.0.1" keeps it on this Mac; "0.0.0.0" opens it to the network.
+    func setAPIBindHost(_ host: String) {
+        guard host != settings.apiBindHost else { return }
+        settings.apiBindHost = host
+        Task { await startAPI() }
+    }
+
+    func setAPIPort(_ port: Int) {
+        let wanted = min(max(port, 1024), 65535)
+        guard wanted != settings.apiServerPort else { return }
+        settings.apiServerPort = wanted
+        Task { await startAPI() }
+    }
+
     func setShortcutsToolEnabled(_ enabled: Bool) {
         settings.shortcutsToolEnabled = enabled
         updateTools()
@@ -933,7 +1002,10 @@ final class AppContainer {
         var providers: [any ToolProvider] = []
         if settings.toolsEnabled {
             let provider: any SearchProvider = settings.searchProvider == "google" ? GoogleProvider() : DuckDuckGoProvider()
-            providers.append(WebToolProvider(provider: provider, configuration: .init()))
+            var web = WebToolProvider.Configuration()
+            web.maxPageCharacters = settings.pageCharacters
+            web.maxResults = settings.searchResults
+            providers.append(WebToolProvider(provider: provider, configuration: web))
         }
         if settings.fileToolsEnabled, !settings.allowedFolders.isEmpty {
             providers.append(
@@ -959,16 +1031,26 @@ final class AppContainer {
 
     // API server (always on: localhost only, no token; falls back to the next port if 11434 is taken)
 
-    static let apiPortCandidates = [11434, 11435, 11436, 11437]
-    var apiURL: URL { URL(string: "http://127.0.0.1:\(settings.apiServerPort)")! }
+    /// The chosen port first, then the three after it: a busy 11434 (Ollama) must not leave the app without an API.
+    var apiPortCandidates: [Int] { (0..<4).map { settings.apiServerPort + $0 } }
+    /// What to type into another program: the chosen address, or this Mac's own when the server listens everywhere.
+    var apiURL: URL {
+        let host = settings.apiBindHost == "0.0.0.0" ? (NetworkInterfaces.addresses().first?.address ?? "127.0.0.1") : settings.apiBindHost
+        return URL(string: "http://\(host):\(settings.apiServerPort)")!
+    }
 
     func startAPI() async {
         stopAPI()
+        // Switched off in the settings: nothing listens, and no port is taken from anyone else.
+        guard settings.apiServerEnabled else {
+            apiStatus = .disabled
+            return
+        }
         apiStatus = .starting
-        for port in Self.apiPortCandidates {
+        for port in apiPortCandidates {
             switch await APIServer.probe(port: port) {
             case .ollama(let version):
-                if port == Self.apiPortCandidates[0] {
+                if port == settings.apiServerPort {
                     NotificationService.shared.send(
                         title: String(localized: "API port in use"),
                         body: String(localized: "Ollama \(version) is listening on \(port); Mac-Olama API will use the next free port."))
@@ -979,7 +1061,7 @@ final class AppContainer {
             case .free:
                 let server = APIServer(
                     configuration: .init(
-                        host: "127.0.0.1", port: port,
+                        host: settings.apiBindHost, port: port,
                         version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1"),
                     catalog: catalog, engine: engineManager, downloader: downloader
                 ) { [weak self] in await self?.refreshModels() }
@@ -995,7 +1077,7 @@ final class AppContainer {
                 return
             }
         }
-        apiStatus = .portBusy(port: Self.apiPortCandidates[0])
+        apiStatus = .portBusy(port: settings.apiServerPort)
         NotificationService.shared.send(
             title: String(localized: "API server not started"), body: String(localized: "All candidate ports are busy."))
     }
@@ -1064,6 +1146,34 @@ final class AppSettings {
     var apiServerPort: Int {
         get { int(.apiServerPort) }
         set { set(newValue, .apiServerPort) }
+    }
+    var apiServerEnabled: Bool {
+        get { bool(.apiServerEnabled) }
+        set { set(newValue, .apiServerEnabled) }
+    }
+    var apiBindHost: String {
+        get { string(.apiBindHost) ?? SettingsDefaults.apiBindHost }
+        set { set(newValue, .apiBindHost) }
+    }
+    var hotkeyKeyCode: Int {
+        get { int(.hotkeyKeyCode) }
+        set { set(newValue, .hotkeyKeyCode) }
+    }
+    var hotkeyModifiers: Int {
+        get { int(.hotkeyModifiers) }
+        set { set(newValue, .hotkeyModifiers) }
+    }
+    var toolIterations: Int {
+        get { let value = int(.toolIterations); return value > 0 ? value : SettingsDefaults.toolIterations }
+        set { set(newValue, .toolIterations) }
+    }
+    var pageCharacters: Int {
+        get { let value = int(.pageCharacters); return value > 0 ? value : SettingsDefaults.pageCharacters }
+        set { set(newValue, .pageCharacters) }
+    }
+    var searchResults: Int {
+        get { let value = int(.searchResults); return value > 0 ? value : SettingsDefaults.searchResults }
+        set { set(newValue, .searchResults) }
     }
     var toolsEnabled: Bool {
         get { bool(.toolsEnabled) }

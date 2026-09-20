@@ -72,17 +72,35 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
                 intentIdentifiers: []),
             UNNotificationCategory(identifier: Category.info.rawValue, actions: [], intentIdentifiers: []),
         ])
-        askAuthorization()
+        // Not at once: asked during launch, the system answers "not allowed for this application" before the app is
+        // registered with Notification Center, and it never shows its question again.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            self?.askAuthorization()
+        }
+        // Asked again after the Mac wakes: the answer may have been given in System Settings in the meantime, and the
+        // system itself only ever shows its question once.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { NotificationService.shared.askAuthorization() }
+        }
     }
 
     /// Asked at launch and before a message: while the answer is "not determined" macOS shows its own question, and a
     /// refusal is remembered so the app can point at the settings instead of talking to a wall.
     func askAuthorization() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { [logger] granted, error in
-            if let error { logger.error("notification authorization failed: \(error)") }
-            Task { @MainActor in
-                NotificationService.shared.isDenied = !granted
+        Task { @MainActor [logger] in
+            let center = UNUserNotificationCenter.current()
+            let status = await center.notificationSettings().authorizationStatus
+            logger.notice("notification status: \(status.rawValue)")
+            do {
+                let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
+                isDenied = !granted
                 if !granted { logger.notice("notifications not granted") }
+            } catch {
+                logger.error("notification authorization failed: \(error)")
+                isDenied = true
             }
         }
     }
@@ -95,7 +113,6 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
     }
 
     func send(title: String, body: String, category: Category = .info, userInfo: [String: String] = [:], identifier: String? = nil) {
-        if isDenied { askAuthorization() }  // the user may have allowed them since; this only re-asks, it never nags
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
@@ -178,7 +195,8 @@ final class UpdateChecker {
     static let latestReleaseURL = URL(string: "https://github.com/andrey-lysikov/Mac-Olama/releases/latest")!
     private static let apiURL = URL(string: "https://api.github.com/repos/andrey-lysikov/Mac-Olama/releases/latest")!
     private static let startupDelay: TimeInterval = 600
-    private static let pollInterval: TimeInterval = 6 * 3600
+    /// Once a day, as the app promises; the stored date of the last check keeps a restart from checking again.
+    private static let pollInterval: TimeInterval = 24 * 3600
 
     private struct Release: Decodable {
         var tagName: String

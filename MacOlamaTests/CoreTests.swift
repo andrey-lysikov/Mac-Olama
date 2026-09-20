@@ -432,9 +432,11 @@ import Testing
 
 @Suite struct PaceLineTests {
     @Test func paceReadsAsSpeedThenTokens() {
-        #expect(ChatMessageView.pace(tokensPerSecond: 21.4, tokens: 8192, limit: 32768) == "21t/s (8.2k/33k)")
-        #expect(ChatMessageView.pace(tokensPerSecond: 21.4, tokens: 1234, limit: nil) == "21t/s (1.2k)")
-        #expect(ChatMessageView.pace(tokensPerSecond: 21.4, tokens: nil, limit: 32768) == "21t/s")
+        let perSecond = ChatMessageView.perSecond
+        let k = ChatMessageView.thousands
+        #expect(ChatMessageView.pace(tokensPerSecond: 21.4, tokens: 8192, limit: 32768) == "21\(perSecond) (8.2\(k)/33\(k))")
+        #expect(ChatMessageView.pace(tokensPerSecond: 21.4, tokens: 1234, limit: nil) == "21\(perSecond) (1.2\(k))")
+        #expect(ChatMessageView.pace(tokensPerSecond: 21.4, tokens: nil, limit: 32768) == "21\(perSecond)")
         #expect(ChatMessageView.pace(tokensPerSecond: nil, tokens: 900, limit: nil) == "900")
         #expect(ChatMessageView.pace(tokensPerSecond: nil, tokens: nil, limit: nil) == nil)
     }
@@ -444,10 +446,23 @@ import Testing
     @Test func countsAreShortenedToKAndM() {
         #expect(ChatMessageView.compact(0) == "0")
         #expect(ChatMessageView.compact(999) == "999")
-        #expect(ChatMessageView.compact(1234) == "1.2k")
-        #expect(ChatMessageView.compact(8192) == "8.2k")
-        #expect(ChatMessageView.compact(32768) == "33k")
-        #expect(ChatMessageView.compact(262_144) == "262k")
-        #expect(ChatMessageView.compact(1_200_000) == "1.2M")
+        let k = ChatMessageView.thousands
+        #expect(ChatMessageView.compact(1234) == "1.2\(k)")
+        #expect(ChatMessageView.compact(8192) == "8.2\(k)")
+        #expect(ChatMessageView.compact(32768) == "33\(k)")
+        #expect(ChatMessageView.compact(262_144) == "262\(k)")
+        #expect(ChatMessageView.compact(1_200_000) == "1.2\(ChatMessageView.millions)")
+    }
+}
+
+@Suite struct AutolinkTests {
+    @Test func plainAddressesBecomeLinks() {
+        let text = MarkdownBlocks.autolinked("см. https://example.com/page и всё")
+        let links = text.runs.compactMap { $0.link?.absoluteString }
+        #expect(links == ["https://example.com/page"])
+    }
+
+    @Test func ordinaryTextKeepsNoLinks() {
+        #expect(MarkdownBlocks.autolinked("просто текст, 2:1, a/b").runs.allSatisfy { $0.link == nil })
     }
 }

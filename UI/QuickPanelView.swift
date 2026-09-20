@@ -113,7 +113,7 @@ struct QuickPanelView: View {
                     return .handled
                 }
             HStack(spacing: 12) {
-                EngineActivityControl(state: viewModel.engineState, tokens: viewModel.progress?.totalTokens, onStop: viewModel.stop)
+                EngineActivityControl(state: viewModel.engineState, onStop: viewModel.stop)
                 Button {
                     container.openInChats(viewModel.chat?.id)
                 } label: {
@@ -249,6 +249,9 @@ struct QuickPanelView: View {
             .onChange(of: viewModel.progress?.steps.count) { _, _ in scrollToBottom(proxy) }
             // Opening the panel keeps the transcript it had last time: start at the newest exchange, not where it was left.
             .onChange(of: viewModel.transcriptToken) { _, _ in scrollToBottom(proxy) }
+            // Questions put in the queue are pinned above the input: the transcript loses that much height, and
+            // without this the end of the reply being written is pushed out of sight.
+            .onChange(of: viewModel.queuedQuestions.count) { _, _ in scrollToBottom(proxy) }
             .onChange(of: viewModel.isGenerating) { _, generating in
                 guard !generating else { return }
                 scrollToBottom(proxy)
@@ -311,8 +314,6 @@ enum FieldCaret {
 /// Engine activity inside the input row: nothing when idle, a progress ring while loading, a Stop pictogram while generating.
 struct EngineActivityControl: View {
     let state: EngineState
-    /// Tokens of the reply so far; shown next to the pace, so the panel says as much as the chat does.
-    var tokens: Int?
     var onStop: () -> Void
 
     var body: some View {
@@ -331,11 +332,9 @@ struct EngineActivityControl: View {
             .help(String(localized: "Loading model… \(progress.formatted(.percent.precision(.fractionLength(0))))"))
         case .generating(_, _, let tps):
             // The spinner says the model is working, the button next to it stops the answer.
+            // Neither a spinner nor a counter here: the transcript above shows the reply being written, with its own
+            // progress line. This row keeps the one thing it is for — stopping the answer.
             HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                if let pace = ChatMessageView.pace(tokensPerSecond: tps, tokens: tokens, limit: nil) {
-                    Text(verbatim: pace).font(.caption2).foregroundStyle(.secondary).monospacedDigit()
-                }
                 Button(action: onStop) {
                     Image(systemName: "stop.circle.fill")
                         .foregroundStyle(Color.accentColor)
@@ -390,6 +389,8 @@ struct NoAnswerLine: View {
 
 /// One message: plain text for the user, Markdown (code, tables) for the assistant.
 struct MessageView: View {
+    /// The same reading size as the chats window, the system's text size included.
+    @ScaledMetric(relativeTo: .body) private var scaledText: CGFloat = ChatMessageView.textSize
     let message: Message
     /// What the tools and the thinking did on the way to this answer, one line above it.
     var summary: String?
@@ -400,15 +401,17 @@ struct MessageView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
+            // Half again the size they were: in the panel the mark says at a glance whose turn is being read.
             Image(systemName: message.role == .user ? "person.fill" : "sparkles")
+                .font(.system(size: 20))
                 .foregroundStyle(message.role == .user ? .secondary : Color.accentColor)
-                .frame(width: 20, height: 20)
-                .padding(.top, 3)
+                // The box is one line tall, so the mark sits on the first line of the text instead of below it.
+                .frame(width: 30, height: scaledText * 1.3)
             VStack(alignment: .leading, spacing: 6) {
                 AttachmentStrip(attachments: message.attachments)
                 if message.role == .user {
-                    // The question is read alongside the answer, so it is set in the same size as it.
-                    Text(message.text).textSelection(.enabled).font(.system(size: ChatMessageView.textSize))
+                    // No inset on either side: the question and the answer start at one line, right after the mark.
+                    Text(message.text).textSelection(.enabled).font(.system(size: scaledText))
                 } else {
                     if let summary { ProgressSummaryLine(text: summary) }
                     // A reply that asked for tools has no answer of its own: its text is a preamble or echoed results.
@@ -417,8 +420,7 @@ struct MessageView: View {
                             NoAnswerLine().padding(10)
                         } else {
                             // Same reading size as the chats window.
-                            MarkdownView(markdown: answer.isEmpty ? "…" : answer, baseFontSize: ChatMessageView.textSize)
-                                .padding(10)  // air around the answer text
+                            MarkdownView(markdown: answer.isEmpty ? "…" : answer, baseFontSize: scaledText)
                         }
                     }
                 }

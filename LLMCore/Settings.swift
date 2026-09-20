@@ -63,6 +63,13 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case extraTools = "extraTools"  // [String]: `ExtraTool` raw values the user switched on (calculator, macInfo, …)
     case huggingFaceToken = "huggingFaceToken"  // String?: Hugging Face access token for gated models
     case modelTemperatures = "modelTemperatures"  // [model id: Double]; missing = the temperature the model ships with
+    case apiServerEnabled = "apiServerEnabled"  // Bool: whether other programs may talk to the models through us
+    case apiBindHost = "apiBindHost"  // String: the address the API listens on; "127.0.0.1" = this Mac only
+    case hotkeyKeyCode = "hotkeyKeyCode"  // Int: virtual key of the panel's shortcut; 0 = no shortcut
+    case hotkeyModifiers = "hotkeyModifiers"  // Int: Carbon modifier mask of that shortcut
+    case toolIterations = "toolIterations"  // Int: how many times in a row the model may use tools before answering
+    case pageCharacters = "pageCharacters"  // Int: how much of a web page the model is given, in characters
+    case searchResults = "searchResults"  // Int: how many results a web search returns
     case reasoningShown = "reasoningShown"  // [String]: models whose thinking is shown in the transcript
     case greedyDrafters = "greedyDrafters"  // [String]: models whose drafter only verifies greedy decoding
     case speculativeModels = "speculativeModels"  // [String]: model ids answering with MTP speculation (greedy decoding)
@@ -71,6 +78,13 @@ public enum SettingsKey: String, CaseIterable, Sendable {
 public enum SettingsDefaults {
     public static let idleUnloadSeconds: TimeInterval = 300
     public static let apiServerPort = 11434
+    public static let apiBindHost = "127.0.0.1"
+    public static let toolIterations = 10
+    /// ⌥Space out of the box: free on a stock system and easy to reach with one hand.
+    public static let hotkeyKeyCode = 49  // kVK_Space
+    public static let hotkeyModifiers = 2048  // optionKey
+    public static let pageCharacters = 12_000
+    public static let searchResults = 8
     public static let searchProvider = "duckduckgo"
 
     /// Values for `UserDefaults.register(defaults:)`.
@@ -79,9 +93,12 @@ public enum SettingsDefaults {
             SettingsKey.idleUnloadSeconds.rawValue: idleUnloadSeconds,
             SettingsKey.launchAtLogin.rawValue: false,
             SettingsKey.apiServerPort.rawValue: apiServerPort,
+            SettingsKey.apiServerEnabled.rawValue: true,
             SettingsKey.toolsEnabled.rawValue: false,
             SettingsKey.searchProvider.rawValue: searchProvider,
             SettingsKey.panelClosesOnFocusLoss.rawValue: true,
+            SettingsKey.hotkeyKeyCode.rawValue: hotkeyKeyCode,
+            SettingsKey.hotkeyModifiers.rawValue: hotkeyModifiers,
             SettingsKey.fileToolsEnabled.rawValue: false,
             SettingsKey.shortcutsToolEnabled.rawValue: false,
             SettingsKey.allowedFolders.rawValue: [String](),

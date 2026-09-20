@@ -164,6 +164,23 @@ import Testing
         #expect(HardwareProfile.availableMemoryBytes() > 0)
     }
 
+    @Test func theEstimateFollowsTheChosenWindow() throws {
+        let hardware = HardwareProfile(
+            chipName: "Apple M3 Max", family: 3, tier: .max, gpuCores: 40, memoryBytes: 64 << 30, wiredLimitBytes: 48 << 30,
+            bandwidthGBs: 400)
+        let profile = try #require(KVCacheProfile.read(configJSON: hybrid))
+        // A 260k window is what the model declares, not what a chat uses: without a choice the estimate assumes 32k.
+        let assumed = ModelFitReport.evaluate(
+            modelBytes: 6 << 30, contextLength: 262_144, hardware: hardware, kvCache: profile)
+        #expect(assumed.contextTokens == ModelFitReport.assumedContext)
+        // A window chosen in the models section is taken as it is, and the cache is counted for it.
+        let chosen = ModelFitReport.evaluate(
+            modelBytes: 6 << 30, contextLength: 262_144, hardware: hardware, kvCache: profile, chosenContext: 131_072)
+        #expect(chosen.contextTokens == 131_072)
+        #expect(chosen.kvBytes == profile.bytes(context: 131_072))
+        #expect(chosen.kvBytes > assumed.kvBytes)
+    }
+
     @Test func busyMemoryMakesTheVerdictCautious() {
         let hardware = HardwareProfile(
             chipName: "Apple M3 Pro", family: 3, tier: .pro, gpuCores: 18, memoryBytes: 18 << 30, wiredLimitBytes: 12 << 30,

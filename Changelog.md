@@ -1,3 +1,5 @@
+# Changelog
+
 ## 0.2
 
 - HTML and Markdown reader

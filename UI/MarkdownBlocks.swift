@@ -45,6 +45,24 @@ enum MarkdownBlocks {
     }
 
     /// Ids are block positions, so views stay stable while a streamed reply grows.
+
+    /// An address written out in the answer, not as `[text](url)`, is still an address: the detector finds it and the
+    /// run becomes a link, so it can be opened.
+    static func autolinked(_ string: String) -> AttributedString {
+        guard let detector, string.contains("://") || string.contains("www.") else { return AttributedString(string) }
+        var result = AttributedString(string)
+        for match in detector.matches(in: string, range: NSRange(string.startIndex..., in: string)).reversed() {
+            guard let url = match.url, let range = Range(match.range, in: string),
+                let start = AttributedString.Index(range.lowerBound, within: result),
+                let end = AttributedString.Index(range.upperBound, within: result)
+            else { continue }
+            result[start..<end].link = url
+        }
+        return result
+    }
+
+    private static let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
     private struct Builder {
         let formulas: [Formula]
         var blocks: [Block] = []
@@ -114,7 +132,7 @@ enum MarkdownBlocks {
 
         /// Plain text with formula tokens: each token becomes a run carrying its formula (the run text is the LaTeX).
         func text(_ string: String) -> AttributedString {
-            guard string.contains(MathText.tokenStart) else { return AttributedString(string) }
+            guard string.contains(MathText.tokenStart) else { return MarkdownBlocks.autolinked(string) }
             var out = AttributedString()
             var rest = Substring(string)
             while let start = rest.firstIndex(of: MathText.tokenStart),
@@ -127,7 +145,7 @@ enum MarkdownBlocks {
                 out.append(piece)
                 rest = rest[rest.index(after: end)...]
             }
-            out.append(AttributedString(String(rest)))
+            out.append(MarkdownBlocks.autolinked(String(rest)))
             return out
         }
 

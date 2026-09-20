@@ -6,12 +6,16 @@ import Foundation
 // Models on another server: Ollama `/api/chat` or OpenAI-compatible `/v1/chat/completions`, streamed over HTTP.
 // Separate reasoning (`thinking`, `reasoning_content`) is wrapped in <think> tags, so it is hidden like a local model's.
 
-enum RemoteError: Error, CustomStringConvertible {
+/// `LocalizedError` as well as `CustomStringConvertible`: without it the system prints "operation could not be
+/// completed (MacOlama.RemoteError, error 0)" wherever an error is shown or logged.
+enum RemoteError: Error, LocalizedError, CustomStringConvertible {
     case badAddress
     case unreachable(String)
     case modelNotFound(String, available: [String])
     case http(Int, String)
     case timedOut(Int)
+
+    var errorDescription: String? { description }
 
     var description: String {
         switch self {

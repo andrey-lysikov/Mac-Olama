@@ -100,9 +100,7 @@ enum MTPDrafter {
             logger.error("\(name, privacy: .public): no config.json in the folder")
             return nil
         }
-        let vision = targetVision(at: target)
-        let sees = !vision.isEmpty
-        let config = aligned(own, withTargetVision: vision)
+        let (config, sees) = aligned(own, withTargetAt: target)
         await registration.value
         do {
             let base = try JSONDecoder.json5().decode(BaseConfiguration.self, from: config)
@@ -122,25 +120,21 @@ enum MTPDrafter {
         }
     }
 
-    private static func targetVision(at directory: URL) -> [String: Any] {
-        guard let data = try? Data(contentsOf: directory.appending(path: "config.json")),
-            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return [:] }
-        return root["vision_config"] as? [String: Any] ?? [:]
-    }
-
     /// The library chooses the text or the vision drafter by one thing: whether the drafter's config carries a
     /// non-empty `vision_config`. Drafters published for a vision model often ship an empty one, and the text drafter
     /// then meets a vision target and stops the process from inside. So that whole section is taken from the model
     /// the drafter will serve — the real one, because the vision drafter decodes it.
-    private static func aligned(_ config: Data, withTargetVision vision: [String: Any]) -> Data {
-        guard var root = try? JSONSerialization.jsonObject(with: config) as? [String: Any] else { return config }
+    private static func aligned(_ config: Data, withTargetAt target: URL) -> (config: Data, seesImages: Bool) {
+        let targetConfig = (try? Data(contentsOf: target.appending(path: "config.json"))) ?? Data()
+        let targetRoot = (try? JSONSerialization.jsonObject(with: targetConfig)) as? [String: Any] ?? [:]
+        let vision = targetRoot["vision_config"] as? [String: Any] ?? [:]
+        guard var root = try? JSONSerialization.jsonObject(with: config) as? [String: Any] else { return (config, !vision.isEmpty) }
         let own = root["vision_config"] as? [String: Any] ?? [:]
-        guard own.isEmpty != vision.isEmpty else { return config }
+        guard own.isEmpty != vision.isEmpty else { return (config, !own.isEmpty) }
         root["vision_config"] = vision
-        guard let merged = try? JSONSerialization.data(withJSONObject: root) else { return config }
+        guard let merged = try? JSONSerialization.data(withJSONObject: root) else { return (config, !own.isEmpty) }
         logger.info("drafter config aligned with the target, images \(vision.isEmpty ? "off" : "on", privacy: .public)")
-        return merged
+        return (merged, !vision.isEmpty)
     }
 
     /// A drafter published on its own names its tensors the way its predictor sees them (`fc.weight`), while the model
@@ -196,18 +190,17 @@ enum MTPDrafter {
         if let object = value as? [String: Any] {
             for (key, nested) in object {
                 let name = key.lowercased()
-                if name.contains("mtp") || name.contains("nextn"), positiveCount(nested) != nil { return true }
+                // `mtp_use_dedicated_embeddings: true` is not a layer count: a JSON boolean bridges to `NSNumber` too.
+                if name.contains("mtp") || name.contains("nextn"), let number = nested as? NSNumber,
+                    CFGetTypeID(number) != CFBooleanGetTypeID(), number.intValue > 0
+                {
+                    return true
+                }
                 if declaresHeads(in: nested) { return true }
             }
         }
         if let array = value as? [Any] { return array.contains { declaresHeads(in: $0) } }
         return false
-    }
-
-    /// `mtp_use_dedicated_embeddings: true` is not a layer count: a JSON boolean bridges to `NSNumber` too.
-    private static func positiveCount(_ value: Any) -> Int? {
-        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), number.intValue > 0 else { return nil }
-        return number.intValue
     }
 
     /// Whether the weights really hold the heads: MLX builds routinely drop them while keeping the config keys.

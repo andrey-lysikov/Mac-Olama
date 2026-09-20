@@ -20,9 +20,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var blinkTimer: Timer?
     private var blinkStart = ContinuousClock.now
     private var seenAnswers = 0
-    /// A template silhouette with the features cut out: the menu bar tints it for light and dark bars and for highlight.
+    /// The same mark the answers carry in the transcript, so the status item reads as "the model" at a glance.
+    /// A template image: the menu bar tints it for light and dark bars and for the highlight.
     private static let icon: NSImage? = {
-        let image = NSImage(named: "MenuBarIcon")
+        let configuration = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
+        let image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: String(localized: "Mac-Olama"))?
+            .withSymbolConfiguration(configuration)
         image?.isTemplate = true
         return image
     }()
@@ -173,8 +176,7 @@ struct StatusMenuBuilder {
                 mask: [.command, .shift]))
         menu.addItem(.separator())
         menu.addItem(submenu(String(localized: "Model"), "cpu", modelSubmenu(actions)))
-        menu.addItem(submenu(String(localized: "Features"), "wand.and.stars", featuresSubmenu(actions)))
-        menu.addItem(submenu(String(localized: "Unload After"), "timer", idleSubmenu(actions)))
+        menu.addItem(item(String(localized: "Model Library…"), "square.stack.3d.up", #selector(MenuActions.openDownload), actions))
         menu.addItem(.separator())
         menu.addItem(
             toggle(
@@ -182,12 +184,8 @@ struct StatusMenuBuilder {
                 actions))
         menu.addItem(
             item(String(localized: "Check for Updates"), "arrow.triangle.2.circlepath", #selector(MenuActions.checkUpdates), actions))
-        // Only while messages are refused: without notifications the app has no way to report a finished download.
-        if NotificationService.shared.isDenied {
-            menu.addItem(
-                item(
-                    String(localized: "Allow Notifications…"), "bell.badge", #selector(MenuActions.openNotificationSettings), actions))
-        }
+        // Everything with a value to pick or a list to edit lives in the window's settings section, not here.
+        menu.addItem(item(String(localized: "Settings"), "gearshape", #selector(MenuActions.openSettings), actions))
         menu.addItem(.separator())
         menu.addItem(item(String(localized: "Quit"), "xmark.circle", #selector(MenuActions.quit), actions, key: "q"))
         menu.items.forEach { $0.representedObject = actions }  // keep `actions` alive while the menu is open
@@ -229,128 +227,8 @@ struct StatusMenuBuilder {
                 sub.addItem(mi)
             }
         }
-        sub.addItem(.separator())
-        sub.addItem(item(String(localized: "Model Library…"), "square.stack.3d.up", #selector(MenuActions.openDownload), actions))
         return sub
     }
-
-    private func idleSubmenu(_ actions: MenuActions) -> NSMenu {
-        let sub = NSMenu()
-        sub.autoenablesItems = false
-        for (title, secs) in [
-            (String(localized: "1 minute"), 60.0), (String(localized: "5 minutes"), 300.0), (String(localized: "15 minutes"), 900.0),
-            (String(localized: "1 hour"), 3600.0), (String(localized: "Never"), 0.0),  // Never = loaded at launch and kept resident
-        ] {
-            let mi = itemWith(title, secs == 0 ? "infinity" : "clock", #selector(MenuActions.setIdle(_:)), actions, object: secs)
-            mi.state = container.settings.idleUnloadSeconds == secs ? .on : .off
-            sub.addItem(mi)
-        }
-        sub.addItem(.separator())
-        let unload = item(String(localized: "Unload Now"), "eject", #selector(MenuActions.unloadNow), actions)
-        unload.isEnabled = container.engineState.modelID != nil
-        sub.addItem(unload)
-        return sub
-    }
-
-    /// What the model may do besides chatting. A checkmark on the item itself means the feature is on; all are off by default.
-    private func featuresSubmenu(_ actions: MenuActions) -> NSMenu {
-        let sub = NSMenu()
-        sub.autoenablesItems = false
-        let search = submenu(String(localized: "Web Search"), "globe", searchSubmenu(actions))
-        search.state = container.settings.toolsEnabled ? .on : .off
-        sub.addItem(search)
-        let folders = submenu(String(localized: "Folder Access"), "folder", foldersSubmenu(actions))
-        folders.state = container.settings.fileToolsEnabled && !container.settings.allowedFolders.isEmpty ? .on : .off
-        sub.addItem(folders)
-        sub.addItem(
-            toggle(
-                String(localized: "Shortcuts"), "square.2.layers.3d", container.settings.shortcutsToolEnabled,
-                #selector(MenuActions.toggleShortcutsTool), actions,
-                help: String(localized: "The model may run your shortcuts; it asks before each run")))
-        sub.addItem(.separator())
-        for tool in ExtraTool.allCases {
-            sub.addItem(
-                toggle(
-                    Self.title(of: tool), Self.symbol(of: tool), container.isToolEnabled(tool), #selector(MenuActions.toggleExtraTool(_:)),
-                    actions, help: Self.help(of: tool), object: tool.rawValue))
-        }
-        return sub
-    }
-
-    private static func title(of tool: ExtraTool) -> String {
-        switch tool {
-        case .calculator: String(localized: "Calculator")
-        case .macInfo: String(localized: "About This Mac")
-        case .network: String(localized: "Network Diagnostics")
-        case .weather: String(localized: "Weather")
-        }
-    }
-
-    private static func symbol(of tool: ExtraTool) -> String {
-        switch tool {
-        case .calculator: "x.squareroot"
-        case .macInfo: "laptopcomputer"
-        case .network: "network"
-        case .weather: "cloud.sun"
-        }
-    }
-
-    private static func help(of tool: ExtraTool) -> String {
-        switch tool {
-        case .calculator: String(localized: "The model computes in JavaScript instead of doing arithmetic in its head")
-        case .macInfo: String(localized: "The model may read this Mac's state: battery, disk space, memory, processes")
-        case .network: String(localized: "The model may run ping, traceroute, DNS and port checks from this Mac")
-        case .weather: String(localized: "The model may look up the weather (Open-Meteo)")
-        }
-    }
-
-    // Picking a provider turns search on; "Off" turns it off.
-    private func searchSubmenu(_ actions: MenuActions) -> NSMenu {
-        let sub = NSMenu()
-        let off = itemWith(String(localized: "Off"), "nosign", #selector(MenuActions.setSearchProvider(_:)), actions, object: "")
-        off.state = container.settings.toolsEnabled ? .off : .on
-        sub.addItem(off)
-        sub.addItem(.separator())
-        for (title, key) in [("DuckDuckGo", "duckduckgo"), ("Google", "google")] {
-            let mi = itemWith(title, "magnifyingglass", #selector(MenuActions.setSearchProvider(_:)), actions, object: key)
-            // Anything else stored by an older build behaves as DuckDuckGo.
-            let selected = (container.settings.searchProvider == "google") == (key == "google")
-            mi.state = container.settings.toolsEnabled && selected ? .on : .off
-            sub.addItem(mi)
-        }
-        return sub
-    }
-
-    // Adding the first folder turns file access on; "Off" keeps the list but hides the files from the model.
-    private func foldersSubmenu(_ actions: MenuActions) -> NSMenu {
-        let sub = NSMenu()
-        sub.autoenablesItems = false
-        let folders = container.settings.allowedFolders
-        let enabled = container.settings.fileToolsEnabled && !folders.isEmpty
-        let off = itemWith(String(localized: "Off"), "nosign", #selector(MenuActions.setFileAccess(_:)), actions, object: false)
-        off.state = enabled ? .off : .on
-        sub.addItem(off)
-        let on = itemWith(
-            String(localized: "Read Files in These Folders"), "doc.text.magnifyingglass", #selector(MenuActions.setFileAccess(_:)), actions,
-            object: true)
-        on.state = enabled ? .on : .off
-        on.isEnabled = !folders.isEmpty
-        sub.addItem(on)
-        sub.addItem(.separator())
-        if folders.isEmpty { sub.addItem(disabled(String(localized: "No folders yet"), "folder.badge.questionmark")) }
-        for path in folders {
-            let mi = itemWith(
-                (path as NSString).abbreviatingWithTildeInPath, "folder", #selector(MenuActions.removeAllowedFolder(_:)), actions,
-                object: path)
-            mi.toolTip = String(localized: "Click to remove")
-            sub.addItem(mi)
-        }
-        sub.addItem(.separator())
-        sub.addItem(item(String(localized: "Add Folder…"), "plus", #selector(MenuActions.addAllowedFolder), actions))
-        return sub
-    }
-
-    // Item helpers: every item carries a pictogram.
 
     private func item(
         _ title: String, _ symbol: String, _ action: Selector, _ target: AnyObject, key: String = "",
@@ -360,12 +238,6 @@ struct StatusMenuBuilder {
         mi.keyEquivalentModifierMask = key.isEmpty ? [] : mask
         mi.target = target
         Self.setSymbol(symbol, on: mi)
-        return mi
-    }
-
-    private func itemWith(_ title: String, _ symbol: String, _ action: Selector, _ target: AnyObject, object: Any) -> NSMenuItem {
-        let mi = item(title, symbol, action, target)
-        mi.representedObject = object
         return mi
     }
 
@@ -451,42 +323,7 @@ final class MenuActions: NSObject {
         guard let id = sender.representedObject as? String, let model = container.models.first(where: { $0.id == id }) else { return }
         container.chooseModel(model)
     }
-    @objc func unloadNow() { container.unloadNow() }
-    @objc func setIdle(_ sender: NSMenuItem) { if let s = sender.representedObject as? Double { container.setIdleTimeout(s) } }
-    /// An empty provider means "Off"; any provider switches web search on.
-    @objc func setSearchProvider(_ sender: NSMenuItem) {
-        guard let provider = sender.representedObject as? String else { return }
-        if provider.isEmpty {
-            container.setToolsEnabled(false)
-        } else {
-            container.setSearchProvider(provider)
-            container.setToolsEnabled(true)
-        }
-    }
-    @objc func setFileAccess(_ sender: NSMenuItem) {
-        if let enabled = sender.representedObject as? Bool { container.setFileToolsEnabled(enabled) }
-    }
-    @objc func toggleExtraTool(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let tool = ExtraTool(rawValue: raw) else { return }
-        container.setToolEnabled(tool, !container.isToolEnabled(tool))
-    }
-    @objc func toggleShortcutsTool() { container.setShortcutsToolEnabled(!container.settings.shortcutsToolEnabled) }
-    @objc func removeAllowedFolder(_ sender: NSMenuItem) {
-        if let path = sender.representedObject as? String { container.removeAllowedFolder(path) }
-    }
-    @objc func addAllowedFolder() {
-        NSApp.activate()
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = true
-        panel.begin { [container] response in
-            guard response == .OK else { return }
-            for url in panel.urls { container.addAllowedFolder(url) }
-            container.setFileToolsEnabled(true)
-        }
-    }
+    @objc func openSettings() { WindowManager.shared.openSettings() }
     @objc func checkUpdates() { container.updates.checkAll(force: true) }
-    @objc func openNotificationSettings() { NotificationService.shared.openSettings() }
     @objc func quit() { NSApp.terminate(nil) }
 }

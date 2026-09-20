@@ -48,6 +48,33 @@ enum DeepLink {
 
 /// Launch at login via SMAppService. VERIFY(V9): behaviour for LSUIElement apps outside the App Store.
 @MainActor
+/// The addresses this Mac can serve the API on, for the interface picker: loopback first, then each IPv4 address.
+enum NetworkInterfaces {
+    static func addresses() -> [(name: String, address: String)] {
+        var found: [(String, String)] = []
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return found }
+        defer { freeifaddrs(list) }
+        for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            let flags = Int32(pointer.pointee.ifa_flags)
+            guard flags & IFF_UP != 0, flags & IFF_LOOPBACK == 0,
+                pointer.pointee.ifa_addr?.pointee.sa_family == UInt8(AF_INET)
+            else { continue }
+            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            guard
+                getnameinfo(
+                    pointer.pointee.ifa_addr, socklen_t(pointer.pointee.ifa_addr.pointee.sa_len), &host, socklen_t(host.count), nil, 0,
+                    NI_NUMERICHOST) == 0
+            else { continue }
+            let name = String(cString: pointer.pointee.ifa_name)
+            // `String(cString:)` over an array is deprecated: the buffer is cut at its terminator and read as UTF-8.
+            let address = String(decoding: host.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+            found.append((name, address))
+        }
+        return found
+    }
+}
+
 enum LaunchAtLogin {
     private static let logger = Logger(subsystem: "ru.lysnet.macolama", category: "launch-at-login")
 

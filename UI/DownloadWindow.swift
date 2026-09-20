@@ -438,8 +438,10 @@ struct ModelLibraryHeader: View {
             }
             .padding(.horizontal, 10).frame(height: 30)
             .glassEffect(.regular, in: Capsule())
+            // A switch, like every other on/off in this app; tick boxes are left to the menus, where they mark a choice.
             Toggle(String(localized: "MLX models only"), isOn: $viewModel.mlxOnly)
-                .toggleStyle(.checkbox)
+                .toggleStyle(.switch)
+                .controlSize(.small)
                 .disabled(viewModel.hub == .link || viewModel.hub == .api)
                 .help(String(localized: "Show only models built for MLX. Turn off to search every repository; MLX builds stay on top."))
             Spacer(minLength: 8)
@@ -480,6 +482,14 @@ struct ModelLibraryView: View {
 
     var body: some View {
         content(viewModel)
+            // Only here, and once a minute: this is the section that shows whether a connected server answers, so a
+            // server that comes back is noticed without asking it from every window all the time.
+            .task {
+                while !Task.isCancelled {
+                    container.checkModelAvailability(force: true)
+                    try? await Task.sleep(for: .seconds(60))
+                }
+            }
     }
 
     private func content(_ vm: DownloadViewModel) -> some View {
@@ -700,7 +710,8 @@ struct ModelLibraryView: View {
         // Spelled out rather than nested in the call: the type checker gives up on the expression otherwise.
         var drafter = DrafterMark.none
         if container.drafterIsInstalled(for: model) { drafter = container.isSpeculative(model) ? .on : .off }
-        let detailText = detail(repoID: model.repoID, kind: model.kind, contextLength: model.contextLength, drafter: drafter)
+        // No context here: this row has a menu for it, and the number would only repeat what the menu shows.
+        let detailText = detail(repoID: model.repoID, kind: model.kind, contextLength: nil, drafter: drafter)
         return HStack(alignment: .center, spacing: 14) {
             rowText(
                 source: model.source, owners: model.owners, repoID: model.repoID, sizeBytes: model.sizeBytes,
@@ -912,7 +923,10 @@ struct ModelLibraryView: View {
                 }
                 Toggle(
                     String(localized: "Draft several tokens per round"),
-                    isOn: Binding(get: { container.isSpeculative(model) }, set: { container.setSpeculative($0, for: model) }))
+                    isOn: Binding(get: { container.isSpeculative(model) }, set: { container.setSpeculative($0, for: model) })
+                )
+                .toggleStyle(.switch)
+                .controlSize(.small)
                 Text(String(localized: "The model verifies every drafted token, so answers stay the same but stop varying."))
                     .font(.caption).foregroundStyle(.secondary)
             } else if let download = container.drafterDownload(for: model) {
