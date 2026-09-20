@@ -714,9 +714,14 @@ private struct ChatsSplitView: View {
                     if let progress = viewModel.progress {
                         GenerationProgressView(progress: progress, engineState: viewModel.engineState)
                     }
-                    if !viewModel.visibleStreamingText.isEmpty {
+                    // While the model's thinking is shown, the raw stream goes in and the view splits it.
+                    let thinkingShown = viewModel.activeModel.map { container.showsReasoning(modelID: $0.id) } ?? false
+                    if !viewModel.visibleStreamingText.isEmpty || (thinkingShown && !viewModel.streamingText.isEmpty) {
                         ChatMessageView(
-                            message: Message(chatID: UUID(), role: .assistant, text: viewModel.visibleStreamingText, isPartial: true),
+                            message: Message(
+                                chatID: UUID(), role: .assistant,
+                                text: thinkingShown ? viewModel.streamingText : viewModel.visibleStreamingText, isPartial: true,
+                                modelID: thinkingShown ? viewModel.activeModel?.id : nil),
                             onRegenerate: nil
                         )
                         .id("streaming")
@@ -947,6 +952,41 @@ struct ChatMessageView: View {
     /// Reasoning channels and tool syntax are the model talking to itself; only the answer is shown and copied.
     private var answer: String { AnswerText.visible(message.text) }
 
+    /// The one line of numbers under a reply, in the panel as well: `21t/s (8.2k/33k)` — pace, tokens, and the limit
+    /// they are measured against. Nothing is spelled out in words, so it reads the same in both languages.
+    /// `nonisolated`: plain arithmetic over strings, called from wherever a count is shown — the view's own
+    /// main-actor isolation would otherwise trap when it is used off the main thread.
+    nonisolated static func pace(tokensPerSecond: Double?, tokens: Int?, limit: Int?) -> String? {
+        var inner: String?
+        if let tokens { inner = limit.map { "\(compact(tokens))/\(compact($0))" } ?? compact(tokens) }
+        switch (tokensPerSecond, inner) {
+        case (let speed?, let inner?): return "\(Int(speed))t/s (\(inner))"
+        case (let speed?, nil): return "\(Int(speed))t/s"
+        case (nil, let inner?): return inner
+        case (nil, nil): return nil
+        }
+    }
+
+    /// Token counts are read at a glance, not added up: 1 234 → 1.2k, 32 768 → 33k, 1 200 000 → 1.2M.
+    nonisolated static func compact(_ value: Int) -> String {
+        switch value {
+        case ..<1000: "\(value)"
+        case ..<1_000_000:
+            Double(value) / 1000 < 10
+                ? String(format: "%.1fk", Double(value) / 1000) : "\(Int((Double(value) / 1000).rounded()))k"
+        default:
+            Double(value) / 1_000_000 < 10
+                ? String(format: "%.1fM", Double(value) / 1_000_000) : "\(Int((Double(value) / 1_000_000).rounded()))M"
+        }
+    }
+
+    /// What the model said to itself, for the models whose thinking the user asked to see.
+    private var reasoning: String? {
+        guard let id = message.modelID, container.showsReasoning(modelID: id) else { return nil }
+        let text = AnswerText.reasoning(message.text)
+        return text.isEmpty ? nil : text
+    }
+
     var body: some View {
         if message.role == .user {
             HStack {
@@ -963,6 +1003,14 @@ struct ChatMessageView: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 if let summary { ProgressSummaryLine(text: summary) }
+                if let reasoning {
+                    // Set apart and quieter than the answer: it is the model's thinking, not what it says.
+                    Text(reasoning)
+                        .font(.system(size: Self.textSize - 2)).foregroundStyle(.secondary).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
                 // A reply that asked for tools has no answer of its own: its text is a preamble or echoed results.
                 if message.toolCalls.isEmpty {
                     if answer.isEmpty, !message.isPartial {
@@ -986,8 +1034,13 @@ struct ChatMessageView: View {
                             }
                             .help(String(localized: "Regenerate"))
                         }
-                        if let tps = message.tokensPerSecond {
-                            Text(String(localized: "\(Int(tps)) tok/s")).font(.caption2).foregroundStyle(.tertiary)
+                        // The count is read against its limit, so a reply cut short says what it ran into.
+                        let limit = message.modelID.flatMap { container.replyLimit(forModel: $0) }
+                        let atLimit = (message.completionTokens ?? 0) >= (limit ?? .max)
+                        if let pace = Self.pace(tokensPerSecond: message.tokensPerSecond, tokens: message.completionTokens, limit: limit) {
+                            Text(verbatim: pace)
+                                .font(.caption2).monospacedDigit()
+                                .foregroundStyle(atLimit ? AnyShapeStyle(.red) : AnyShapeStyle(.tertiary))
                         }
                     }
                     .buttonStyle(.plain).foregroundStyle(.secondary)

@@ -113,7 +113,7 @@ struct QuickPanelView: View {
                     return .handled
                 }
             HStack(spacing: 12) {
-                EngineActivityControl(state: viewModel.engineState, onStop: viewModel.stop)
+                EngineActivityControl(state: viewModel.engineState, tokens: viewModel.progress?.totalTokens, onStop: viewModel.stop)
                 Button {
                     container.openInChats(viewModel.chat?.id)
                 } label: {
@@ -311,6 +311,8 @@ enum FieldCaret {
 /// Engine activity inside the input row: nothing when idle, a progress ring while loading, a Stop pictogram while generating.
 struct EngineActivityControl: View {
     let state: EngineState
+    /// Tokens of the reply so far; shown next to the pace, so the panel says as much as the chat does.
+    var tokens: Int?
     var onStop: () -> Void
 
     var body: some View {
@@ -331,6 +333,9 @@ struct EngineActivityControl: View {
             // The spinner says the model is working, the button next to it stops the answer.
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
+                if let pace = ChatMessageView.pace(tokensPerSecond: tps, tokens: tokens, limit: nil) {
+                    Text(verbatim: pace).font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                }
                 Button(action: onStop) {
                     Image(systemName: "stop.circle.fill")
                         .foregroundStyle(Color.accentColor)
@@ -417,9 +422,11 @@ struct MessageView: View {
                         }
                     }
                 }
-                if message.role == .assistant, message.toolCalls.isEmpty, let tps = message.tokensPerSecond, !message.isPartial {
-                    Text(String(localized: "\(Int(tps)) tok/s"))
-                        .font(.caption2).foregroundStyle(.tertiary)
+                if message.role == .assistant, message.toolCalls.isEmpty, !message.isPartial,
+                    let pace = ChatMessageView.pace(
+                        tokensPerSecond: message.tokensPerSecond, tokens: message.completionTokens, limit: nil)
+                {
+                    Text(verbatim: pace).font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
                 }
             }
             // The column takes the width the panel has, so wide code or formulas scroll instead of widening the row.

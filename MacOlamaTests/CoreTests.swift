@@ -401,3 +401,53 @@ import Testing
         #expect(budget(2048) == 1024)  // never below the reserve
     }
 }
+
+@Suite struct ReasoningTextTests {
+    @Test func thinkingIsSeparatedFromTheAnswer() {
+        let reply = "<think>Считаю: 2+2</think>Ответ: 4"
+        #expect(AnswerText.reasoning(reply) == "Считаю: 2+2")
+        #expect(AnswerText.visible(reply) == "Ответ: 4")
+    }
+
+    @Test func aBlockOpenedByTheTemplateIsStillThinking() {
+        // The chat template opened `<think>` in the prompt, so the reply carries only the closing tag.
+        #expect(AnswerText.reasoning("прикидываю…</think>Готово") == "прикидываю…")
+    }
+
+    @Test func thinkingStillBeingWrittenIsShown() {
+        #expect(AnswerText.reasoning("<think>ещё думаю") == "ещё думаю")
+        #expect(AnswerText.visible("<think>ещё думаю").isEmpty)
+    }
+
+    @Test func privateChannelsCount() {
+        let reply = "<|channel|>analysis<|message|>надо посчитать<|channel|>final<|message|>4"
+        #expect(AnswerText.reasoning(reply) == "надо посчитать")
+        #expect(AnswerText.visible(reply) == "4")
+    }
+
+    @Test func anAnswerWithoutThinkingHasNone() {
+        #expect(AnswerText.reasoning("Просто ответ").isEmpty)
+    }
+}
+
+@Suite struct PaceLineTests {
+    @Test func paceReadsAsSpeedThenTokens() {
+        #expect(ChatMessageView.pace(tokensPerSecond: 21.4, tokens: 8192, limit: 32768) == "21t/s (8.2k/33k)")
+        #expect(ChatMessageView.pace(tokensPerSecond: 21.4, tokens: 1234, limit: nil) == "21t/s (1.2k)")
+        #expect(ChatMessageView.pace(tokensPerSecond: 21.4, tokens: nil, limit: 32768) == "21t/s")
+        #expect(ChatMessageView.pace(tokensPerSecond: nil, tokens: 900, limit: nil) == "900")
+        #expect(ChatMessageView.pace(tokensPerSecond: nil, tokens: nil, limit: nil) == nil)
+    }
+}
+
+@Suite struct CompactCountTests {
+    @Test func countsAreShortenedToKAndM() {
+        #expect(ChatMessageView.compact(0) == "0")
+        #expect(ChatMessageView.compact(999) == "999")
+        #expect(ChatMessageView.compact(1234) == "1.2k")
+        #expect(ChatMessageView.compact(8192) == "8.2k")
+        #expect(ChatMessageView.compact(32768) == "33k")
+        #expect(ChatMessageView.compact(262_144) == "262k")
+        #expect(ChatMessageView.compact(1_200_000) == "1.2M")
+    }
+}

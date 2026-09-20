@@ -26,6 +26,8 @@ struct GenerationProgress: Equatable {
     private(set) var firstThinkingToken: Date?
     /// Hidden tokens of the whole reply: without them the model did not reason, and the summary does not claim it did.
     private(set) var hiddenTokens = 0
+    /// Every token of the reply, the visible ones included: the panel shows this count while the spinner turns.
+    private(set) var totalTokens = 0
     private(set) var thoughtSeconds: TimeInterval = 0
 
     mutating func toolStarted(_ activity: AnswerText.Activity) {
@@ -42,6 +44,7 @@ struct GenerationProgress: Equatable {
 
     /// `answerStarted`: the visible answer is no longer empty, so the thinking stretch is over.
     mutating func token(answerStarted: Bool) {
+        totalTokens += 1
         if answerStarted {
             endThinking()
         } else if thinkingSince != nil {
