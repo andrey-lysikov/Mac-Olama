@@ -59,7 +59,7 @@ enum MathText {
             let k = Array(closing)
             var j = start
             while j + k.count <= c.count {
-                if Array(c[j..<j + k.count]) == k { return j }
+                if c[j..<j + k.count].elementsEqual(k) { return j }  // no per-position Array copy
                 j += c[j] == "\\" && closing != "\\)" && closing != "\\]" ? 2 : 1
             }
             return nil

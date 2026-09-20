@@ -339,6 +339,54 @@ import Testing
     }
 }
 
+@Suite struct MarkdownStreamSplitTests {
+    @Test func splitsAtLastBlankLineOutsideFences() {
+        let text = "First paragraph.\n\nSecond paragraph still typ"
+        let (stable, tail) = MarkdownStreamSplit.split(text)
+        #expect(stable == "First paragraph.\n\n")
+        #expect(tail == "Second paragraph still typ")
+    }
+
+    @Test func blankLinesInsideCodeFencesAreNotBoundaries() {
+        let text = "Intro.\n\n```swift\nlet a = 1\n\nlet b = 2\n"
+        let (stable, tail) = MarkdownStreamSplit.split(text)
+        #expect(stable == "Intro.\n\n")
+        #expect(tail.hasPrefix("```swift"))
+    }
+
+    @Test func closedFenceBecomesStableAtNextBlankLine() {
+        let text = "```\ncode\n```\n\ntail"
+        let (stable, tail) = MarkdownStreamSplit.split(text)
+        #expect(stable == "```\ncode\n```\n\n")
+        #expect(tail == "tail")
+    }
+
+    @Test func noBoundaryKeepsEverythingInTheTail() {
+        let (stable, tail) = MarkdownStreamSplit.split("single unfinished paragraph")
+        #expect(stable.isEmpty)
+        #expect(tail == "single unfinished paragraph")
+    }
+}
+
+@Suite struct SwiftDataChatStoreTests {
+    @Test func chatsAndMessagesSurviveReopen() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("macolama-store-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var chat = Chat(origin: .window)
+        chat.title = "First"
+        do {
+            let store = try SwiftDataChatStore(directory: dir)
+            try await store.insert(chat)
+            try await store.insert(Message(chatID: chat.id, role: .user, text: "hello"))
+        }
+        let reopened = try SwiftDataChatStore(directory: dir)
+        let chats = try await reopened.allChats(includeArchived: true)
+        #expect(chats.map(\.title) == ["First"])
+        let messages = try await reopened.messages(chatID: chat.id)
+        #expect(messages.map(\.text) == ["hello"])
+    }
+}
+
 @Suite struct SpeculativeDecodingTests {
     /// Qwen's MLX builds keep the config keys and drop the weights, so both have to be checked.
     private let qwenConfig = Data(
@@ -464,5 +512,35 @@ import Testing
 
     @Test func ordinaryTextKeepsNoLinks() {
         #expect(MarkdownBlocks.autolinked("просто текст, 2:1, a/b").runs.allSatisfy { $0.link == nil })
+    }
+}
+
+@Suite struct CORSPolicyTests {
+    @Test func localhostEchoesOnlyLocalOrigins() {
+        let policy = CORSPolicy.localhost
+        #expect(policy.allowedOrigin(for: "http://localhost:3000") == "http://localhost:3000")
+        #expect(policy.allowedOrigin(for: "https://127.0.0.1") == "https://127.0.0.1")
+        #expect(policy.allowedOrigin(for: "http://[::1]:8080") == nil)  // IPv6 is not supported
+        #expect(policy.allowedOrigin(for: "https://evil.example") == nil)
+        #expect(policy.allowedOrigin(for: "http://localhost.evil.example") == nil)
+        // Desktop clients (Obsidian, VS Code webviews) send non-web schemes; web pages cannot fake those.
+        #expect(policy.allowedOrigin(for: "app://obsidian.md") == "app://obsidian.md")
+        #expect(policy.allowedOrigin(for: "vscode-webview://x") == "vscode-webview://x")
+        #expect(policy.allowedOrigin(for: "null") == nil)
+        #expect(policy.allowedOrigin(for: nil) == nil)
+    }
+
+    @Test func customListIsAuthoritative() {
+        let policy = CORSPolicy.parse(mode: "custom", origins: " https://app.example , http://localhost:5173 ")
+        #expect(policy == .custom(["https://app.example", "http://localhost:5173"]))
+        #expect(policy.allowedOrigin(for: "https://app.example") == "https://app.example")
+        #expect(policy.allowedOrigin(for: "HTTPS://APP.EXAMPLE") == "HTTPS://APP.EXAMPLE")
+        #expect(policy.allowedOrigin(for: "https://other.example") == nil)
+        #expect(CORSPolicy.parse(mode: "custom", origins: "*").allowedOrigin(for: "https://any.example") == "*")
+    }
+
+    @Test func disabledAnswersNoOrigin() {
+        #expect(CORSPolicy.parse(mode: "off", origins: "").allowedOrigin(for: "http://localhost") == nil)
+        #expect(CORSPolicy.parse(mode: "anything", origins: "") == .localhost)
     }
 }

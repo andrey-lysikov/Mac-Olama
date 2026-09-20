@@ -206,7 +206,10 @@ public actor EngineManager {
     private var keepForever = false
     /// Generation queue: each request waits for the previous one.
     private var queueTail: Task<Void, Never>?
-    private var loadTask: Task<Void, Error>?
+    /// Task is a value type, so the slot carries the generation as its identity.
+    private var loadTask: (generation: Int, task: Task<Void, Error>)?
+    private var loadingModelID: String?
+    private var loadGeneration = 0
 
     public init(engine: any InferenceEngine, configuration: Configuration = .init()) {
         self.engine = engine
@@ -244,29 +247,52 @@ public actor EngineManager {
         get async { await engine.loadedModel }
     }
 
-    /// Loads the model unless already loaded; concurrent calls await the same task.
+    /// Loads the model unless already loaded; concurrent calls for the same model await the same task.
     public func ensureLoaded(_ model: ModelDescriptor) async throws {
-        if await engine.loadedModel?.id == model.id { return }
-        if let task = loadTask, state.modelID == model.id {
-            try await task.value
-            return
+        // Loop: every await is a suspension where another call may have installed its own load.
+        while true {
+            if await engine.loadedModel?.id == model.id { return }
+            guard let existing = loadTask else { break }
+            if loadingModelID == model.id {
+                try await existing.task.value
+                scheduleIdleUnload()
+                return
+            }
+            existing.task.cancel()
+            _ = try? await existing.task.value
+            if loadTask?.generation == existing.generation {
+                loadTask = nil
+                loadingModelID = nil
+            }
         }
-        loadTask?.cancel()
+        loadGeneration += 1
+        let generation = loadGeneration
         let task = Task { [engine] in
+            try Task.checkCancellation()
             if await engine.loadedModel != nil { await engine.unload() }
-            self.state = .loading(modelID: model.id, progress: 0)
+            if self.loadGeneration == generation { self.state = .loading(modelID: model.id, progress: 0) }
             do {
                 try await engine.load(model) { p in
                     Task { await self.reportLoadProgress(modelID: model.id, progress: p) }
                 }
-                self.state = .ready(modelID: model.id)
+                if self.loadGeneration == generation { self.state = .ready(modelID: model.id) }
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
-                self.state = .error(message: "\(error)")
+                // A superseded load must not flash its error over the state of the one that replaced it.
+                if self.loadGeneration == generation { self.state = .error(message: "\(error)") }
                 throw error
             }
         }
-        loadTask = task
-        defer { loadTask = nil }
+        loadTask = (generation, task)
+        loadingModelID = model.id
+        defer {
+            // Only this call's task may clear the slot; a later load may have replaced it already.
+            if loadTask?.generation == generation {
+                loadTask = nil
+                loadingModelID = nil
+            }
+        }
         try await task.value
         scheduleIdleUnload()
     }

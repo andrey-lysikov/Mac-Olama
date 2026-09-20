@@ -2,6 +2,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import Synchronization
 import Testing
 
 @testable import MacOlama
@@ -148,6 +149,33 @@ import Testing
         #expect(ModelDownloader.isExcluded("README.md", patterns: patterns))
         #expect(ModelDownloader.isExcluded("LICENSE.txt", patterns: patterns))
         #expect(!ModelDownloader.isExcluded("model.safetensors", patterns: patterns))
+    }
+
+    @Test func progressAggregatesAcrossConcurrentFiles() {
+        let seen = Mutex<[DownloadProgress]>([])
+        let reporter = DownloadProgressReporter(repoID: "a/b", fileCount: 2, totalBytes: 300) { p in
+            seen.withLock { $0.append(p) }
+        }
+        reporter.started("one.bin", resumedFrom: 0)
+        reporter.received("one.bin", total: 100, delta: 100)
+        reporter.finished("one.bin", bytes: 100)
+        reporter.started("two.bin", resumedFrom: 50)
+        let last = seen.withLock { $0.last }
+        #expect(last?.bytesReceived == 150)
+        #expect(last?.bytesTotal == 300)
+        #expect(last?.fileCount == 2)
+        #expect(last?.currentFile == "two.bin")
+    }
+
+    @Test func listingPathsStayInsideStaging() throws {
+        let dir = URL(fileURLWithPath: "/tmp/staging", isDirectory: true)
+        let ok = try ModelDownloader.safeDestination(for: "sub/tokenizer.json", under: dir)
+        #expect(ok.path == "/tmp/staging/sub/tokenizer.json")
+        for bad in [
+            "../../../Library/LaunchAgents/evil.plist", "/etc/passwd", "~/x", "a/../../b", "..", ".", "", "a/./b",
+        ] {
+            #expect(throws: HubError.unsafePath(bad)) { try ModelDownloader.safeDestination(for: bad, under: dir) }
+        }
     }
 }
 

@@ -12,21 +12,15 @@ import UniformTypeIdentifiers
 // ChatsViewModel
 
 /// State for the full chats window: list, selection, transcript, composer.
+/// Streaming, queueing and attachments live in `ConversationStreamCoordinator`, shared with the panel.
 @MainActor
 @Observable
-final class ChatsViewModel {
+final class ChatsViewModel: ConversationStreamDelegate {
     private let container: AppContainer
+    let stream: ConversationStreamCoordinator
     private(set) var chats: [Chat] = []
-    private(set) var messages: [Message] = []
-    private(set) var streamingText = ""
-    /// Steps and thinking of the running reply, shown above it; nil when nothing runs.
-    private(set) var progress: GenerationProgress?
-    /// Questions sent while the model was busy; they go out one by one after the current reply, each to its own chat.
-    private(set) var queuedQuestions: [QueuedQuestion] = []
-    /// Thinking time of replies finished in this session, for their summary line (not stored with the message).
-    private(set) var thoughtSeconds: [UUID: Int] = [:]
-    private(set) var isGenerating = false
-    private(set) var errorMessage: String?
+    /// Another surface (panel, API) is writing into the selected chat; the stored messages are all there is to show.
+    private var remoteGenerating = false
     /// Bumped when the transcript should land on the newest message: history loaded, or the window came back to the front.
     private(set) var transcriptToken = 0
     /// Bumped when the window becomes key: the composer takes the keyboard, ready for the next question.
@@ -38,18 +32,36 @@ final class ChatsViewModel {
         }
     }
     var filter = ""
-    var input = ""
-    var pendingImages: [QuickPanelViewModel.PendingImage] = []
-    var pendingDocuments: [DocumentInput] = []
-    private var streamTask: Task<Void, Never>?
-    private var changesTask: Task<Void, Never>?
-    private var pasteMonitor: Any?
-    private var activationObserver: Any?
+    // Cleanup handles only: `nonisolated(unsafe)` so `deinit`, which is not main-actor isolated, can tear them down.
+    @ObservationIgnored nonisolated(unsafe) private var changesTask: Task<Void, Never>?
+    @ObservationIgnored nonisolated(unsafe) private var pasteMonitor: Any?
+    @ObservationIgnored nonisolated(unsafe) private var activationObserver: Any?
+
+    // The coordinator holds the shared state; the window's views keep their old property names.
+    var messages: [Message] { stream.messages }
+    var streamingText: String { stream.streamingText }
+    var visibleStreamingText: String { stream.visibleStreamingText }
+    var progress: GenerationProgress? { stream.progress }
+    var queuedQuestions: [QueuedQuestion] { stream.queuedQuestions }
+    var thoughtSeconds: [UUID: Int] { stream.thoughtSeconds }
+    var isGenerating: Bool { stream.isGenerating || remoteGenerating }
+    var errorMessage: String? { stream.errorMessage }
+    var streamsHere: Bool { stream.streamsHere }
+    var input: String {
+        get { stream.input }
+        set { stream.input = newValue }
+    }
+    var pendingImages: [ConversationStreamCoordinator.PendingImage] {
+        get { stream.pendingImages }
+        set { stream.pendingImages = newValue }
+    }
+    var pendingDocuments: [DocumentInput] {
+        get { stream.pendingDocuments }
+        set { stream.pendingDocuments = newValue }
+    }
 
     var selectedChat: Chat? { chats.first { $0.id == selectedChatID } }
     var engineState: EngineState { container.engineState }
-    /// The streamed reply without the model's private channels; notes about tools are separate state.
-    var visibleStreamingText: String { AnswerText.visible(streamingText) }
     var filteredChats: [Chat] {
         filter.isEmpty ? chats : chats.filter { $0.title.localizedCaseInsensitiveContains(filter) }
     }
@@ -60,6 +72,8 @@ final class ChatsViewModel {
 
     init(container: AppContainer) {
         self.container = container
+        self.stream = ConversationStreamCoordinator(container: container)
+        stream.delegate = self
         observe()
         installPasteMonitor()
         observeWindowActivation()
@@ -70,6 +84,45 @@ final class ChatsViewModel {
         }
     }
 
+    deinit {
+        // The window object is cached for the app's life today, but a recreated model must not leak monitors.
+        changesTask?.cancel()
+        nonisolated(unsafe) let pasteMonitor = pasteMonitor
+        nonisolated(unsafe) let activationObserver = activationObserver
+        DispatchQueue.main.async {
+            if let pasteMonitor { NSEvent.removeMonitor(pasteMonitor) }
+            if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
+        }
+    }
+
+    // ConversationStreamDelegate
+
+    func chatIDForSending(question: QueuedQuestion) async -> UUID? {
+        // A queued question goes to the chat it was asked in, even if another chat is on screen by now.
+        if let chatID = question.chatID {
+            if chatID != selectedChatID { selectedChatID = chatID }
+            return chatID
+        }
+        if let chatID = selectedChatID { return chatID }
+        // First question of a fresh window: the chat is created and selected before anything is sent.
+        container.section = .chat
+        guard let chat = try? await container.conversation.newChat(origin: .window) else { return nil }
+        await reload()
+        selectedChatID = chat.id
+        container.setActiveChat(chat.id)
+        return chat.id
+    }
+
+    func modelIDForSending() -> String? { activeModel?.id }
+
+    func displaysChat(_ chatID: UUID) -> Bool { selectedChatID == chatID }
+
+    func streamDidFinish(chatID: UUID) {
+        transcriptToken += 1
+    }
+
+    var acceptsImages: Bool { activeModel?.kind == .vlm }
+
     // Data
 
     func reload() async {
@@ -79,21 +132,20 @@ final class ChatsViewModel {
 
     private func loadMessages() async {
         guard let id = selectedChatID else {
-            messages = []
+            stream.setMessages([])
             loadedChatID = nil
             return
         }
-        let loaded = (try? await container.chatStore.messages(chatID: id)) ?? []
+        let loaded = await stream.fetchMessages(chatID: id)
         guard id == selectedChatID else { return }  // another chat was picked meanwhile; its own load follows
-        messages = loaded
+        stream.setMessages(loaded)
         loadedChatID = id
-        isGenerating = await container.conversation.isGenerating(chatID: id)
+        let wasRemote = remoteGenerating
+        remoteGenerating = await container.conversation.isGenerating(chatID: id) && !stream.isGenerating
+        // A reply that ran on another surface just ended: questions queued here may go out now.
+        if wasRemote, !remoteGenerating { stream.drainQueue() }
         transcriptToken += 1
     }
-
-    /// This window is writing the current reply (it has its own token stream and progress). `isGenerating` is also true when
-    /// another surface writes to this chat; then the stored messages are all there is to show.
-    var streamsHere: Bool { progress != nil }
 
     /// The chat whose messages are on screen; until it matches the selection the transcript is still loading.
     private(set) var loadedChatID: UUID?
@@ -184,58 +236,27 @@ final class ChatsViewModel {
 
     // Messages
 
-    /// Sends the composer, or queues it while the model is still answering or thinking.
+    /// Sends the composer, or queues it while the model is still answering or thinking (here or on another surface).
     func send() {
-        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !pendingImages.isEmpty || !pendingDocuments.isEmpty else { return }
-        let question = QueuedQuestion(
-            chatID: selectedChatID, text: text, images: pendingImages.map { ImageInput(data: $0.data, mimeType: $0.mimeType) },
-            documents: pendingDocuments)
-        input = ""
-        pendingImages = []
-        pendingDocuments = []
-        if isGenerating {
-            queuedQuestions.append(question)
-        } else {
-            ask(question)
-        }
+        stream.send(chatID: selectedChatID, surfaceBusy: remoteGenerating)
     }
 
     func removeQueued(_ id: UUID) {
-        queuedQuestions.removeAll { $0.id == id }
+        stream.removeQueued(id)
     }
 
     /// Questions waiting for the chat on screen.
     var queuedHere: [QueuedQuestion] { queuedQuestions.filter { $0.chatID == selectedChatID } }
 
-    private func ask(_ question: QueuedQuestion) {
-        let (text, images, documents) = (question.text, question.images, question.documents)
-        // A queued question goes to the chat it was asked in, even if another chat is on screen by now.
-        if let chatID = question.chatID, chatID != selectedChatID { selectedChatID = chatID }
-        run { chatID in
-            // The model shown in the composer is the one that answers, whatever the store still says.
-            try await self.container.conversation.send(
-                chatID: chatID, text: text, images: images, documents: documents, modelID: self.activeModel?.id)
-        }
-    }
-
-    /// Deletes the last assistant reply and asks again with the same user message.
+    /// Deletes the tail from the last user message and asks it again.
     func regenerate() {
-        guard let last = messages.last, last.role == .assistant,
-            let user = messages.last(where: { $0.role == .user })
-        else { return }
-        Task {
-            try? await container.chatStore.deleteMessage(id: last.id)
-            try? await container.chatStore.deleteMessage(id: user.id)
-            let images = (try? user.attachments.map { try loadImage($0) }) ?? []
-            run { chatID in
-                try await self.container.conversation.send(chatID: chatID, text: user.text, images: images, modelID: self.activeModel?.id)
-            }
-        }
+        guard let chatID = selectedChatID else { return }
+        stream.regenerate(chatID: chatID)
     }
 
     func stop() {
-        guard let id = selectedChatID else { return }
+        // The running reply may stream into a chat other than the selected one.
+        guard let id = stream.streamingChatID ?? selectedChatID else { return }
         Task { await container.conversation.cancel(chatID: id) }
     }
 
@@ -255,95 +276,22 @@ final class ChatsViewModel {
     }
 
     func pasteFromClipboard() -> Bool {
-        switch PasteboardAttachments.read() {
-        case .files(let urls): urls.forEach { attach(fileURL: $0) }
-        case .webURL(let url): attach(webURL: url)
-        case .image(let image):
-            guard activeModel?.kind == .vlm else {
-                errorMessage = String(localized: "This model does not accept images.")
-                return true
-            }
-            attach(image: image)
-        case nil: return false
-        }
-        return true
+        stream.pasteFromClipboard()
     }
 
     func attach(image: NSImage) {
-        guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
-            let png = rep.representation(using: .png, properties: [:])
-        else { return }
-        pendingImages.append(.init(data: png, mimeType: "image/png", thumbnail: image))
+        stream.attach(image: image)
     }
 
     func attach(fileURL: URL) {
-        switch DocumentExtractor.extract(url: fileURL) {
-        case .image(let image): attach(image: image)
-        case .document(let doc): pendingDocuments.append(doc)
-        case nil: errorMessage = String(localized: "Unsupported file: \(fileURL.lastPathComponent)")
-        }
+        stream.attach(fileURL: fileURL)
     }
 
     /// A copied or dropped link: the page text becomes a document attachment.
     func attach(webURL url: URL) {
-        Task {
-            do {
-                pendingDocuments.append(try await WebPageDocument.fetch(url))
-            } catch {
-                errorMessage = String(localized: "Could not load the page: \(url.absoluteString)")
-            }
-        }
+        stream.attach(webURL: url)
     }
 
-    private func loadImage(_ a: Attachment) throws -> ImageInput {
-        ImageInput(data: try Data(contentsOf: container.paths.attachments.appendingPathComponent(a.relativePath)), mimeType: "image/png")
-    }
-
-    private func run(_ start: @escaping (UUID) async throws -> AsyncStream<ConversationEvent>) {
-        streamTask?.cancel()
-        streamTask = Task {
-            do {
-                if selectedChatID == nil { newChat(); try await Task.sleep(for: .milliseconds(50)) }
-                guard let chatID = selectedChatID else { return }
-                errorMessage = nil
-                streamingText = ""
-                progress = GenerationProgress()
-                isGenerating = true
-                for await event in try await start(chatID) {
-                    switch event {
-                    case .started: await loadMessagesKeepingFlag()
-                    case .token(let t):
-                        streamingText += t
-                        progress?.token(answerStarted: !visibleStreamingText.isEmpty)
-                    // The call itself stays out of the transcript; the step says where the answer is going to come from.
-                    case .toolCallStarted(let call):
-                        progress?.toolStarted(AnswerText.activity(for: call, searchProvider: container.settings.searchProvider))
-                        streamingText = ""  // the preamble before the call is not the answer
-                    case .toolCallFinished: progress?.toolFinished()
-                    case .retrying: streamingText = ""
-                    case .failed(let e): errorMessage = e
-                    case .finished(let message):
-                        progress?.endThinking()
-                        thoughtSeconds[message.id] = progress?.reportedThoughtSeconds
-                        container.answerFinished(message)
-                    }
-                }
-            } catch {
-                errorMessage = ConversationService.describe(error)
-            }
-            isGenerating = false
-            streamingText = ""
-            progress = nil
-            await loadMessages()
-            // The next waiting question goes out; after a failure the queue waits, the user sees the error first.
-            if errorMessage == nil, !queuedQuestions.isEmpty { ask(queuedQuestions.removeFirst()) }
-        }
-    }
-
-    private func loadMessagesKeepingFlag() async {
-        guard let id = selectedChatID else { return }
-        messages = (try? await container.chatStore.messages(chatID: id)) ?? []
-    }
 }
 
 // ChatsWindowView
@@ -353,10 +301,45 @@ struct ChatsWindowView: View {
     @State private var viewModel: ChatsViewModel?
 
     var body: some View {
-        Group {
-            if let viewModel { ChatsSplitView(viewModel: viewModel) } else { ProgressView() }
+        VStack(spacing: 0) {
+            if let failure = container.storeFailure { StoreFailureBanner(failure: failure) }
+            Group {
+                if let viewModel { ChatsSplitView(viewModel: viewModel) } else { ProgressView() }
+            }
         }
         .onAppear { if viewModel == nil { viewModel = ChatsViewModel(container: container) } }
+    }
+}
+
+/// The chat database failed to open: this session is in memory only, and the user must know before typing.
+private struct StoreFailureBanner: View {
+    let failure: AppContainer.StoreFailure
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
+            Text(
+                failure.recovered
+                    ? String(
+                        localized:
+                            "The chat database was damaged and has been reset (\(failure.message)). The old one was backed up.")
+                    : String(
+                        localized:
+                            "Chat history is unavailable (\(failure.message)). New chats will not be saved. A backup of the database was made."
+                    )
+            )
+            .lineLimit(2)
+            Spacer()
+            if let backup = failure.backup {
+                Button(String(localized: "Show Backup in Finder")) {
+                    NSWorkspace.shared.activateFileViewerSelecting([backup])
+                }
+            }
+        }
+        .font(.callout)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.yellow.opacity(0.12))
     }
 }
 
@@ -1036,7 +1019,7 @@ struct ChatMessageView: View {
                     if answer.isEmpty, !message.isPartial {
                         NoAnswerLine()
                     } else {
-                        MarkdownView(markdown: answer.isEmpty ? "…" : answer, baseFontSize: scaledText)
+                        MarkdownView(markdown: answer.isEmpty ? "…" : answer, baseFontSize: scaledText, streaming: message.isPartial)
                     }
                 }
                 if !message.isPartial, message.toolCalls.isEmpty {

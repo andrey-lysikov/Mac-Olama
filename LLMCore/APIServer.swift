@@ -89,6 +89,8 @@ public final class APIServer: Sendable {
 
     public var isRunning: Bool { server.isRunning }
 
+    public func setCORSPolicy(_ policy: CORSPolicy) { server.setCORSPolicy(policy) }
+
     /// For tests/dev: serves until the task is cancelled.
     public func run() async throws {
         try server.start()

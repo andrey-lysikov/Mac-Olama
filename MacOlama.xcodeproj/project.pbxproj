@@ -147,6 +147,7 @@
 			membershipExceptions = (
 				ChatsWindow.swift,
 				CodeHighlighter.swift,
+				ConversationStream.swift,
 				DownloadWindow.swift,
 				FormulaView.swift,
 				GenerationProgress.swift,

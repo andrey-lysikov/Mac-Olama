@@ -22,15 +22,74 @@ enum HTTP {
     static let userAgent =
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15 Mac-Olama/0.1"
 
-    static func get(_ url: URL, timeout: TimeInterval = 15, headers: [String: String] = [:]) async throws -> (Data, HTTPURLResponse) {
+    static func get(
+        _ url: URL, timeout: TimeInterval = 15, headers: [String: String] = [:], maxBytes: Int? = nil,
+        delegate: (any URLSessionTaskDelegate)? = nil
+    ) async throws -> (Data, HTTPURLResponse) {
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("text/html,application/json;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
         for (k, v) in headers { request.setValue(v, forHTTPHeaderField: k) }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let maxBytes else {
+            let (data, response) = try await URLSession.shared.data(for: request, delegate: delegate)
+            guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+            return (data, http)
+        }
+        // Capped read: the body stops at maxBytes instead of buffering whatever the server sends.
+        let (bytes, response) = try await URLSession.shared.bytes(for: request, delegate: delegate)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        var data = Data()
+        data.reserveCapacity(min(maxBytes, 1 << 20))
+        for try await byte in bytes {
+            data.append(byte)
+            if data.count >= maxBytes { break }
+        }
         return (data, http)
+    }
+
+    /// True when any address `host` resolves to is loopback, private or link-local (getaddrinfo also accepts
+    /// literal IPs; both families are checked because the connection may use either). Resolution failure blocks.
+    static func resolvesToLocal(_ host: String) async -> Bool {
+        await Task.detached {
+            var hints = addrinfo()
+            hints.ai_socktype = SOCK_STREAM
+            var list: UnsafeMutablePointer<addrinfo>?
+            guard getaddrinfo(host, nil, &hints, &list) == 0, let first = list else { return true }
+            defer { freeaddrinfo(first) }
+            var node: UnsafeMutablePointer<addrinfo>? = first
+            while let current = node {
+                var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                if getnameinfo(current.pointee.ai_addr, current.pointee.ai_addrlen, &buffer, socklen_t(buffer.count), nil, 0, NI_NUMERICHOST) == 0 {
+                    // Drop the null termination before decoding: getnameinfo fills only part of the buffer.
+                    let address = String(decoding: buffer.prefix { $0 != 0 }.map(UInt8.init(bitPattern:)), as: UTF8.self)
+                    if NetworkToolProvider.isLocal(address) { return true }
+                }
+                node = current.pointee.ai_next
+            }
+            return false
+        }.value
+    }
+}
+
+/// Follows redirects only to http(s) URLs whose host is neither blocked nor resolving to a local address.
+final class RedirectGuard: NSObject, URLSessionTaskDelegate {
+    private let blockedHosts: Set<String>
+
+    init(blockedHosts: Set<String>) { self.blockedHosts = blockedHosts }
+
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        let blocked = blockedHosts
+        Task {
+            guard let url = request.url, let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
+                let host = url.host?.lowercased(), !blocked.contains(host), !host.hasSuffix(".local"),
+                !(await HTTP.resolvesToLocal(host))
+            else { return completionHandler(nil) }
+            completionHandler(request)
+        }
     }
 }
 
@@ -140,6 +199,7 @@ public struct WebToolProvider: ToolProvider {
         public var maxResults = 8
         public var maxPageCharacters = 12_000
         public var blockedHosts: Set<String> = ["localhost", "127.0.0.1", "0.0.0.0", "::1"]
+        public var maxFetchBytes = 8 << 20
         public var timeout: TimeInterval = 15
         public init() {}
     }
@@ -182,12 +242,24 @@ public struct WebToolProvider: ToolProvider {
             else {
                 return "error: url must be an absolute http(s) URL"
             }
-            if let host = url.host?.lowercased(), configuration.blockedHosts.contains(host) || host.hasSuffix(".local") {
-                return "error: host is not allowed"
+            guard let host = url.host?.lowercased(), !configuration.blockedHosts.contains(host), !host.hasSuffix(".local"),
+                !(await HTTP.resolvesToLocal(host))
+            else { return "error: host is not allowed" }
+            let (data, http) = try await HTTP.get(
+                url, timeout: configuration.timeout, maxBytes: configuration.maxFetchBytes,
+                delegate: RedirectGuard(blockedHosts: configuration.blockedHosts))
+            guard http.statusCode < 300 else {
+                // Redirects are followed automatically, so a surviving 3xx means RedirectGuard refused the target.
+                return (300..<400).contains(http.statusCode)
+                    ? "error: redirect blocked (target not allowed)" : "error: HTTP \(http.statusCode)"
             }
-            let (data, http) = try await HTTP.get(url, timeout: configuration.timeout)
-            guard http.statusCode < 400 else { return "error: HTTP \(http.statusCode)" }
             let contentType = http.value(forHTTPHeaderField: "Content-Type") ?? ""
+            let lowered = contentType.lowercased()
+            if ["image/", "video/", "audio/", "font/"].contains(where: lowered.hasPrefix)
+                || ["octet-stream", "/pdf", "/zip", "/gzip"].contains(where: lowered.contains)
+            {
+                return "error: unsupported content type \(contentType)"
+            }
             if contentType.contains("json") || contentType.contains("text/plain") {
                 let text = String(decoding: data.prefix(configuration.maxPageCharacters), as: UTF8.self)
                 return Self.wrap(text, source: raw)

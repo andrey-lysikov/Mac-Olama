@@ -65,6 +65,8 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case modelTemperatures = "modelTemperatures"  // [model id: Double]; missing = the temperature the model ships with
     case apiServerEnabled = "apiServerEnabled"  // Bool: whether other programs may talk to the models through us
     case apiBindHost = "apiBindHost"  // String: the address the API listens on; "127.0.0.1" = this Mac only
+    case apiCORSMode = "apiCORSMode"  // String: "localhost" (default), "off" or "custom" — which browser origins may call the API
+    case apiCORSOrigins = "apiCORSOrigins"  // String: comma-separated origins used when apiCORSMode == "custom"
     case hotkeyKeyCode = "hotkeyKeyCode"  // Int: virtual key of the panel's shortcut; 0 = no shortcut
     case hotkeyModifiers = "hotkeyModifiers"  // Int: Carbon modifier mask of that shortcut
     case toolIterations = "toolIterations"  // Int: how many times in a row the model may use tools before answering
@@ -73,12 +75,16 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case reasoningShown = "reasoningShown"  // [String]: models whose thinking is shown in the transcript
     case greedyDrafters = "greedyDrafters"  // [String]: models whose drafter only verifies greedy decoding
     case speculativeModels = "speculativeModels"  // [String]: model ids answering with MTP speculation (greedy decoding)
+    case downloadSpeedLimitMBps = "downloadSpeedLimitMBps"  // Int, MB/s cap for model downloads; 0 = unlimited
+    case downloadConcurrentFiles = "downloadConcurrentFiles"  // Int 1...4: files of one download fetched in parallel
 }
 
 public enum SettingsDefaults {
     public static let idleUnloadSeconds: TimeInterval = 300
     public static let apiServerPort = 11434
     public static let apiBindHost = "127.0.0.1"
+    public static let apiCORSMode = "localhost"
+    public static let downloadConcurrentFiles = 2
     public static let toolIterations = 10
     /// ⌥Space out of the box: free on a stock system and easy to reach with one hand.
     public static let hotkeyKeyCode = 49  // kVK_Space
@@ -94,6 +100,8 @@ public enum SettingsDefaults {
             SettingsKey.launchAtLogin.rawValue: false,
             SettingsKey.apiServerPort.rawValue: apiServerPort,
             SettingsKey.apiServerEnabled.rawValue: true,
+            SettingsKey.apiCORSMode.rawValue: apiCORSMode,
+            SettingsKey.apiCORSOrigins.rawValue: "",
             SettingsKey.toolsEnabled.rawValue: false,
             SettingsKey.searchProvider.rawValue: searchProvider,
             SettingsKey.panelClosesOnFocusLoss.rawValue: true,
@@ -105,6 +113,8 @@ public enum SettingsDefaults {
             SettingsKey.extraTools.rawValue: [String](),
             SettingsKey.remoteTokens.rawValue: [String: String](),
             SettingsKey.sidebarWidth.rawValue: 260.0,
+            SettingsKey.downloadSpeedLimitMBps.rawValue: 0,
+            SettingsKey.downloadConcurrentFiles.rawValue: downloadConcurrentFiles,
         ]
     }
 }

@@ -98,6 +98,19 @@ final class MessageRecord {
     }
 }
 
+// Schema versions
+
+/// Future model changes add a ChatSchemaV2 and a migration stage instead of breaking the store.
+enum ChatSchemaV1: VersionedSchema {
+    static var versionIdentifier: Schema.Version { .init(1, 0, 0) }
+    static var models: [any PersistentModel.Type] { [ChatRecord.self, MessageRecord.self] }
+}
+
+enum ChatMigrationPlan: SchemaMigrationPlan {
+    static var schemas: [any VersionedSchema.Type] { [ChatSchemaV1.self] }
+    static var stages: [MigrationStage] { [] }
+}
+
 // Store
 
 /// SwiftData-backed `ChatStore` on its own ModelActor; the UI only ever sees value types.
@@ -110,10 +123,30 @@ actor SwiftDataChatStore: ModelActor, ChatStore {
 
     init(directory: URL) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let config = ModelConfiguration("MacOlama", url: directory.appendingPathComponent("MacOlama.store"))
-        let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self, configurations: config)
+        let schema = Schema(versionedSchema: ChatSchemaV1.self)
+        let config = ModelConfiguration("MacOlama", schema: schema, url: directory.appendingPathComponent("MacOlama.store"))
+        let container = try ModelContainer(for: schema, migrationPlan: ChatMigrationPlan.self, configurations: [config])
         self.modelContainer = container
         self.modelExecutor = DefaultSerialModelExecutor(modelContext: ModelContext(container))
+    }
+
+    /// Moves the broken store files aside so the next open starts fresh; returns the backup folder.
+    static func backUpStore(in directory: URL) -> URL? {
+        let fm = FileManager.default
+        let stamp = ISO8601DateFormatter().string(from: .now).replacingOccurrences(of: ":", with: "-")
+        let backup = directory.appendingPathComponent("ChatsBackup-\(stamp)-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        let names = (try? fm.contentsOfDirectory(atPath: directory.path))?.filter { $0.hasPrefix("MacOlama.store") } ?? []
+        guard !names.isEmpty, (try? fm.createDirectory(at: backup, withIntermediateDirectories: true)) != nil else { return nil }
+        var moved = false
+        for name in names {
+            do {
+                try fm.moveItem(at: directory.appendingPathComponent(name), to: backup.appendingPathComponent(name))
+                moved = true
+            } catch {
+                // A file that cannot even be moved stays; the retry will fail and the session runs in memory.
+            }
+        }
+        return moved ? backup : nil
     }
 
     private func chatRecord(_ id: UUID) throws -> ChatRecord? {

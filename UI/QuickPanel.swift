@@ -341,52 +341,75 @@ final class QuickPanel: NSPanel {
 // QuickPanelViewModel
 
 /// Panel state: active chat, streaming reply, attachments. One instance per app.
+/// Streaming, queueing and attachments live in `ConversationStreamCoordinator`, shared with the chats window.
 @MainActor
 @Observable
-final class QuickPanelViewModel {
-    struct PendingImage: Identifiable, Equatable {
-        let id = UUID()
-        let data: Data
-        let mimeType: String
-        let thumbnail: NSImage
-    }
+final class QuickPanelViewModel: ConversationStreamDelegate {
+    typealias PendingImage = ConversationStreamCoordinator.PendingImage
 
     private let container: AppContainer
+    let stream: ConversationStreamCoordinator
 
-    var input = ""
     /// Height limit of the whole panel: the user's choice, otherwise half of the screen. The transcript scrolls beyond it.
     var maxPanelHeight: CGFloat = 480
     /// What the panel may really take: the limit above, cut by the room between the field and the top of the screen.
     var heightLimit: CGFloat = 480
-    var pendingImages: [PendingImage] = []
-    var pendingDocuments: [DocumentInput] = []
     private(set) var chat: Chat? { didSet { container.panelChatID = chat?.id } }
-    private(set) var messages: [Message] = []
-    /// Reply text currently streaming, before it lands in `messages`.
-    private(set) var streamingText = ""
-    /// Steps and thinking of the running reply, shown above it; nil when nothing runs.
-    private(set) var progress: GenerationProgress?
-    /// Questions sent while the model was busy; they go out one by one after the current reply.
-    private(set) var queuedQuestions: [QueuedQuestion] = []
-    /// Thinking time of replies finished in this session, for their summary line (not stored with the message).
-    private(set) var thoughtSeconds: [UUID: Int] = [:]
-    private(set) var isGenerating = false
-    private(set) var errorMessage: String?
     /// Bumped when the transcript should jump back to the newest exchange: the panel was opened, or the chat changed.
     private(set) var transcriptToken = 0
-    private var streamTask: Task<Void, Never>?
     private var storeTask: Task<Void, Never>?
+
+    // The coordinator holds the shared state; the panel's views keep their old property names.
+    var messages: [Message] { stream.messages }
+    var streamingText: String { stream.streamingText }
+    var visibleStreamingText: String { stream.visibleStreamingText }
+    var progress: GenerationProgress? { stream.progress }
+    var queuedQuestions: [QueuedQuestion] { stream.queuedQuestions }
+    var thoughtSeconds: [UUID: Int] { stream.thoughtSeconds }
+    var isGenerating: Bool { stream.isGenerating }
+    var errorMessage: String? { stream.errorMessage }
+    var input: String {
+        get { stream.input }
+        set { stream.input = newValue }
+    }
+    var pendingImages: [PendingImage] {
+        get { stream.pendingImages }
+        set { stream.pendingImages = newValue }
+    }
+    var pendingDocuments: [DocumentInput] {
+        get { stream.pendingDocuments }
+        set { stream.pendingDocuments = newValue }
+    }
 
     var activeModel: ModelDescriptor? { container.activeModel }
     var canAttachImages: Bool { activeModel?.kind == .vlm }
     var engineState: EngineState { container.engineState }
-    /// The streamed reply without the model's private channels; notes about tools are separate state.
-    var visibleStreamingText: String { AnswerText.visible(streamingText) }
 
     init(container: AppContainer) {
         self.container = container
+        self.stream = ConversationStreamCoordinator(container: container)
+        stream.delegate = self
         observeStore()
     }
+
+    isolated deinit {
+        storeTask?.cancel()
+    }
+
+    // ConversationStreamDelegate
+
+    func chatIDForSending(question: QueuedQuestion) async -> UUID? {
+        if chat == nil { await loadActiveChat() }
+        return chat?.id
+    }
+
+    func modelIDForSending() -> String? { container.activeModel?.id }
+
+    func displaysChat(_ chatID: UUID) -> Bool { chat?.id == chatID }
+
+    func streamDidFinish(chatID: UUID) {}
+
+    var acceptsImages: Bool { canAttachImages }
 
     /// Bumped on every show: the field takes the keyboard each time, not only the first time the view appears.
     private(set) var focusToken = 0
@@ -403,28 +426,20 @@ final class QuickPanelViewModel {
             let chat = try await container.conversation.activeChat(origin: .panel)
             self.chat = chat
             container.setActiveChat(chat.id)
-            messages = try await container.chatStore.messages(chatID: chat.id)
+            stream.setMessages(try await container.chatStore.messages(chatID: chat.id))
             transcriptToken += 1
         } catch {
-            errorMessage = ConversationService.describe(error)
+            stream.errorMessage = ConversationService.describe(error)
         }
     }
 
-    /// Clear: start a new chat.
+    /// Clear: cancel whatever runs, wipe the panel and start a new chat. The old task's tail cannot write back.
     func clear() {
-        streamTask?.cancel()
-        input = ""
+        stream.reset()
         Task {
             let chat = try? await container.conversation.newChat(origin: .panel)
             self.chat = chat
             container.setActiveChat(chat?.id)
-            messages = []
-            streamingText = ""
-            progress = nil
-            queuedQuestions = []
-            errorMessage = nil
-            pendingImages = []
-            pendingDocuments = []
         }
     }
 
@@ -435,130 +450,42 @@ final class QuickPanelViewModel {
 
     /// Sends the field, or queues it while the model is still answering or thinking.
     func send() {
-        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !pendingImages.isEmpty || !pendingDocuments.isEmpty else { return }
         guard container.activeModel != nil else {
-            errorMessage = String(localized: "No model selected. Download one from the menu.")
+            stream.errorMessage = String(localized: "No model selected. Download one from the menu.")
             return
         }
-        let question = QueuedQuestion(
-            text: text, images: pendingImages.map { ImageInput(data: $0.data, mimeType: $0.mimeType) }, documents: pendingDocuments)
-        input = ""
-        pendingImages = []
-        pendingDocuments = []
-        if isGenerating {
-            queuedQuestions.append(question)
-        } else {
-            start(question)
-        }
+        stream.send(chatID: chat?.id)
     }
 
     func removeQueued(_ id: UUID) {
-        queuedQuestions.removeAll { $0.id == id }
+        stream.removeQueued(id)
     }
 
-    private func start(_ question: QueuedQuestion) {
-        let (text, images, documents) = (question.text, question.images, question.documents)
-        errorMessage = nil
-        streamingText = ""
-        progress = GenerationProgress()
-        isGenerating = true
-
-        streamTask = Task {
-            do {
-                if chat == nil { await loadActiveChat() }
-                guard let chat else { return }
-                // The panel answers with the model checked in the status menu.
-                let stream = try await container.conversation.send(
-                    chatID: chat.id, text: text, images: images, documents: documents, modelID: container.activeModel?.id)
-                for await event in stream {
-                    switch event {
-                    case .started:
-                        messages = (try? await container.chatStore.messages(chatID: chat.id)) ?? messages
-                    case .token(let t):
-                        streamingText += t
-                        progress?.token(answerStarted: !visibleStreamingText.isEmpty)
-                    case .toolCallStarted(let call):
-                        // The call itself stays out of the transcript; the step says where the answer is going to come from.
-                        // Whatever the model wrote before the call is a preamble: only the answer after the results is shown.
-                        progress?.toolStarted(AnswerText.activity(for: call, searchProvider: container.settings.searchProvider))
-                        streamingText = ""
-                    case .toolCallFinished:
-                        progress?.toolFinished()
-                    case .retrying:
-                        streamingText = ""
-                    case .finished, .failed:
-                        if case .failed(let message) = event { errorMessage = message }
-                        if case .finished(let message) = event {
-                            progress?.endThinking()
-                            thoughtSeconds[message.id] = progress?.reportedThoughtSeconds
-                            container.answerFinished(message)
-                        }
-                        messages = (try? await container.chatStore.messages(chatID: chat.id)) ?? messages
-                        streamingText = ""
-                        progress = nil
-                    }
-                }
-            } catch {
-                errorMessage = ConversationService.describe(error)
-            }
-            progress = nil
-            isGenerating = false
-            // The next waiting question goes out; after a failure the queue waits, the user sees the error first.
-            if errorMessage == nil, !queuedQuestions.isEmpty { start(queuedQuestions.removeFirst()) }
-        }
-    }
-
-    // Images
+    // Attachments
 
     func attach(image: NSImage) {
-        guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
-            let png = rep.representation(using: .png, properties: [:])
-        else { return }
-        pendingImages.append(PendingImage(data: png, mimeType: "image/png", thumbnail: image))
+        stream.attach(image: image)
     }
 
-    /// Images go to the VLM, everything readable becomes an attached document (works with text-only models too).
     func attach(fileURL: URL) {
-        switch DocumentExtractor.extract(url: fileURL) {
-        case .image(let image): attach(image: image)
-        case .document(let doc): pendingDocuments.append(doc)
-        case nil: errorMessage = String(localized: "Unsupported file: \(fileURL.lastPathComponent)")
-        }
+        stream.attach(fileURL: fileURL)
     }
 
     /// A copied or dropped link, or the Safari extension button: the page text becomes a document attachment.
     func attach(webURL url: URL) {
-        Task {
-            do {
-                pendingDocuments.append(try await WebPageDocument.fetch(url))
-            } catch {
-                errorMessage = String(localized: "Could not load the page: \(url.absoluteString)")
-            }
-        }
+        stream.attach(webURL: url)
     }
 
     func removeDocument(_ name: String) {
-        pendingDocuments.removeAll { $0.name == name }
+        stream.removeDocument(name)
     }
 
     func pasteFromClipboard() -> Bool {
-        switch PasteboardAttachments.read() {
-        case .files(let urls): urls.forEach { attach(fileURL: $0) }
-        case .webURL(let url): attach(webURL: url)
-        case .image(let image):
-            guard canAttachImages else {
-                errorMessage = String(localized: "This model does not accept images.")
-                return true
-            }
-            attach(image: image)
-        case nil: return false
-        }
-        return true
+        stream.pasteFromClipboard()
     }
 
     func removeImage(_ id: UUID) {
-        pendingImages.removeAll { $0.id == id }
+        stream.removeImage(id)
     }
 
     // Store sync (the reply may have finished while the panel was closed)
@@ -571,11 +498,11 @@ final class QuickPanelViewModel {
                 switch change {
                 case .messageInserted(let cid, _), .messageUpdated(let cid, _), .messageDeleted(let cid, _):
                     if cid == chat.id, !self.isGenerating {
-                        self.messages = (try? await self.container.chatStore.messages(chatID: chat.id)) ?? self.messages
+                        self.stream.setMessages((try? await self.container.chatStore.messages(chatID: chat.id)) ?? self.messages)
                     }
                 case .chatDeleted(let cid) where cid == chat.id:
                     self.chat = nil
-                    self.messages = []
+                    self.stream.setMessages([])
                 default:
                     break
                 }

@@ -91,7 +91,22 @@ final class AppContainer {
         var isActive: Bool { phase == .queued || phase == .running || phase == .paused }
     }
 
+    /// Set when the chat database could not be opened. `recovered`: a fresh database took over
+    /// (old one backed up); otherwise the session runs on the in-memory store.
+    struct StoreFailure: Equatable {
+        var message: String
+        var backup: URL?
+        var recovered = false
+    }
+
+    let storeFailure: StoreFailure?
+
     private var apiServer: APIServer?
+    /// Serializes restarts: each waits for the previous stop/probe/bind cycle to finish.
+    private var apiRestartTask: Task<Void, Never>?
+    private var apiGeneration = 0
+    /// The port actually bound; may differ from the setting when the chosen one was busy. Never written back.
+    private(set) var apiActivePort: Int?
     private var stateTask: Task<Void, Never>?
     private var watcher: DirectoryWatcher?
     private var downloadTasks: [String: Task<Void, Never>] = [:]
@@ -122,9 +137,18 @@ final class AppContainer {
         let store: any ChatStore
         do {
             store = try SwiftDataChatStore(directory: paths.database)
+            self.storeFailure = nil
         } catch {
-            logger.error("SwiftData unavailable, falling back to memory store: \(error)")
-            store = InMemoryChatStore()
+            logger.error("Chat store failed to open: \(error)")
+            // Move the broken files aside and retry with a fresh database; memory is the last resort.
+            let backup = SwiftDataChatStore.backUpStore(in: paths.database)
+            if backup != nil, let fresh = try? SwiftDataChatStore(directory: paths.database) {
+                store = fresh
+                self.storeFailure = StoreFailure(message: error.localizedDescription, backup: backup, recovered: true)
+            } else {
+                self.storeFailure = StoreFailure(message: error.localizedDescription, backup: backup, recovered: false)
+                store = InMemoryChatStore()
+            }
         }
         self.chatStore = store
         self.conversation = ConversationService(
@@ -150,7 +174,8 @@ final class AppContainer {
             restoreDownloads()
             removeOrphanedStaging()
             checkModelAvailability(force: true)
-            await startAPI()
+            applyDownloadLimits()
+            restartAPI()
             updates.start()
         }
         // A Mac that slept had no network: the connected servers are asked about once, when it comes back.
@@ -851,6 +876,7 @@ final class AppContainer {
                     "Not enough disk space: need \(ByteCountFormatter.string(fromByteCount: need, countStyle: .file)), available \(ByteCountFormatter.string(fromByteCount: have, countStyle: .file))."
             )
         case HubError.checksumMismatch(let file): String(localized: "Checksum mismatch for \(file). Try again.")
+        case HubError.unsafePath(let path): String(localized: "The repository lists an unsafe file path (\(path)) and cannot be installed.")
         case HubError.cancelled: String(localized: "Cancelled.")
         // A hub that cannot be reached at all (ModelScope is blocked on some networks): the reason is the network,
         // not the search, so it is worded the same whichever way the connection failed.
@@ -962,21 +988,66 @@ final class AppContainer {
     func setAPIEnabled(_ enabled: Bool) {
         guard enabled != settings.apiServerEnabled else { return }
         settings.apiServerEnabled = enabled
-        Task { await startAPI() }
+        restartAPI()
     }
 
     /// The interface the API answers on. "127.0.0.1" keeps it on this Mac; "0.0.0.0" opens it to the network.
     func setAPIBindHost(_ host: String) {
         guard host != settings.apiBindHost else { return }
         settings.apiBindHost = host
-        Task { await startAPI() }
+        restartAPI()
     }
 
     func setAPIPort(_ port: Int) {
         let wanted = min(max(port, 1024), 65535)
         guard wanted != settings.apiServerPort else { return }
         settings.apiServerPort = wanted
-        Task { await startAPI() }
+        restartAPI()
+    }
+
+    func setDownloadSpeedLimit(_ mbps: Int) {
+        settings.downloadSpeedLimitMBps = max(0, mbps)
+        applyDownloadLimits()
+    }
+
+    func setDownloadConcurrentFiles(_ count: Int) {
+        settings.downloadConcurrentFiles = min(max(count, 1), 4)
+        applyDownloadLimits()
+    }
+
+    /// Pushes the download limits from settings into the downloader; a running download picks them up mid-flight.
+    func applyDownloadLimits() {
+        let bytesPerSecond = Int64(settings.downloadSpeedLimitMBps) * 1_000_000
+        let files = settings.downloadConcurrentFiles
+        Task { [downloader] in
+            await downloader.setSpeedLimit(bytesPerSecond: bytesPerSecond)
+            await downloader.setMaxConcurrentFiles(files)
+        }
+    }
+
+    /// Queues a restart behind any in-flight one; stale restarts are skipped so only the last settings win.
+    func restartAPI() {
+        let previous = apiRestartTask
+        apiGeneration += 1
+        let generation = apiGeneration
+        apiRestartTask = Task {
+            await previous?.value
+            guard generation == self.apiGeneration else { return }
+            await self.startAPI()
+        }
+    }
+
+    /// Which browser origins may call the API. Applies to the running server without a restart.
+    var corsPolicy: CORSPolicy { CORSPolicy.parse(mode: settings.apiCORSMode, origins: settings.apiCORSOrigins) }
+
+    func setCORSMode(_ mode: String) {
+        settings.apiCORSMode = mode
+        apiServer?.setCORSPolicy(corsPolicy)
+    }
+
+    func setCORSOrigins(_ origins: String) {
+        settings.apiCORSOrigins = origins
+        apiServer?.setCORSPolicy(corsPolicy)
     }
 
     func setShortcutsToolEnabled(_ enabled: Bool) {
@@ -1036,7 +1107,7 @@ final class AppContainer {
     /// What to type into another program: the chosen address, or this Mac's own when the server listens everywhere.
     var apiURL: URL {
         let host = settings.apiBindHost == "0.0.0.0" ? (NetworkInterfaces.addresses().first?.address ?? "127.0.0.1") : settings.apiBindHost
-        return URL(string: "http://\(host):\(settings.apiServerPort)")!
+        return URL(string: "http://\(host):\(apiActivePort ?? settings.apiServerPort)")!
     }
 
     func startAPI() async {
@@ -1065,6 +1136,7 @@ final class AppContainer {
                         version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1"),
                     catalog: catalog, engine: engineManager, downloader: downloader
                 ) { [weak self] in await self?.refreshModels() }
+                server.setCORSPolicy(corsPolicy)
                 do {
                     try server.start()
                 } catch {
@@ -1072,7 +1144,7 @@ final class AppContainer {
                     continue  // taken between probe and bind: try the next candidate
                 }
                 apiServer = server
-                settings.apiServerPort = port
+                apiActivePort = port
                 apiStatus = .running(port: port)
                 return
             }
@@ -1085,6 +1157,7 @@ final class AppContainer {
     func stopAPI() {
         apiServer?.stop()
         apiServer = nil
+        apiActivePort = nil
         apiStatus = .disabled
     }
 }
@@ -1154,6 +1227,25 @@ final class AppSettings {
     var apiBindHost: String {
         get { string(.apiBindHost) ?? SettingsDefaults.apiBindHost }
         set { set(newValue, .apiBindHost) }
+    }
+    var apiCORSMode: String {
+        get { string(.apiCORSMode) ?? SettingsDefaults.apiCORSMode }
+        set { set(newValue, .apiCORSMode) }
+    }
+    var apiCORSOrigins: String {
+        get { string(.apiCORSOrigins) ?? "" }
+        set { set(newValue, .apiCORSOrigins) }
+    }
+    var downloadSpeedLimitMBps: Int {
+        get { int(.downloadSpeedLimitMBps) }
+        set { set(newValue, .downloadSpeedLimitMBps) }
+    }
+    var downloadConcurrentFiles: Int {
+        get {
+            let value = int(.downloadConcurrentFiles)
+            return value > 0 ? value : SettingsDefaults.downloadConcurrentFiles
+        }
+        set { set(newValue, .downloadConcurrentFiles) }
     }
     var hotkeyKeyCode: Int {
         get { int(.hotkeyKeyCode) }

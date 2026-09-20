@@ -38,6 +38,7 @@ struct SettingsSectionView: View {
                 group(String(localized: "Web pages")) { web }
                 group(String(localized: "Unload the model automatically")) { unloading }
                 group(String(localized: "Panel behaviour")) { panel }
+                group(String(localized: "Model downloads")) { downloads }
                 group(String(localized: "Access to the models API")) { api }
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
@@ -202,6 +203,42 @@ struct SettingsSectionView: View {
         }
     }
 
+    private static let speedLimits: [(String, Int)] = [
+        (String(localized: "Unlimited"), 0), ("1 MB/s", 1), ("5 MB/s", 5), ("10 MB/s", 10), ("20 MB/s", 20),
+        ("50 MB/s", 50), ("100 MB/s", 100),
+    ]
+
+    private var downloads: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            row(
+                String(localized: "Speed limit"),
+                help: String(localized: "Caps how fast model files are downloaded")
+            ) {
+                Picker(
+                    "",
+                    selection: Binding(
+                        get: { container.settings.downloadSpeedLimitMBps }, set: { container.setDownloadSpeedLimit($0) })
+                ) {
+                    ForEach(Self.speedLimits, id: \.1) { name, value in Text(name).tag(value) }
+                }
+                .labelsHidden().frame(width: 140)
+            }
+            row(
+                String(localized: "Parallel files"),
+                help: String(localized: "How many files of one model are fetched at once")
+            ) {
+                Picker(
+                    "",
+                    selection: Binding(
+                        get: { container.settings.downloadConcurrentFiles }, set: { container.setDownloadConcurrentFiles($0) })
+                ) {
+                    ForEach(1...4, id: \.self) { count in Text(String(count)).tag(count) }
+                }
+                .pickerStyle(.segmented).labelsHidden().frame(width: 140)
+            }
+        }
+    }
+
     private var api: some View {
         VStack(alignment: .leading, spacing: 12) {
             row(
@@ -214,6 +251,30 @@ struct SettingsSectionView: View {
                     .controlSize(.small)
             }
             interfaceRow.disabled(!container.settings.apiServerEnabled)
+            corsRow.disabled(!container.settings.apiServerEnabled)
+        }
+    }
+
+    private var corsRow: some View {
+        row(
+            String(localized: "Browser access"),
+            help: String(localized: "Which web pages may call the API from a browser (CORS)")
+        ) {
+            HStack(spacing: 10) {
+                if container.settings.apiCORSMode == "custom" {
+                    TextField(
+                        String(localized: "https://example.com, …"),
+                        text: Binding(get: { container.settings.apiCORSOrigins }, set: { container.setCORSOrigins($0) })
+                    )
+                    .frame(width: 220)
+                }
+                Picker("", selection: Binding(get: { container.settings.apiCORSMode }, set: { container.setCORSMode($0) })) {
+                    Text(String(localized: "Localhost only")).tag("localhost")
+                    Text(String(localized: "Off")).tag("off")
+                    Text(String(localized: "Custom list")).tag("custom")
+                }
+                .labelsHidden().frame(width: 140)
+            }
         }
     }
 

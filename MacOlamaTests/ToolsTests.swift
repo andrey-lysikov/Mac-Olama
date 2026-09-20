@@ -191,3 +191,24 @@ import Testing
         #expect(busy.fit == .tight && busy.warnings.contains("memory-busy"))
     }
 }
+
+@Suite struct ProcessBoxTests {
+    private func run(_ binary: String, _ args: [String], stdin: Data?) async throws -> String {
+        let box = ProcessBox(binary: URL(fileURLWithPath: binary), arguments: args, stdin: stdin)
+        return try await withCheckedThrowingContinuation { c in
+            do { try box.start(timeout: 20) { c.resume(returning: $0) } } catch { c.resume(throwing: error) }
+        }
+    }
+
+    // Both directions exceed the ~64 KB pipe buffer that used to deadlock the old implementation.
+    @Test func largeStdinAndStdoutDoNotDeadlock() async throws {
+        let payload = Data(repeating: UInt8(ascii: "x"), count: 256 << 10)
+        let echoed = try await run("/bin/cat", [], stdin: payload)
+        #expect(echoed.count == payload.count)
+    }
+
+    @Test func unboundedOutputIsTruncated() async throws {
+        let out = try await run("/usr/bin/yes", [], stdin: nil)
+        #expect(out.hasSuffix("…[output truncated]"))
+    }
+}

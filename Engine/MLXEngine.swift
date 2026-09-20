@@ -11,7 +11,6 @@ import Tokenizers
 import os
 
 // Written against mlx-swift-lm 3.31.4 sources (ModelContainer.prepare/generate, UserInput(chat:), Generation, ToolCall).
-// Not compiled yet: the first Mac build may still surface small mismatches.
 
 /// MLX inference engine. In-process, one model; generations are serialized by `EngineManager`.
 public actor MLXEngine: InferenceEngine {
@@ -50,6 +49,7 @@ public actor MLXEngine: InferenceEngine {
     public func load(_ model: ModelDescriptor, progress: @Sendable @escaping (Double) -> Void) async throws {
         if loadedModel?.id == model.id, container != nil { return }
         await unload()
+        try Task.checkCancellation()
         progress(0)
         let tokenizerLoader = LocalTokenizerLoader()
         do {
@@ -59,10 +59,14 @@ public actor MLXEngine: InferenceEngine {
                 case .llm: try await LLMModelFactory.shared.loadContainer(from: model.directory, using: tokenizerLoader)
                 case .vlm: try await VLMModelFactory.shared.loadContainer(from: model.directory, using: tokenizerLoader)
                 }
+            // A cancelled load must not publish its container over the one a newer load installs.
+            try Task.checkCancellation()
             if let cacheLimitBytes { Memory.cacheLimit = cacheLimitBytes }
             container = loaded
             loadedModel = model
             progress(1)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw EngineError.loadFailed(String(describing: error))
         }

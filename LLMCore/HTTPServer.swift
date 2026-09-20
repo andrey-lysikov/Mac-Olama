@@ -47,9 +47,46 @@ public struct HTTPResponse: Sendable {
     }
 
     static let reasons: [Int: String] = [
-        200: "OK", 204: "No Content", 400: "Bad Request", 401: "Unauthorized", 404: "Not Found", 405: "Method Not Allowed",
-        500: "Internal Server Error", 501: "Not Implemented", 503: "Service Unavailable",
+        200: "OK", 204: "No Content", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found",
+        405: "Method Not Allowed", 500: "Internal Server Error", 501: "Not Implemented", 503: "Service Unavailable",
     ]
+}
+
+/// Which browser origins may call the API; clients without an Origin header are unaffected.
+public enum CORSPolicy: Sendable, Equatable {
+    case disabled
+    case localhost
+    case custom([String])
+
+    public static func parse(mode: String, origins: String) -> CORSPolicy {
+        switch mode {
+        case "off": return .disabled
+        case "custom":
+            return .custom(origins.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+        default: return .localhost
+        }
+    }
+
+    /// Value to echo in Access-Control-Allow-Origin, or nil when the origin is not allowed.
+    public func allowedOrigin(for origin: String?) -> String? {
+        guard let origin, !origin.isEmpty else { return nil }
+        switch self {
+        case .disabled: return nil
+        case .localhost: return Self.isLocalhost(origin) ? origin : nil
+        case .custom(let list):
+            if list.contains("*") { return "*" }
+            return list.contains { $0.caseInsensitiveCompare(origin) == .orderedSame } ? origin : nil
+        }
+    }
+
+    /// Web pages must come from localhost; non-web schemes (app://, vscode-webview://, file://…)
+    /// are desktop clients a web page cannot impersonate, so they pass — as Ollama allows them.
+    static func isLocalhost(_ origin: String) -> Bool {
+        guard let url = URL(string: origin), let scheme = url.scheme?.lowercased() else { return false }
+        guard scheme == "http" || scheme == "https" else { return true }
+        guard let host = url.host?.lowercased() else { return false }
+        return host == "localhost" || host == "127.0.0.1"
+    }
 }
 
 public typealias HTTPHandler = @Sendable (HTTPRequest) async throws -> HTTPResponse
@@ -87,6 +124,12 @@ public final class HTTPServer: Sendable {
     private let errorMapper = Mutex<(@Sendable (Error) -> HTTPResponse)?>(nil)
     private let listenFD = Mutex<Int32>(-1)
     private let running = Mutex(false)
+    private let cors = Mutex<CORSPolicy>(.localhost)
+    private let activeConnections = Mutex(0)
+    /// Thread-per-connection needs a ceiling; beyond it new clients get an immediate 503.
+    private static let maxConnections = 64
+    /// A client that stops reading fails its send() after this instead of parking the thread forever.
+    private static let sendTimeoutSeconds = 30
 
     public init(configuration: Configuration) {
         self.configuration = configuration
@@ -97,6 +140,9 @@ public final class HTTPServer: Sendable {
     }
 
     public func setNotFound(_ handler: @escaping HTTPHandler) { notFound.withLock { $0 = handler } }
+
+    /// Applies immediately to new responses; no restart needed.
+    public func setCORSPolicy(_ policy: CORSPolicy) { cors.withLock { $0 = policy } }
 
     /// Maps errors thrown by handlers to responses (default: 500 with the error text).
     public func setErrorMapper(_ mapper: @escaping @Sendable (Error) -> HTTPResponse) { errorMapper.withLock { $0 = mapper } }
@@ -145,13 +191,26 @@ public final class HTTPServer: Sendable {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { accept(fd, $0, &len) }
             }
             guard client >= 0 else { if errno == EINTR { continue } else { break } }
+            if activeConnections.withLock({ $0 }) >= Self.maxConnections {
+                let reply = Data("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
+                _ = reply.withUnsafeBytes { send(client, $0.baseAddress, $0.count, 0) }
+                close(client)
+                continue
+            }
             var timeout = timeval()
             timeout.tv_sec = numericCast(configuration.keepAliveTimeoutSeconds)
             setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+            var sendTimeout = timeval()
+            sendTimeout.tv_sec = numericCast(Self.sendTimeoutSeconds)
+            setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &sendTimeout, socklen_t(MemoryLayout<timeval>.size))
             var one: Int32 = 1
             setsockopt(client, Int32(IPPROTO_TCP), TCP_NODELAY, &one, socklen_t(MemoryLayout<Int32>.size))
             setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
-            let thread = Thread { [self] in serve(client) }
+            activeConnections.withLock { $0 += 1 }
+            let thread = Thread { [self] in
+                serve(client)
+                activeConnections.withLock { $0 -= 1 }
+            }
             thread.name = "HTTPServer.connection"
             thread.start()
         }
@@ -165,10 +224,20 @@ public final class HTTPServer: Sendable {
         while running.withLock({ $0 }) {
             guard let request = try? connection.readRequest(maxBody: configuration.maxBodyBytes) else { return }
             let wantsClose = request.request.headers["connection"]?.lowercased() == "close" || request.version == "HTTP/1.0"
-            var response = handle(request.request)
+            let origin = request.request.headers["origin"]
+            let allowedOrigin = cors.withLock { $0 }.allowedOrigin(for: origin)
+            // Simple cross-origin POSTs skip the preflight; a disallowed browser origin must not reach
+            // state-changing routes at all, not merely lose the response.
+            var response: HTTPResponse
+            if origin != nil, allowedOrigin == nil, !["GET", "HEAD", "OPTIONS"].contains(request.request.method) {
+                response = HTTPResponse.text("{\"error\":\"origin not allowed\"}", status: 403, contentType: "application/json")
+            } else {
+                response = handle(request.request)
+            }
             var headers = response.headers
             headers["Server"] = configuration.serverName
-            headers["Access-Control-Allow-Origin"] = "*"
+            if origin != nil { headers["Vary"] = "Origin" }
+            if let allowedOrigin { headers["Access-Control-Allow-Origin"] = allowedOrigin }
             headers["Connection"] = wantsClose ? "close" : "keep-alive"
             response.headers = headers
             let ok = connection.write(response, isHead: request.request.method == "HEAD")
@@ -179,6 +248,10 @@ public final class HTTPServer: Sendable {
     /// Runs the async handler on a cooperative task and blocks this connection thread until it returns.
     private func handle(_ request: HTTPRequest) -> HTTPResponse {
         if request.method == "OPTIONS" {
+            let origin = request.headers["origin"]
+            guard origin == nil || cors.withLock({ $0 }).allowedOrigin(for: origin) != nil else {
+                return HTTPResponse(status: 403)
+            }
             return HTTPResponse(
                 status: 204,
                 headers: [
@@ -315,24 +388,107 @@ private final class Connection {
             head += "\r\n"
             guard writeRaw(Data(head.utf8)) else { return false }
             if isHead { return true }
-            let semaphore = DispatchSemaphore(value: 0)
-            let result = OSAllocatedUnfairLock(initialState: false)
-            let fd = self.fd
-            Task.detached {
-                var alive = true
+            // This thread does every send(); the producer task only generates and never blocks the pool.
+            let queue = ChunkQueue()
+            let producer = Task.detached {
                 do {
                     for try await chunk in stream where !chunk.isEmpty {
-                        guard Connection.writeChunk(fd, chunk) else { alive = false; break }
+                        guard await queue.push(chunk) else { return }
                     }
+                    queue.finish()
                 } catch {
-                    alive = false
+                    queue.fail()
                 }
-                if alive { alive = Connection.writeRaw(fd, Data("0\r\n\r\n".utf8)) }
-                result.withLock { [alive] in $0 = alive }
-                semaphore.signal()
             }
-            semaphore.wait()
-            return result.withLock { $0 }
+            let fd = self.fd
+            while true {
+                switch queue.pop() {
+                case .chunk(let data):
+                    guard Connection.writeChunk(fd, data) else {
+                        queue.cancel()
+                        producer.cancel()
+                        return false
+                    }
+                case .finished:
+                    return Connection.writeRaw(fd, Data("0\r\n\r\n".utf8))
+                case .failed:
+                    return false
+                }
+            }
+        }
+    }
+
+    /// Bounded hand-off between the async producer and the connection thread. The consumer blocks on a
+    /// condition (its own thread); the producer suspends with a short backoff when the queue is full.
+    final class ChunkQueue: @unchecked Sendable {
+        enum Next {
+            case chunk(Data)
+            case finished
+            case failed
+        }
+
+        private let condition = NSCondition()
+        private var chunks: [Data] = []
+        private var finished = false
+        private var failed = false
+        private var cancelled = false
+        private let capacity = 64
+
+        private enum PushAttempt {
+            case pushed, cancelled, full
+        }
+
+        /// False once the consumer cancelled: the producer must stop generating.
+        func push(_ data: Data) async -> Bool {
+            while true {
+                switch tryPush(data) {
+                case .pushed: return true
+                case .cancelled: return false
+                case .full:
+                    try? await Task.sleep(for: .milliseconds(20))
+                    if Task.isCancelled { return false }
+                }
+            }
+        }
+
+        // Locking lives in a synchronous helper: NSCondition.lock is unavailable in async contexts.
+        private func tryPush(_ data: Data) -> PushAttempt {
+            condition.lock()
+            defer { condition.unlock() }
+            if cancelled { return .cancelled }
+            guard chunks.count < capacity else { return .full }
+            chunks.append(data)
+            condition.signal()
+            return .pushed
+        }
+
+        func finish() { end { $0.finished = true } }
+        func fail() { end { $0.failed = true } }
+        func cancel() { end { $0.cancelled = true } }
+
+        private func end(_ mark: (ChunkQueue) -> Void) {
+            condition.lock()
+            mark(self)
+            condition.broadcast()
+            condition.unlock()
+        }
+
+        func pop() -> Next {
+            condition.lock()
+            defer { condition.unlock() }
+            // A producer that stalls without finishing must not park this connection thread forever.
+            let deadline = Date(timeIntervalSinceNow: 600)
+            while chunks.isEmpty, !finished, !failed, !cancelled {
+                if !condition.wait(until: deadline) {
+                    cancelled = true
+                    return .failed
+                }
+            }
+            if !chunks.isEmpty {
+                let first = chunks.removeFirst()
+                return .chunk(first)
+            }
+            return failed || cancelled ? .failed : .finished
         }
     }
 

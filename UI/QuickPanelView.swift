@@ -420,7 +420,7 @@ struct MessageView: View {
                             NoAnswerLine().padding(10)
                         } else {
                             // Same reading size as the chats window.
-                            MarkdownView(markdown: answer.isEmpty ? "…" : answer, baseFontSize: scaledText)
+                            MarkdownView(markdown: answer.isEmpty ? "…" : answer, baseFontSize: scaledText, streaming: message.isPartial)
                         }
                     }
                 }

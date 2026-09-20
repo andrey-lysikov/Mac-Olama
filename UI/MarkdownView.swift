@@ -13,14 +13,33 @@ import SwiftUI
 struct MarkdownView: View {
     let markdown: String
     var baseFontSize: CGFloat = 13
+    /// While a reply streams, only the completed prefix is parsed (cached per boundary); the open
+    /// tail is drawn as plain text every token, so smoothness costs one paragraph, not the document.
+    var streaming = false
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        let blocks = MarkdownBlocks.parse(markdown)
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(blocks) { block in render(block).padding(.leading, CGFloat(block.indent) * 16) }
+        if streaming {
+            let (stable, tail) = MarkdownStreamSplit.split(markdown)
+            VStack(alignment: .leading, spacing: 8) {
+                if !stable.isEmpty { blocksView(MarkdownCache.blocks(for: String(stable))) }
+                if !tail.isEmpty {
+                    Text(String(tail)).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .font(.system(size: baseFontSize))
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                blocksView(MarkdownCache.blocks(for: markdown))
+            }
+            .font(.system(size: baseFontSize))
         }
-        .font(.system(size: baseFontSize))
+    }
+
+    @ViewBuilder
+    private func blocksView(_ blocks: [MarkdownBlocks.Block]) -> some View {
+        ForEach(blocks) { block in render(block).padding(.leading, CGFloat(block.indent) * 16) }
     }
 
     @ViewBuilder
@@ -82,6 +101,55 @@ extension MarkdownView {
             styled.insert(arrow, at: range.upperBound)
         }
         return FormulaRenderer.text(styled, fontSize: size ?? baseFontSize, dark: colorScheme == .dark)
+    }
+}
+
+/// Parse results keyed by content: transcripts re-render on every store change and must not re-parse
+/// every message; a finished message is parsed once per app run.
+@MainActor
+enum MarkdownCache {
+    private final class Entry {
+        let blocks: [MarkdownBlocks.Block]
+        init(_ blocks: [MarkdownBlocks.Block]) { self.blocks = blocks }
+    }
+
+    private static let cache: NSCache<NSString, Entry> = {
+        let cache = NSCache<NSString, Entry>()
+        cache.totalCostLimit = 8 << 20  // cost is source length; parsed blocks are a few times that
+        return cache
+    }()
+
+    static func blocks(for text: String) -> [MarkdownBlocks.Block] {
+        let key = text as NSString
+        if let hit = cache.object(forKey: key) { return hit.blocks }
+        let parsed = MarkdownBlocks.parse(text)
+        cache.setObject(Entry(parsed), forKey: key, cost: text.utf16.count)
+        return parsed
+    }
+}
+
+/// Cuts a streaming reply at the last blank line outside a code fence: everything before it is final
+/// and safe to parse; the rest is still being typed.
+enum MarkdownStreamSplit {
+    static func split(_ text: String) -> (stable: Substring, tail: Substring) {
+        var fence: Character? = nil
+        var boundary = text.startIndex
+        var index = text.startIndex
+        while let newline = text[index...].firstIndex(of: "\n") {
+            let line = text[index..<newline].drop { $0 == " " }
+            if line.hasPrefix("```") || line.hasPrefix("~~~") {
+                // A fence closes only with its own marker, so a ~~~ inside a ``` block stays content.
+                if let open = fence {
+                    if line.first == open { fence = nil }
+                } else {
+                    fence = line.first
+                }
+            }
+            let next = text.index(after: newline)
+            if fence == nil, line.isEmpty { boundary = next }
+            index = next
+        }
+        return (text[..<boundary], text[boundary...])
     }
 }
 

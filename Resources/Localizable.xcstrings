@@ -365,6 +365,9 @@
         }
       }
     },
+    "Browser access" : {
+
+    },
     "By Link" : {
       "localizations" : {
         "ru" : {
@@ -414,6 +417,12 @@
           }
         }
       }
+    },
+    "Caps how fast model files are downloaded" : {
+
+    },
+    "Chat history is unavailable (%@). New chats will not be saved. A backup of the database was made." : {
+
     },
     "Chats" : {
       "localizations" : {
@@ -646,6 +655,9 @@
           }
         }
       }
+    },
+    "Custom list" : {
+
     },
     "Cut" : {
       "localizations" : {
@@ -1028,6 +1040,9 @@
         }
       }
     },
+    "How many files of one model are fetched at once" : {
+
+    },
     "How many searches and pages the model may take before it answers" : {
       "localizations" : {
         "ru" : {
@@ -1037,6 +1052,9 @@
           }
         }
       }
+    },
+    "https://example.com, …" : {
+
     },
     "Hub" : {
       "localizations" : {
@@ -1160,6 +1178,9 @@
         }
       }
     },
+    "Localhost only" : {
+
+    },
     "Looking at %@…" : {
       "localizations" : {
         "ru" : {
@@ -1263,6 +1284,9 @@
           }
         }
       }
+    },
+    "Model downloads" : {
+
     },
     "Model for this chat" : {
       "localizations" : {
@@ -1565,6 +1589,9 @@
         }
       }
     },
+    "Off" : {
+
+    },
     "Older" : {
       "localizations" : {
         "ru" : {
@@ -1684,6 +1711,9 @@
           }
         }
       }
+    },
+    "Parallel files" : {
+
     },
     "Paste" : {
       "localizations" : {
@@ -2106,6 +2136,9 @@
         }
       }
     },
+    "Show Backup in Finder" : {
+
+    },
     "Show how this model thinks" : {
       "localizations" : {
         "ru" : {
@@ -2135,6 +2168,9 @@
           }
         }
       }
+    },
+    "Speed limit" : {
+
     },
     "Starting…" : {
       "localizations" : {
@@ -2257,6 +2293,9 @@
           }
         }
       }
+    },
+    "The chat database was damaged and has been reset (%@). The old one was backed up." : {
+
     },
     "The chat shows how this model thinks" : {
       "localizations" : {
@@ -2418,6 +2457,9 @@
           }
         }
       }
+    },
+    "The repository lists an unsafe file path (%@) and cannot be installed." : {
+
     },
     "The server did not answer in %lld s. Check the address and port." : {
       "localizations" : {
@@ -2639,6 +2681,9 @@
         }
       }
     },
+    "Unlimited" : {
+
+    },
     "Unload Now" : {
       "localizations" : {
         "ru" : {
@@ -2788,6 +2833,9 @@
           }
         }
       }
+    },
+    "Which web pages may call the API from a browser (CORS)" : {
+
     },
     "Won't fit: needs about %@, but %@ can give a model at most %@." : {
       "localizations" : {

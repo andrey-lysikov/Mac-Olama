@@ -4,6 +4,7 @@
 import AppKit
 import Foundation
 import PDFKit
+import Synchronization
 import Vision
 
 // Local tools: read/search files inside user-approved folders and run user-made Shortcuts.
@@ -376,35 +377,108 @@ public struct ShortcutToolProvider: ToolProvider {
     }
 }
 
+/// Shared output buffer: a reference type, so the pipe callbacks can hold it without copying the non-copyable Mutex.
+private final class OutputBuffer: Sendable {
+    private let storage = Mutex(Data())
+
+    /// Appends a chunk and reports the total size collected so far.
+    func append(_ chunk: Data) -> Int {
+        storage.withLock { data in
+            data.append(chunk)
+            return data.count
+        }
+    }
+
+    /// Appends the final drain and returns everything collected.
+    func finish(with rest: Data) -> Data {
+        storage.withLock { data in
+            data.append(rest)
+            return data
+        }
+    }
+}
+
 /// Owns a Process and its pipes; @unchecked because Process is not Sendable but is only touched from here.
+/// Output is drained concurrently so a chatty child never deadlocks on a full pipe; stdin is written after launch.
 final class ProcessBox: @unchecked Sendable {
+    static let maxOutputBytes = 2 << 20
+
     private let process = Process()
     private let output = Pipe()
+    private let stdin: Data?
+    private let collected = OutputBuffer()
+    private let terminated = Mutex(false)
 
     init(binary: URL, arguments: [String], stdin: Data?) {
         process.executableURL = binary
         process.arguments = arguments
         process.standardOutput = output
         process.standardError = output
-        if let stdin {
-            let inPipe = Pipe()
-            process.standardInput = inPipe
-            inPipe.fileHandleForWriting.write(stdin)
-            try? inPipe.fileHandleForWriting.close()
-        }
+        self.stdin = stdin
+        if stdin != nil { process.standardInput = Pipe() }
     }
 
-    func start(timeout: TimeInterval, completion: @escaping @Sendable (String) -> Void) throws {
+   func start(timeout: TimeInterval, completion: @escaping @Sendable (String) -> Void) throws {
+        // Cancelled before launch: the child must not run at all, and the caller must still get an answer.
+        if terminated.withLock({ $0 }) {
+            completion("")
+            return
+        }
         let output = self.output
+        let collected = self.collected
+        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            if collected.append(chunk) > Self.maxOutputBytes { self?.terminate() }
+        }
         process.terminationHandler = { _ in
-            let data = output.fileHandleForReading.readDataToEndOfFile()
-            completion(String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+            let reader = output.fileHandleForReading
+            reader.readabilityHandler = nil
+            // Non-blocking drain: a grandchild inheriting the write end would make readToEnd() wait forever.
+            _ = fcntl(reader.fileDescriptor, F_SETFL, O_NONBLOCK)
+            var rest = Data()
+            var buffer = [UInt8](repeating: 0, count: 64 << 10)
+            while true {
+                let n = read(reader.fileDescriptor, &buffer, buffer.count)
+                guard n > 0 else { break }
+                rest.append(contentsOf: buffer[0..<n])
+            }
+            let data = collected.finish(with: rest)
+            var text = String(decoding: data.prefix(Self.maxOutputBytes), as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if data.count > Self.maxOutputBytes { text += "\n…[output truncated]" }
+            completion(text)
         }
         try process.run()
+        if let stdin, let pipe = process.standardInput as? Pipe {
+            let writer = pipe.fileHandleForWriting
+            _ = fcntl(writer.fileDescriptor, F_SETNOSIGPIPE, 1)
+            DispatchQueue.global().async {
+                stdin.withUnsafeBytes { raw in
+                    var offset = 0
+                    while offset < raw.count {
+                        let n = write(writer.fileDescriptor, raw.baseAddress! + offset, raw.count - offset)
+                        if n <= 0 { break }
+                        offset += n
+                    }
+                }
+                try? writer.close()
+            }
+        }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [self] in terminate() }
     }
 
+    /// SIGTERM now; SIGKILL two seconds later if the child ignored it.
     func terminate() {
-        if process.isRunning { process.terminate() }
+        terminated.withLock { $0 = true }
+        guard process.isRunning else { return }
+        process.terminate()
+        let process = self.process
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        }
     }
 }

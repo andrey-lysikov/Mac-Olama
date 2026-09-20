@@ -178,6 +178,17 @@ import Testing
     @Test func fetchBlocksLocalHosts() async throws {
         #expect(try await call("fetch_url", #"{"url":"http://127.0.0.1:11434/api/tags"}"#) == "error: host is not allowed")
         #expect(try await call("fetch_url", #"{"url":"http://printer.local/admin"}"#) == "error: host is not allowed")
+        // A literal private IP is caught by resolution, not by the blocked-host list.
+        #expect(try await call("fetch_url", #"{"url":"http://10.0.0.5/router"}"#) == "error: host is not allowed")
+        #expect(try await call("fetch_url", #"{"url":"http://192.168.1.1/"}"#) == "error: host is not allowed")
+    }
+
+    @Test func resolutionClassifiesLiteralAddresses() async {
+        #expect(await HTTP.resolvesToLocal("127.0.0.1"))
+        #expect(await HTTP.resolvesToLocal("::1"))  // v6 loopback is local like any loopback
+        #expect(await HTTP.resolvesToLocal("169.254.10.1"))
+        #expect(await HTTP.resolvesToLocal("localhost"))
+        #expect(!(await HTTP.resolvesToLocal("93.184.216.34")))
     }
 
     @Test func searchNeedsAQuery() async throws {

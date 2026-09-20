@@ -125,6 +125,7 @@ public enum HubError: Error, Equatable {
     case checksumMismatch(file: String)
     case cancelled
     case insufficientDiskSpace(requiredBytes: Int64, availableBytes: Int64)
+    case unsafePath(String)
 }
 
 // HubClient

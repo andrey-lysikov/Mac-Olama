@@ -35,9 +35,14 @@ enum CodeHighlighter {
             piece.foregroundColor = Color(nsColor: color)
             out.append(piece)
         }
+        // Allocation-free: this runs for every candidate position of a block, per token during streaming.
         func starts(_ token: String, at index: Int) -> Bool {
-            let t = Array(token)
-            return index + t.count <= c.count && Array(c[index..<index + t.count]) == t
+            var j = index
+            for ch in token {
+                guard j < c.count, c[j] == ch else { return false }
+                j += 1
+            }
+            return true
         }
         while i < c.count {
             if syntax.lineComments.contains(where: { starts($0, at: i) }) {

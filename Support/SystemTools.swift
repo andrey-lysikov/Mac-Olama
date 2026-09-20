@@ -209,6 +209,7 @@ public struct NetworkToolProvider: ToolProvider {
         var raw = (args["host"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if action == "http", let url = URL(string: raw), let host = url.host() { raw = host }
         guard let host = Self.validHost(raw) else { return "error: host must be a domain name or an IP address" }
+        if host.contains(":") { return "error: IPv6 addresses are not supported" }
         if Self.isLocal(host), let confirmation {
             let allowed = await confirmation.confirm(
                 title: String(localized: "Check a local address?"), detail: "\(action) \(host)")
@@ -217,13 +218,11 @@ public struct NetworkToolProvider: ToolProvider {
         let text: String
         switch action {
         case "ping":
-            text = try await ToolProcess.run(host.contains(":") ? "/sbin/ping6" : "/sbin/ping", ["-c", "4", host], timeout: 20)
+            text = try await ToolProcess.run("/sbin/ping", ["-c", "4", host], timeout: 20)
         case "traceroute":
-            text = try await ToolProcess.run(
-                host.contains(":") ? "/usr/sbin/traceroute6" : "/usr/sbin/traceroute", ["-m", "20", "-q", "1", "-w", "2", host], timeout: 60
-            )
+            text = try await ToolProcess.run("/usr/sbin/traceroute", ["-m", "20", "-q", "1", "-w", "2", host], timeout: 60)
         case "dns":
-            text = try await ToolProcess.run("/usr/bin/dig", ["+short", "+time=3", "+tries=1", host, "A", host, "AAAA"], timeout: 15)
+            text = try await ToolProcess.run("/usr/bin/dig", ["+short", "+time=3", "+tries=1", host, "A"], timeout: 15)
         case "port":
             guard let port = args["port"] as? Int, (1...65535).contains(port) else { return "error: port must be 1–65535" }
             text = try await ToolProcess.run("/usr/bin/nc", ["-z", "-v", "-G", "5", "-w", "5", host, String(port)], timeout: 15)
@@ -235,7 +234,8 @@ public struct NetworkToolProvider: ToolProvider {
         return WebToolProvider.wrap(text.isEmpty ? "No output." : text, source: "network_check: \(action) \(host)")
     }
 
-    /// A plain host name or IPv4/IPv6 address: letters, digits, dots, hyphens, colons; never a leading dash (an option).
+    /// A plain host name or IPv4 address: letters, digits, dots, hyphens; never a leading dash (an option).
+    /// Colons survive validation only to be rejected explicitly as unsupported IPv6.
     static func validHost(_ host: String) -> String? {
         let host = host.hasPrefix("[") && host.hasSuffix("]") ? String(host.dropFirst().dropLast()) : host
         guard !host.isEmpty, host.count <= 253, !host.hasPrefix("-"),
