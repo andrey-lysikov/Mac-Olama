@@ -10,13 +10,17 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.macolama.app</string>
+			<string>ru.lysnet.macolama</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>macolama</string>
 			</array>
 		</dict>
 	</array>
+	<key>LSRequiresNativeExecution</key>
+	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Mac-Olama needs this to reach a model served on your local network and to run network checks you ask for.</string>
 	<key>NSServices</key>
 	<array>
 		<dict>

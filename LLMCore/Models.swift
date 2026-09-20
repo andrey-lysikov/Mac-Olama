@@ -60,13 +60,15 @@ public struct ModelDescriptor: Codable, Sendable, Hashable, Identifiable {
     public var quantization: String?
     public var supportsTools: Bool
     public var downloadedAt: Date
+    /// What one token costs in the attention cache; nil when `config.json` does not say (a model served over the API).
+    public var kvCache: KVCacheProfile?
     /// Repository the weights were made from (`google/gemma-4-12B-it`), as the hub declares it; nil when unknown.
     public var baseModel: String?
 
     public init(
         id: String, name: String, repoID: String, source: ModelSource = .huggingFace, kind: ModelKind, directory: URL,
         sizeBytes: Int64, contextLength: Int? = nil, quantization: String? = nil,
-        supportsTools: Bool = false, downloadedAt: Date = .now, baseModel: String? = nil
+        supportsTools: Bool = false, downloadedAt: Date = .now, kvCache: KVCacheProfile? = nil, baseModel: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -79,6 +81,7 @@ public struct ModelDescriptor: Codable, Sendable, Hashable, Identifiable {
         self.quantization = quantization
         self.supportsTools = supportsTools
         self.downloadedAt = downloadedAt
+        self.kvCache = kvCache
         self.baseModel = baseModel
     }
 
@@ -93,6 +96,59 @@ public struct ModelDescriptor: Codable, Sendable, Hashable, Identifiable {
     /// Short name for API/menu: last repo component, lowercased.
     public static func shortName(forRepo repoID: String) -> String {
         (repoID.split(separator: "/").last.map(String.init) ?? repoID).lowercased()
+    }
+}
+
+// KVCacheProfile
+
+/// What the model's attention cache costs per token, read from `config.json`. Layers differ: plain attention grows with
+/// the context, sliding-window layers stop at their window, and linear (recurrent) layers keep a constant state.
+public struct KVCacheProfile: Codable, Sendable, Equatable, Hashable {
+    public var bytesPerTokenPerLayer: Int
+    public var fullLayers: Int
+    public var slidingLayers: Int
+    public var window: Int
+
+    public init(bytesPerTokenPerLayer: Int, fullLayers: Int, slidingLayers: Int, window: Int) {
+        self.bytesPerTokenPerLayer = bytesPerTokenPerLayer
+        self.fullLayers = fullLayers
+        self.slidingLayers = slidingLayers
+        self.window = window
+    }
+
+    public func bytes(context: Int) -> Int64 {
+        let full = Int64(fullLayers) * Int64(context)
+        let sliding = Int64(slidingLayers) * Int64(min(context, window))
+        return (full + sliding) * Int64(bytesPerTokenPerLayer)
+    }
+
+    /// `config.json` of an MLX model: layer count, KV heads, head size, and how the layers attend.
+    public static func read(configJSON data: Data) -> KVCacheProfile? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let text = root["text_config"] as? [String: Any] ?? root
+        func int(_ key: String) -> Int? { (text[key] as? NSNumber)?.intValue ?? (root[key] as? NSNumber)?.intValue }
+        guard let layers = int("num_hidden_layers"), layers > 0 else { return nil }
+        let heads = int("num_attention_heads")
+        guard let kvHeads = int("num_key_value_heads") ?? heads, kvHeads > 0 else { return nil }
+        guard let headDim = int("head_dim") ?? heads.flatMap({ h in int("hidden_size").map { $0 / max(h, 1) } }), headDim > 0 else {
+            return nil
+        }
+        // Keys and values, in the 16-bit type MLX keeps the cache in.
+        let perLayer = 2 * kvHeads * headDim * 2
+        let window = int("sliding_window") ?? 0
+        var full = layers
+        var sliding = 0
+        if let types = (text["layer_types"] as? [String]) ?? (root["layer_types"] as? [String]) {
+            full = types.filter { $0.contains("full") }.count
+            sliding = window > 0 ? types.filter { $0.contains("sliding") }.count : 0
+            // Linear or recurrent layers (Qwen 3.5/3.6, Mamba) hold a constant state: they are simply not counted.
+            if full == 0, sliding == 0 { full = types.filter { !$0.contains("linear") && !$0.contains("mamba") }.count }
+        } else if window > 0, let pattern = int("sliding_window_pattern"), pattern > 1 {
+            full = max(1, layers / pattern)
+            sliding = layers - full
+        }
+        guard full + sliding > 0 else { return nil }
+        return KVCacheProfile(bytesPerTokenPerLayer: perLayer, fullLayers: full, slidingLayers: sliding, window: max(window, 1))
     }
 }
 
@@ -164,6 +220,12 @@ public struct ModelManifest: Codable, Sendable, Equatable {
         try data.write(to: directory.appendingPathComponent(Self.fileName), options: .atomic)
     }
 
+    /// Read from the model's own `config.json` on every refresh, so models downloaded by older builds get it too.
+    static func kvCache(in directory: URL) -> KVCacheProfile? {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent("config.json")) else { return nil }
+        return KVCacheProfile.read(configJSON: data)
+    }
+
     /// Tool calling is a property of the model's own chat template, so ask the model's files instead of a list of names:
     /// a template that mentions `tools` renders tool definitions, one that does not would silently drop them.
     public static func templateSupportsTools(in directory: URL) -> Bool {
@@ -183,7 +245,7 @@ public struct ModelManifest: Codable, Sendable, Equatable {
             repoID: repoID, source: source ?? .huggingFace, kind: kind, directory: directory,
             sizeBytes: totalSizeBytes, contextLength: contextLength, quantization: quantization,
             supportsTools: remote ? supportsTools : Self.templateSupportsTools(in: directory), downloadedAt: downloadedAt,
-            baseModel: baseModel
+            kvCache: remote ? nil : Self.kvCache(in: directory), baseModel: baseModel
         )
     }
 }
@@ -219,7 +281,7 @@ public struct ModelOwners: Sendable, Hashable {
 // RemoteEndpoint
 
 /// `remote.json` next to the manifest of a remote model: where the server is and which API it speaks.
-/// The optional token lives in the Keychain, never in this file.
+/// The optional token lives in the settings (`RemoteTokens`), never in this file.
 public struct RemoteEndpoint: Codable, Sendable, Equatable {
     public enum API: String, Codable, Sendable {
         /// Ollama's own API (`/api/chat`).
@@ -261,8 +323,6 @@ public struct RemoteEndpoint: Codable, Sendable, Equatable {
         return "remote--\(safe(hostAndPort))--\(safe(model))"
     }
 
-    /// Keychain account of the optional token.
-    public static func tokenAccount(modelID: String) -> String { "remote:\(modelID)" }
 }
 
 /// Shared JSON settings for all project files (ISO-8601 dates, pretty output).

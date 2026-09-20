@@ -190,7 +190,9 @@ public struct ModelScopeClient: Sendable {
     // Requests
 
     private static func request(_ url: URL) -> URLRequest {
-        var r = URLRequest(url: url)
+        // Shorter than the 60 s default, as everywhere else here: the hub is reachable from some networks only, and a
+        // search that cannot get through has to say so rather than spin for a minute.
+        var r = URLRequest(url: url, timeoutInterval: 10)
         r.setValue("application/json", forHTTPHeaderField: "Accept")
         r.setValue("Mac-Olama/0.1", forHTTPHeaderField: "User-Agent")
         return r

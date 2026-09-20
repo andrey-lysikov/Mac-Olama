@@ -4,6 +4,9 @@
 import AppKit
 import SwiftUI
 
+// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
+// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
+
 // A small lexer instead of a highlighting package: comments, strings, numbers, keywords, types and attributes cover
 // what makes code readable in a chat. Colours are system colours, so dark mode and accessibility settings apply.
 

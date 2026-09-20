@@ -90,6 +90,8 @@ public struct HubModelClassification: Sendable, Equatable {
     public var modelType: String?
     public var contextLength: Int?
     public var quantization: String?
+    /// What a token costs in the attention cache, from the same config.
+    public var kvCache: KVCacheProfile?
 
     public static func classify(configJSON: Data) -> HubModelClassification {
         guard let obj = try? JSONSerialization.jsonObject(with: configJSON) as? [String: Any] else {
@@ -110,7 +112,8 @@ public struct HubModelClassification: Sendable, Equatable {
             quant = "\(bits)-bit"
         }
         return HubModelClassification(
-            kind: kind, architectures: architectures, modelType: modelType, contextLength: context, quantization: quant)
+            kind: kind, architectures: architectures, modelType: modelType, contextLength: context, quantization: quant,
+            kvCache: KVCacheProfile.read(configJSON: configJSON))
     }
 }
 

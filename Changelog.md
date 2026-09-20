@@ -6,6 +6,7 @@
 - Check models and application for update
 - Update app icon
 - Remove Ollama and add ModelScope as models hub
+- Remove usage system keychain
 
 ## 0.1
 

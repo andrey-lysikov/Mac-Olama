@@ -4,6 +4,9 @@
 import AppKit
 import SwiftUI
 
+// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
+// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
+
 // Markdown rendering: `MarkdownBlocks` (swift-markdown) turns the text into blocks, SwiftUI draws headers, lists, quotes,
 // code blocks and tables. Nesting inside lists shows as a leading indent.
 

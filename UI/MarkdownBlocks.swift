@@ -4,13 +4,16 @@
 import Foundation
 import Markdown
 
+// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
+// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
+
 // swift-markdown (cmark-gfm) parses the reply into a tree; this file flattens it into blocks for `MarkdownView`.
 // Kept free of SwiftUI: both modules export `Text`, `Image` and `Link`.
 
 /// Marks the run that stands for a formula; `MarkdownView` draws it with SwiftMath instead of its placeholder text.
 enum FormulaAttribute: AttributedStringKey {
     typealias Value = Formula
-    static let name = "com.macolama.formula"
+    static let name = "ru.lysnet.macolama.formula"
 }
 
 /// Splits a Markdown string into renderable blocks; inline styles become Foundation attributes that SwiftUI `Text` draws.

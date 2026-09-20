@@ -5,6 +5,9 @@ import AppKit
 import SwiftMath
 import SwiftUI
 
+// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
+// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
+
 // SwiftMath typesets LaTeX into vector images; inline ones sit on the text baseline inside SwiftUI `Text`, so formulas
 // flow with paragraphs, list items and table cells. A formula SwiftMath cannot parse falls back to `MathText.unicode`.
 

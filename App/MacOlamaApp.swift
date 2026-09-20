@@ -45,6 +45,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         container.start()
     }
 
+    /// ⌘Q closes the chats window instead of quitting: the app lives in the menu bar, and leaving it is the "Quit" item
+    /// of the status menu. With no window open it does quit.
+    @objc private func closeWindowOrQuit() {
+        if let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.styleMask.contains(.titled) }) {
+            window.performClose(nil)
+        } else {
+            NSApp.terminate(nil)
+        }
+    }
+
     /// An agent app gets no main menu for free, and without an Edit menu text fields lose ⌘A/⌘C/⌘V/⌘X/⌘Z.
     /// The menu bar shows it only while the chats window is open (activation policy `.regular`).
     private func installMainMenu() {
@@ -61,7 +71,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if shift { mi.keyEquivalentModifierMask = [.command, .shift] }
             return mi
         }
-        add("Mac-Olama", [item(String(localized: "Quit"), #selector(NSApplication.terminate(_:)), "q")])
+        let quit = item(String(localized: "Close Window"), #selector(closeWindowOrQuit), "q")
+        quit.target = self
+        add("Mac-Olama", [quit])
         add(String(localized: "File"), [item(String(localized: "Close Window"), #selector(NSWindow.performClose(_:)), "w")])
         add(
             String(localized: "Edit"),

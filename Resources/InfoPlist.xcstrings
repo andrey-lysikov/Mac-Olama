@@ -49,6 +49,24 @@
         }
       },
       "shouldTranslate" : false
+    },
+    "NSLocalNetworkUsageDescription" : {
+      "comment" : "Local network usage",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama needs this to reach a model served on your local network and to run network checks you ask for."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нужно, чтобы обращаться к модели на сервере в вашей локальной сети и выполнять сетевые проверки по вашему запросу."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

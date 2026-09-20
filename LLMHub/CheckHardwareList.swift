@@ -34,6 +34,23 @@ public struct HardwareProfile: Sendable, Equatable {
         )
     }
 
+    /// Memory that could be handed out right now (free, inactive and purgeable pages): a model competes with whatever
+    /// is already running, so the wired limit alone says too little.
+    public static func availableMemoryBytes() -> UInt64 {
+        var stats = vm_statistics64_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &stats) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return 0 }
+        let pages = UInt64(stats.free_count) + UInt64(stats.inactive_count) + UInt64(stats.purgeable_count)
+        var pageSize = vm_size_t()
+        guard host_page_size(mach_host_self(), &pageSize) == KERN_SUCCESS else { return 0 }
+        return pages * UInt64(pageSize)
+    }
+
     static func parse(chip: String) -> (Int?, Tier) {
         let lower = chip.lowercased()
         var family: Int?
@@ -101,23 +118,43 @@ public struct ModelFitReport: Sendable, Equatable {
     public var stars: Int  // 1...5
     public var estimatedTokensPerSecond: Double
     public var memoryAfterLoadBytes: Int64
+    /// Split of `needed`, for the tooltip: weights, attention cache at the context used for the estimate, fixed headroom.
+    public var weightsBytes: Int64 = 0
+    public var kvBytes: Int64 = 0
+    public var contextTokens: Int = 0
     public var warnings: [String]
 
-    public static func evaluate(modelBytes: Int64, contextLength: Int?, hardware: HardwareProfile) -> ModelFitReport {
-        // KV cache: ~0.125 MB/token for a 7–8B model with grouped-query attention in fp16, scaled by model size.
-        // The earlier 0.5 MB/token (no GQA) made every model above ~5 GB look like it would not fit.
-        let kvPerToken = 0.125 * 1024 * 1024 * max(0.3, Double(modelBytes) / (4.7 * 1024 * 1024 * 1024))
-        let kv = Int64(kvPerToken * Double(min(contextLength ?? 8192, 8192)))
+    /// `kvCache` comes from the model's own `config.json`; without it the old rule of thumb is used. `availableBytes` is
+    /// what the machine can hand out right now (0 = do not take it into account).
+    public static func evaluate(
+        modelBytes: Int64, contextLength: Int?, hardware: HardwareProfile, kvCache: KVCacheProfile? = nil,
+        availableBytes: UInt64 = 0
+    ) -> ModelFitReport {
+        let context = min(contextLength ?? 8192, 8192)
+        let kv: Int64
+        if let kvCache {
+            kv = kvCache.bytes(context: context)
+        } else {
+            // Rule of thumb: ~0.125 MB/token for a 7–8B model with grouped-query attention in fp16, scaled by model size.
+            kv = Int64(0.125 * 1024 * 1024 * max(0.3, Double(modelBytes) / (4.7 * 1024 * 1024 * 1024)) * Double(context))
+        }
         let needed = modelBytes + kv + Int64(1.0 * 1024 * 1024 * 1024)
         let limit = Int64(hardware.wiredLimitBytes)
+        // What is free right now can be the tighter of the two: other apps hold memory the model would need.
+        let free = availableBytes > 0 ? min(limit, Int64(availableBytes)) : limit
         let remaining = Int64(hardware.memoryBytes) - needed
         let tps = hardware.bandwidthGBs * 1e9 / Double(max(modelBytes, 1)) * 0.7
         var warnings: [String] = []
         let fit: Fit
         if needed > limit {
-            fit = .no; warnings.append("not-enough-memory")
+            fit = .no
+            warnings.append("not-enough-memory")
+        } else if needed > free {
+            fit = .tight
+            warnings.append("memory-busy")
         } else if needed > Int64(Double(limit) * 0.85) {
-            fit = .tight; warnings.append("tight-memory")
+            fit = .tight
+            warnings.append("tight-memory")
         } else {
             fit = .comfortable
         }
@@ -130,6 +167,8 @@ public struct ModelFitReport: Sendable, Equatable {
         case (_, let t) where t >= 8: stars = 3
         default: stars = 2
         }
-        return ModelFitReport(fit: fit, stars: stars, estimatedTokensPerSecond: tps, memoryAfterLoadBytes: remaining, warnings: warnings)
+        return ModelFitReport(
+            fit: fit, stars: stars, estimatedTokensPerSecond: tps, memoryAfterLoadBytes: remaining, weightsBytes: modelBytes,
+            kvBytes: kv, contextTokens: context, warnings: warnings)
     }
 }

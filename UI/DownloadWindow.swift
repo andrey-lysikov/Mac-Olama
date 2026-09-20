@@ -5,6 +5,9 @@ import AppKit
 import Observation
 import SwiftUI
 
+// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
+// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
+
 // DownloadViewModel
 
 /// Search across hubs for the models window. Downloads themselves are owned by AppContainer.
@@ -75,6 +78,8 @@ final class DownloadViewModel {
         var detailsLoaded = false
         var isMLX = true
         var lastModified: Date?
+        /// From the repository's config.json, once the details have loaded: the exact cost of the attention cache.
+        var kvCache: KVCacheProfile?
     }
 
     enum Verdict: Equatable {
@@ -295,6 +300,7 @@ final class DownloadViewModel {
             rows[i].quantization = classification?.quantization
             rows[i].kind = classification?.kind
             rows[i].contextLength = classification?.contextLength
+            rows[i].kvCache = classification?.kvCache
             rows[i].detailsLoaded = true
         }
     }
@@ -304,6 +310,7 @@ final class DownloadViewModel {
         row.quantization = classification?.quantization
         row.kind = classification?.kind
         row.contextLength = classification?.contextLength
+        row.kvCache = classification?.kvCache
         row.detailsLoaded = true
     }
 
@@ -333,7 +340,9 @@ final class DownloadViewModel {
         guard row.detailsLoaded else { return .unknown(String(localized: "Checking size and architecture…")) }
         guard let bytes = row.sizeBytes, bytes > 0 else { return .unknown(String(localized: "Model size is unknown.")) }
         let hardware = container.hardware
-        let fit = ModelFitReport.evaluate(modelBytes: bytes, contextLength: row.contextLength, hardware: hardware)
+        let fit = ModelFitReport.evaluate(
+            modelBytes: bytes, contextLength: row.contextLength, hardware: hardware, kvCache: row.kvCache,
+            availableBytes: HardwareProfile.availableMemoryBytes())
         let machine = "\(hardware.chipName), \(hardware.memoryGB) GB"
         let needed = ByteCountFormatter.string(fromByteCount: Int64(hardware.memoryBytes) - fit.memoryAfterLoadBytes, countStyle: .memory)
         let limit = ByteCountFormatter.string(fromByteCount: Int64(hardware.wiredLimitBytes), countStyle: .memory)
@@ -349,6 +358,14 @@ final class DownloadViewModel {
                 String(localized: "Not an MLX build: it may be large and may fail to load. Prefer an MLX conversion of this model."))
         }
         let speed = Int(fit.estimatedTokensPerSecond)
+        if fit.warnings.contains("memory-busy") {
+            let free = ByteCountFormatter.string(fromByteCount: Int64(HardwareProfile.availableMemoryBytes()), countStyle: .memory)
+            return .unknown(
+                String(
+                    localized:
+                        "Would fit (about \(needed) of \(limit)), but only \(free) is free right now: close some apps or expect swapping."
+                ))
+        }
         if fit.fit == .tight {
             return .unknown(
                 String(localized: "Fits, but tightly: needs about \(needed) of \(limit); expect ~\(speed) tok/s and little memory left."))
@@ -365,17 +382,99 @@ final class DownloadViewModel {
 
 // ModelLibraryView
 
-/// Model library, shown in the detail area of the chats window: hub search in the toolbar, results on top,
-/// and a permanent list of downloaded models at the bottom with running downloads above them.
-struct ModelLibraryView: View {
+// ModelLibraryHeader
+
+/// The controls that used to sit in the window's toolbar: hub, search, the MLX checkbox and the token key. The chats
+/// window draws them itself in its title row, so nothing of them is ever folded into a "»" overflow menu.
+struct ModelLibraryHeader: View {
+    @Bindable var viewModel: DownloadViewModel
     @Environment(AppContainer.self) private var container
-    @State private var viewModel: DownloadViewModel?
-    @State private var showsSettings = false
+    @State private var showsToken = false
 
     var body: some View {
-        Group {
-            if let viewModel { content(viewModel) } else { ProgressView().onAppear { viewModel = DownloadViewModel(container: container) } }
+        HStack(spacing: 10) {
+            Picker(String(localized: "Hub"), selection: $viewModel.hub) {
+                ForEach(DownloadViewModel.Hub.allCases) { hub in
+                    Label {
+                        Text(verbatim: hub.title)
+                    } icon: {
+                        hub.icon
+                    }
+                    .labelStyle(.titleAndIcon)
+                    .tag(hub)
+                }
+            }
+            .labelsHidden().fixedSize()
+            // The search capsule holds the field and, inside it on the right, the magnifier that runs the search.
+            HStack(spacing: 6) {
+                // VERIFY(macOS26): suggestions are expected to drop down as soon as the empty field gets focus.
+                TextField(viewModel.hub.prompt, text: $viewModel.query)
+                    .textFieldStyle(.plain).frame(minWidth: 120, idealWidth: 240, maxWidth: 280)
+                    .accessibilityLabel(String(localized: "Search"))
+                    .textInputSuggestions {
+                        if viewModel.query.isEmpty {
+                            ForEach(viewModel.suggestions, id: \.self) { name in
+                                Text(verbatim: name).textInputCompletion(name)
+                            }
+                        }
+                    }
+                    .onChange(of: viewModel.query) { _, _ in viewModel.queryChanged() }
+                    .onSubmit { viewModel.search() }
+                // "By link" and "Connect by API" take an exact name instead of searching: a check mark, not a magnifier.
+                Button {
+                    viewModel.search()
+                } label: {
+                    Image(systemName: viewModel.hub == .api || viewModel.hub == .link ? "checkmark.circle" : "magnifyingglass")
+                        .font(.system(size: 16))
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .help(
+                    viewModel.hub == .api
+                        ? String(localized: "Add this model: enter its server address below")
+                        : viewModel.hub == .link
+                            ? String(localized: "Check that the model exists and show its size") : String(localized: "Search")
+                )
+                .accessibilityLabel(viewModel.hub == .api ? String(localized: "Add") : String(localized: "Search"))
+            }
+            .padding(.horizontal, 10).frame(height: 30)
+            .glassEffect(.regular, in: Capsule())
+            Toggle(String(localized: "MLX models only"), isOn: $viewModel.mlxOnly)
+                .toggleStyle(.checkbox)
+                .disabled(viewModel.hub == .link || viewModel.hub == .api)
+                .help(String(localized: "Show only models built for MLX. Turn off to search every repository; MLX builds stay on top."))
+            Spacer(minLength: 8)
+            Button {
+                showsToken.toggle()
+            } label: {
+                Image(systemName: "key").font(.system(size: 16)).frame(width: 30, height: 30)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .help(String(localized: "Access token for gated Hugging Face repositories"))
+            .accessibilityLabel(String(localized: "Hugging Face Token"))
+            .popover(isPresented: $showsToken, arrowEdge: .bottom) {
+                TokenSettingsView(isPresented: $showsToken).environment(container)
+            }
         }
+        // Any action that hits a gated repository opens the token popover, exactly as if the key button had been pressed.
+        .onChange(of: container.tokenPromptRequested, initial: true) { _, requested in
+            guard requested else { return }
+            showsToken = true
+            container.tokenPromptRequested = false
+        }
+    }
+}
+
+// ModelLibraryView
+
+/// Model library, shown in the right column of the chats window: results on top, and a permanent list of downloaded
+/// models at the bottom with running downloads above them. Its controls live in the window's title row.
+struct ModelLibraryView: View {
+    @Bindable var viewModel: DownloadViewModel
+    @Environment(AppContainer.self) private var container
+
+    var body: some View {
+        content(viewModel)
     }
 
     private func content(_ vm: DownloadViewModel) -> some View {
@@ -396,92 +495,6 @@ struct ModelLibraryView: View {
             }
             // Laid out first: the card takes what its rows need and the results list above shrinks to what is left.
             library.layoutPriority(1)
-        }
-        // Any action that hits a gated repository opens the token popover, exactly as if the key button had been pressed.
-        .onChange(of: container.tokenPromptRequested, initial: true) { _, requested in
-            guard requested else { return }
-            showsSettings = true
-            container.tokenPromptRequested = false
-        }
-        // No window title here: the search group starts at the left edge of the detail column.
-        .toolbar(removing: .title)
-        .toolbar {
-            // Fixed spacers keep every control in its own glass capsule; without them macOS 26 merges neighbours into one.
-            ToolbarItem(placement: .navigation) {
-                Picker(String(localized: "Hub"), selection: $vm.hub) {
-                    ForEach(DownloadViewModel.Hub.allCases) { hub in
-                        Label {
-                            Text(verbatim: hub.title)
-                        } icon: {
-                            hub.icon
-                        }
-                        // Toolbars default to icon-only labels; the hub names must stay visible.
-                        .labelStyle(.titleAndIcon)
-                        .tag(hub)
-                    }
-                }
-                .labelsHidden().fixedSize()
-            }
-            ToolbarSpacer(.fixed, placement: .navigation)
-            // The search capsule holds the field and, inside it on the right, the magnifier that runs the search.
-            ToolbarItem(placement: .navigation) {
-                HStack(spacing: 6) {
-                    // VERIFY(macOS26): suggestions are expected to drop down as soon as the empty field gets focus.
-                    TextField(vm.hub.prompt, text: $vm.query)
-                        .textFieldStyle(.plain).frame(minWidth: 120, idealWidth: 280, maxWidth: 280)
-                        // Without a placeholder the field would reach VoiceOver unlabelled.
-                        .accessibilityLabel(String(localized: "Search"))
-                        .textInputSuggestions {
-                            if vm.query.isEmpty {
-                                ForEach(vm.suggestions, id: \.self) { name in
-                                    Text(verbatim: name).textInputCompletion(name)
-                                }
-                            }
-                        }
-                        .onChange(of: vm.query) { _, _ in vm.queryChanged() }
-                        .onSubmit { vm.search() }
-                    // "By link" and "Connect by API" take an exact name instead of searching: a check mark, not a magnifier.
-                    Button {
-                        vm.search()
-                    } label: {
-                        Image(systemName: vm.hub == .api || vm.hub == .link ? "checkmark.circle" : "magnifyingglass")
-                            .font(.system(size: 16))
-                    }
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
-                    .padding(.trailing, 6)  // clear of the capsule's rounded end
-                    .help(
-                        vm.hub == .api
-                            ? String(localized: "Add this model: enter its server address below")
-                            : vm.hub == .link
-                                ? String(localized: "Check that the model exists and show its size") : String(localized: "Search")
-                    )
-                    .accessibilityLabel(vm.hub == .api ? String(localized: "Add") : String(localized: "Search"))
-                }
-                .padding(.horizontal, 8)
-            }
-            ToolbarSpacer(.fixed, placement: .navigation)
-            // A bare checkbox: no glass capsule of its own, and therefore nothing for the search capsule to merge with.
-            ToolbarItem(placement: .navigation) {
-                Toggle(String(localized: "MLX models only"), isOn: $vm.mlxOnly)
-                    .toggleStyle(.checkbox)
-                    .disabled(vm.hub == .link || vm.hub == .api)
-                    .help(String(localized: "Show only models built for MLX. Turn off to search every repository; MLX builds stay on top."))
-            }
-            .sharedBackgroundVisibility(.hidden)
-            // With the title removed nothing stretches between the groups, so the push to the right edge is explicit.
-            ToolbarSpacer(.flexible)
-            // The token button is the only control at the right edge.
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showsSettings.toggle()
-                } label: {
-                    Label(String(localized: "Hugging Face Token"), systemImage: "key")
-                }
-                .help(String(localized: "Access token for gated Hugging Face repositories"))
-                .popover(isPresented: $showsSettings, arrowEdge: .bottom) {
-                    TokenSettingsView(isPresented: $showsSettings).environment(container)
-                }
-            }
         }
     }
 
@@ -614,14 +627,12 @@ struct ModelLibraryView: View {
                 if index > 0 || !downloads.isEmpty || !installedModels.isEmpty { Divider() }
                 brokenRow(model)
             }
-            if let viewModel {
-                ForEach(Bindable(viewModel).remoteDrafts) { $draft in
-                    Divider()
-                    RemoteDraftRow(
-                        draft: $draft, onSave: { viewModel.saveRemote(draft.id) }, onCancel: { viewModel.cancelRemote(draft.id) })
-                }
+            ForEach(Bindable(viewModel).remoteDrafts) { $draft in
+                Divider()
+                RemoteDraftRow(
+                    draft: $draft, onSave: { viewModel.saveRemote(draft.id) }, onCancel: { viewModel.cancelRemote(draft.id) })
             }
-            if installedModels.isEmpty, downloads.isEmpty, broken.isEmpty, viewModel?.remoteDrafts.isEmpty ?? true {
+            if installedModels.isEmpty, downloads.isEmpty, broken.isEmpty, viewModel.remoteDrafts.isEmpty {
                 Text("No models yet. Click the empty search field to see recommended models, or search a hub.")
                     .foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 16)
             }
@@ -658,6 +669,7 @@ struct ModelLibraryView: View {
                 quantization: model.quantization, detail: detail(repoID: model.repoID, kind: model.kind, contextLength: model.contextLength)
             )
             .opacity(unavailable ? 0.4 : 1)
+            .layoutPriority(1)  // a narrow window shortens the controls on the right, not the model's name
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 6) {
                 HStack(spacing: 14) {
@@ -754,7 +766,7 @@ struct ModelLibraryView: View {
                     source: ModelReference.parse(download.repoID)?.source,
                     owners: ModelOwners(repoID: download.repoID, baseModel: nil), repoID: download.repoID,
                     sizeBytes: download.sizeBytes ?? download.progress?.bytesTotal, quantization: download.quantization,
-                    detail: viewModel?.destination(for: download.repoID) ?? "")
+                    detail: viewModel.destination(for: download.repoID))
                 Spacer(minLength: 8)
                 downloadControls(download)
             }

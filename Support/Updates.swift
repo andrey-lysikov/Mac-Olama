@@ -33,7 +33,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
     private var pendingConfirmations: [String: CheckedContinuation<Bool, Never>] = [:]
     private static let confirmationTimeout: TimeInterval = 90
 
-    private let logger = Logger(subsystem: "com.macolama.app", category: "notifications")
+    private let logger = Logger(subsystem: "ru.lysnet.macolama", category: "notifications")
     private weak var container: AppContainer?
 
     func configure(container: AppContainer) {
@@ -165,7 +165,7 @@ final class UpdateChecker {
     }
 
     private unowned let container: AppContainer
-    private let logger = Logger(subsystem: "com.macolama.app", category: "updates")
+    private let logger = Logger(subsystem: "ru.lysnet.macolama", category: "updates")
     private var timer: Timer?
     private var appTask: Task<Void, Never>?
     private var modelsTask: Task<Void, Never>?

@@ -15,7 +15,7 @@ final class WindowManager: NSObject, NSWindowDelegate {
     private var container: AppContainer?
     /// Hides the quick panel: it floats above everything and would cover the window being opened.
     var hidePanel: (() -> Void)?
-    private var levelReset: Task<Void, Never>?
+    private var keyChase: Task<Void, Never>?
 
     func configure(container: AppContainer) {
         self.container = container
@@ -77,28 +77,31 @@ final class WindowManager: NSObject, NSWindowDelegate {
     private func raise(_ window: NSWindow) {
         if window.isMiniaturized { window.deminiaturize(nil) }
         if !window.isVisible { window.orderFrontRegardless() }  // a window number the WindowServer knows
-        if Self.bringToFront(window) {
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate()
-            return
+        if !Self.bringToFront(window) {
+            // Cooperative activation (macOS 14+) may be refused, so the window is raised without waiting for it. A
+            // window on another Space follows only an active app, so there the activation has to come first.
+            if window.isOnActiveSpace { window.orderFrontRegardless() } else { NSApp.activate() }
         }
-        if !window.isOnActiveSpace {
-            switchSpace(to: window)
-            return
-        }
-        // Activation is cooperative since macOS 14 and may be refused, so the window floats above other apps until it
-        // succeeds or two seconds pass, then drops back to the normal level.
-        window.level = .floating
-        window.orderFrontRegardless()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
-        levelReset?.cancel()
-        levelReset = Task { [weak window] in
-            for _ in 0..<20 where !NSApp.isActive { try? await Task.sleep(for: .milliseconds(100)) }
-            guard !Task.isCancelled else { return }  // a newer raise resets the level itself
-            // `makeKeyAndOrderFront` before the activation landed does not take the keyboard: repeat it once the app is active.
-            if NSApp.isActive { window?.makeKeyAndOrderFront(nil) }
-            window?.level = .normal
+        takeKeyboard(window)
+    }
+
+    /// Ordering a window front before the activation lands leaves it frontmost but not key: it looks inactive and the
+    /// text field keeps no caret. A click on the status item makes this worse — the status bar window is the app's key
+    /// window while the click is handled. So key status is asked for again, for a second, until the window holds it.
+    private func takeKeyboard(_ window: NSWindow) {
+        keyChase?.cancel()
+        keyChase = Task { [weak window] in
+            for _ in 0..<20 {
+                try? await Task.sleep(for: .milliseconds(50))
+                guard !Task.isCancelled, let window, window.isVisible else { return }
+                if window.isKeyWindow && NSApp.isActive { return }
+                // Not `activate(ignoringOtherApps:)` (deprecated): activating our own running application is allowed
+                // and is not refused the way the cooperative `NSApp.activate()` can be.
+                if !NSApp.isActive { NSRunningApplication.current.activate(options: [.activateAllWindows]) }
+                window.makeKeyAndOrderFront(nil)
+            }
         }
     }
 
@@ -122,36 +125,37 @@ final class WindowManager: NSObject, NSWindowDelegate {
         return unsafeBitCast(symbol, to: SetFrontProcess.self)
     }()
 
-    /// A window on another Space: AppKit switches Spaces only when an active app orders its window front, while
-    /// `orderFrontRegardless` on an inactive app just raises it over there. So activate first, then order it front.
-    private func switchSpace(to window: NSWindow) {
-        window.level = .normal
-        NSApp.activate()
-        levelReset?.cancel()
-        levelReset = Task { [weak window] in
-            for _ in 0..<20 where !NSApp.isActive { try? await Task.sleep(for: .milliseconds(50)) }
-            guard !Task.isCancelled else { return }
-            window?.makeKeyAndOrderFront(nil)  // VERIFY(mac): switches to the window's Space
-        }
-    }
-
     private func makeWindow(id: ID, title: String, size: NSSize, root: AnyView) -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
+            // The app draws the title row itself (the window buttons keep their space in it), so the content reaches
+            // the top of the window.
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
         window.title = title
+        window.titlebarAppearsTransparent = true
+        // Without this the window's own opaque fill sits under the sidebar material and nothing shows through it.
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.titleVisibility = .hidden  // the name is drawn in the app's own title row
         // SwiftUI's minimum frame does not stop AppKit from shrinking the window; below this size the content would be clipped.
-        window.contentMinSize = NSSize(width: 760, height: 480)
+        window.contentMinSize = NSSize(width: 560, height: 400)
         window.isReleasedWhenClosed = false
+        // An ordinary document-like window: other apps can cover it. Clicking the status item brings it front again.
+        window.level = .normal
+        window.collectionBehavior = [.fullScreenAuxiliary, .participatesInCycle, .managed]
         let hosting = NSHostingView(rootView: root)
         hosting.sceneBridgingOptions = [.toolbars]  // SwiftUI .toolbar content goes into this window's toolbar
+        hosting.sizingOptions = []  // the window's size is the saved one, not the size SwiftUI would like
+        // The title bar is not a safe area here: the app's own title row fills it, level with the window buttons.
+        hosting.safeAreaRegions = []
         window.contentView = hosting
         window.toolbarStyle = .unified
         window.delegate = self
         // Saved under the window ID: the localized title used before changed with the language. Its frame is taken over
         // once, then every other saved frame (also of windows that no longer exist) is dropped.
         let name = "MacOlama.\(id.rawValue)"
+        window.layoutIfNeeded()  // the first SwiftUI layout happens here, before the frame is restored, not after it
         if !window.setFrameUsingName(name), !window.setFrameUsingName("MacOlama.\(title)") { window.center() }
         window.setFrameAutosaveName(name)
         let defaults = UserDefaults.standard

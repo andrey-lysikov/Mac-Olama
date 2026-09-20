@@ -6,11 +6,15 @@ import CoreImage
 import SwiftUI
 import os
 
+// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
+// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
+
 // ModelIcons
 
 /// A model's icon is the avatar of its author (the owner of the base model: Google, Qwen…) with the avatar of the community
 /// that built this copy (mlx-community, lmstudio-community…) in the corner. Avatars come from Hugging Face for both hubs
-/// (ModelScope uses the same account names), are turned greyscale like every other pictogram and cached in `icons/`.
+/// (ModelScope uses the same account names) and are cached in `icons/`. Lists and menus show them greyscale like every
+/// other pictogram; the hub picker shows the logo in colour.
 @MainActor
 @Observable
 final class ModelIcons {
@@ -23,9 +27,20 @@ final class ModelIcons {
     @ObservationIgnored private var unavailable: Set<String> = []
     @ObservationIgnored private var loading: Set<String> = []
     @ObservationIgnored private var composed: [String: NSImage] = [:]
-    nonisolated private static let logger = Logger(subsystem: "com.macolama.app", category: "icons")
+    @ObservationIgnored private var greyscale: [String: NSImage] = [:]
+    nonisolated private static let logger = Logger(subsystem: "ru.lysnet.macolama", category: "icons")
 
-    /// The account's avatar, or nil while it loads (or when the account has none).
+    /// The account's avatar in greyscale, for the lists and menus.
+    func greyAvatar(_ owner: String) -> NSImage? {
+        let key = owner.lowercased()
+        if let image = greyscale[key] { return image }
+        guard let colour = avatar(owner) else { return nil }
+        let mono = Self.monochrome(colour) ?? colour
+        greyscale[key] = mono
+        return mono
+    }
+
+    /// The account's avatar in colour (the hub picker), or nil while it loads (or when the account has none).
     func avatar(_ owner: String) -> NSImage? {
         _ = revision
         let key = owner.lowercased()
@@ -41,8 +56,8 @@ final class ModelIcons {
 
     /// Author's avatar with the community's in the lower right corner, or the community's alone when the author is unknown.
     func icon(for owners: ModelOwners, size: CGFloat) -> NSImage? {
-        let author = owners.author.flatMap(avatar)
-        let community = owners.community.flatMap(avatar)
+        let author = owners.author.flatMap(greyAvatar)
+        let community = owners.community.flatMap(greyAvatar)
         guard let main = author ?? community else { return nil }
         let badge = author != nil ? community : nil
         let key = "\(owners.author ?? "")|\(owners.community ?? "")|\(size)|\(badge != nil)"
@@ -71,14 +86,15 @@ final class ModelIcons {
         return image
     }
 
+    /// `-colour` in the name: caches written by the build that stored greyscale files are simply ignored.
     private func file(for key: String) -> URL {
-        directory.appendingPathComponent(key.replacingOccurrences(of: "/", with: "_") + ".png")
+        directory.appendingPathComponent(key.replacingOccurrences(of: "/", with: "_") + "-colour.png")
     }
 
     private func load(_ owner: String, key: String) {
         guard loading.insert(key).inserted else { return }
         Task {
-            let png = await Self.fetchGreyscalePNG(owner: owner)
+            let png = await Self.fetchPNG(owner: owner)
             loading.remove(key)
             guard let png, let image = NSImage(data: png) else {
                 unavailable.insert(key)  // until the next launch: no avatar, or no network right now
@@ -87,13 +103,25 @@ final class ModelIcons {
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try? png.write(to: file(for: key), options: .atomic)
             avatars[key] = image
+            greyscale.removeAll()
             composed.removeAll()
             revision += 1
         }
     }
 
+    /// Greyscale copy of a cached colour avatar.
+    nonisolated private static func monochrome(_ image: NSImage) -> NSImage? {
+        guard let tiff = image.tiffRepresentation, let input = CIImage(data: tiff), let filter = CIFilter(name: "CIPhotoEffectMono")
+        else { return nil }
+        filter.setValue(input, forKey: kCIInputImageKey)
+        guard let output = filter.outputImage else { return nil }
+        let result = NSImage(size: image.size)
+        result.addRepresentation(NSCIImageRep(ciImage: output))
+        return result
+    }
+
     /// An account is either an organisation or a user; Hugging Face answers `{"avatarUrl": …}` for the right one.
-    nonisolated private static func fetchGreyscalePNG(owner: String) async -> Data? {
+    nonisolated private static func fetchPNG(owner: String) async -> Data? {
         for kind in ["organizations", "users"] {
             guard let api = URL(string: "https://huggingface.co/api/\(kind)/\(owner)/avatar"),
                 let (data, response) = try? await URLSession.shared.data(from: api),
@@ -102,17 +130,15 @@ final class ModelIcons {
                 let link = (json["avatarUrl"] as? String).flatMap(URL.init(string:)),
                 let (imageData, _) = try? await URLSession.shared.data(from: link)
             else { continue }
-            if let png = greyscalePNG(imageData, side: 64) { return png }
+            if let png = squarePNG(imageData, side: 64) { return png }
         }
         logger.info("No avatar for \(owner, privacy: .public)")
         return nil
     }
 
-    /// Square, greyscale, `side` pixels: small enough to keep in the cache folder, sharp at 20 pt on Retina.
-    nonisolated private static func greyscalePNG(_ data: Data, side: Int) -> Data? {
-        guard let input = CIImage(data: data), let filter = CIFilter(name: "CIPhotoEffectMono") else { return nil }
-        filter.setValue(input, forKey: kCIInputImageKey)
-        guard let output = filter.outputImage, output.extent.width > 0, output.extent.height > 0,
+    /// Square, `side` pixels: small enough to keep in the cache folder, sharp at 20 pt on Retina.
+    nonisolated private static func squarePNG(_ data: Data, side: Int) -> Data? {
+        guard let output = CIImage(data: data), output.extent.width > 0, output.extent.height > 0,
             let cg = CIContext().createCGImage(output, from: output.extent),
             let context = CGContext(
                 data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),

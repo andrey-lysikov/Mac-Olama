@@ -49,7 +49,7 @@ enum DeepLink {
 /// Launch at login via SMAppService. VERIFY(V9): behaviour for LSUIElement apps outside the App Store.
 @MainActor
 enum LaunchAtLogin {
-    private static let logger = Logger(subsystem: "com.macolama.app", category: "launch-at-login")
+    private static let logger = Logger(subsystem: "ru.lysnet.macolama", category: "launch-at-login")
 
     static var isEnabled: Bool { SMAppService.mainApp.status == .enabled }
 
@@ -63,33 +63,5 @@ enum LaunchAtLogin {
         } catch {
             logger.error("SMAppService failed: \(error)")
         }
-    }
-}
-
-// KeychainStore
-
-/// Tokens of models connected by API, in the Keychain (generic passwords, one account per model).
-enum KeychainStore {
-    private static let service = "com.macolama.app"
-
-    static func get(account: String) -> String? {
-        var query = base(account)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    static func set(_ value: String?, account: String) {
-        SecItemDelete(base(account) as CFDictionary)
-        guard let value, !value.isEmpty else { return }
-        var add = base(account)
-        add[kSecValueData as String] = Data(value.utf8)
-        SecItemAdd(add as CFDictionary, nil)
-    }
-
-    private static func base(_ account: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
     }
 }

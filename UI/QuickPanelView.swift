@@ -4,6 +4,9 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
+// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
+
 // QuickPanelView
 
 struct QuickPanelView: View {

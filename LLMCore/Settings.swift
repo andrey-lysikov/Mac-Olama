@@ -58,6 +58,8 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case pendingDownloads = "pendingDownloads"  // Data: JSON list of unfinished downloads, restored at launch
     case lastAppUpdateCheck = "lastAppUpdateCheck"  // Date?
     case lastModelUpdateCheck = "lastModelUpdateCheck"  // Date?
+    case sidebarWidth = "sidebarWidth"  // Double: width of the chat list column
+    case remoteTokens = "remoteTokens"  // [model id: token] of models connected by API; empty when a server needs none
     case extraTools = "extraTools"  // [String]: `ExtraTool` raw values the user switched on (calculator, macInfo, …)
     case huggingFaceToken = "huggingFaceToken"  // String?: Hugging Face access token for gated models
 }
@@ -80,6 +82,25 @@ public enum SettingsDefaults {
             SettingsKey.shortcutsToolEnabled.rawValue: false,
             SettingsKey.allowedFolders.rawValue: [String](),
             SettingsKey.extraTools.rawValue: [String](),
+            SettingsKey.remoteTokens.rawValue: [String: String](),
+            SettingsKey.sidebarWidth.rawValue: 260.0,
         ]
+    }
+}
+
+// RemoteTokens
+
+/// Optional tokens of models connected by API, kept in the settings like everything else (the customer's call: the
+/// Keychain asked for a password on every rebuild of an ad-hoc signed app). Readable by anything running as this user.
+public enum RemoteTokens {
+    public static func token(for modelID: String) -> String? {
+        let tokens = UserDefaults.standard.dictionary(forKey: SettingsKey.remoteTokens.rawValue) as? [String: String]
+        return tokens?[modelID].flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    public static func set(_ token: String?, for modelID: String) {
+        var tokens = UserDefaults.standard.dictionary(forKey: SettingsKey.remoteTokens.rawValue) as? [String: String] ?? [:]
+        if let token, !token.isEmpty { tokens[modelID] = token } else { tokens[modelID] = nil }
+        UserDefaults.standard.set(tokens, forKey: SettingsKey.remoteTokens.rawValue)
     }
 }

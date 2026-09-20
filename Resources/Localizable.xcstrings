@@ -4,8 +4,15 @@
     "" : {
       "shouldTranslate" : false
     },
-    "%@" : {
-      "shouldTranslate" : false
+    "%@ file %@?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ файл %2$@?"
+          }
+        }
+      }
     },
     "%@ free" : {
       "localizations" : {
@@ -13,6 +20,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "свободно %@"
+          }
+        }
+      }
+    },
+    "%@ has a newer revision on its hub." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для %@ на хабе есть новая версия."
           }
         }
       }
@@ -67,16 +84,6 @@
         }
       }
     },
-    "15 minutes" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "15 минут"
-          }
-        }
-      }
-    },
     "5 minutes" : {
       "localizations" : {
         "ru" : {
@@ -87,22 +94,22 @@
         }
       }
     },
-    "API port in use" : {
+    "15 minutes" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Порт API занят"
+            "value" : "15 минут"
           }
         }
       }
     },
-    "API server not started" : {
+    "About This Mac" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "API-сервер не запущен"
+            "value" : "Об этом Mac"
           }
         }
       }
@@ -197,12 +204,52 @@
         }
       }
     },
+    "API port in use" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Порт API занят"
+          }
+        }
+      }
+    },
+    "API server not started" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API-сервер не запущен"
+          }
+        }
+      }
+    },
+    "Append to" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дописать в"
+          }
+        }
+      }
+    },
     "Ask a question…" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Задайте вопрос…"
+          }
+        }
+      }
+    },
+    "Attach file" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прикрепить файл"
           }
         }
       }
@@ -233,6 +280,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "По ссылке"
+          }
+        }
+      }
+    },
+    "Calculator" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Калькулятор"
           }
         }
       }
@@ -277,12 +334,12 @@
         }
       }
     },
-    "Check for Updates" : {
+    "Check a local address?" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Проверить обновление"
+            "value" : "Проверить локальный адрес?"
           }
         }
       }
@@ -297,12 +354,32 @@
         }
       }
     },
+    "Check for Updates" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить обновление"
+          }
+        }
+      }
+    },
     "Check that the model exists and show its size" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Проверить, что модель существует, и показать её размер"
+          }
+        }
+      }
+    },
+    "Check whether the server answers" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить, отвечает ли сервер"
           }
         }
       }
@@ -347,16 +424,6 @@
         }
       }
     },
-    "Close Window" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Закрыть окно"
-          }
-        }
-      }
-    },
     "Close the panel when you click outside it" : {
       "localizations" : {
         "ru" : {
@@ -367,12 +434,32 @@
         }
       }
     },
+    "Close Window" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закрыть окно"
+          }
+        }
+      }
+    },
     "Connect by API" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Подключить по API"
+          }
+        }
+      }
+    },
+    "Connection failed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Соединение не удалось"
           }
         }
       }
@@ -443,6 +530,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось связаться с GitHub для проверки обновлений."
+          }
+        }
+      }
+    },
+    "Could not reach the model hubs." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось связаться с хабами моделей."
+          }
+        }
+      }
+    },
+    "Create" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создать"
           }
         }
       }
@@ -587,6 +694,16 @@
         }
       }
     },
+    "Enter mlx-community/Qwen3.5-9B-MLX-4bit or a huggingface.co / modelscope.cn link" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Введите mlx-community/Qwen3.5-9B-MLX-4bit или ссылку на huggingface.co / modelscope.cn"
+          }
+        }
+      }
+    },
     "Enter the server address, e.g. http://localhost:11434." : {
       "localizations" : {
         "ru" : {
@@ -717,6 +834,9 @@
         }
       }
     },
+    "Hide the chat list" : {
+
+    },
     "Hub" : {
       "localizations" : {
         "ru" : {
@@ -767,6 +887,16 @@
         }
       }
     },
+    "Keep the panel open when you click outside it" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не закрывать панель при клике вне её"
+          }
+        }
+      }
+    },
     "Loading model %@… %@" : {
       "localizations" : {
         "ru" : {
@@ -807,16 +937,6 @@
         }
       }
     },
-    "MLX models only" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Только MLX-модели"
-          }
-        }
-      }
-    },
     "Mac-Olama update" : {
       "localizations" : {
         "ru" : {
@@ -847,22 +967,22 @@
         }
       }
     },
+    "MLX models only" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только MLX-модели"
+          }
+        }
+      }
+    },
     "Model" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Модель"
-          }
-        }
-      }
-    },
-    "Model Library…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Набор моделей…"
           }
         }
       }
@@ -883,6 +1003,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Модель для этого чата"
+          }
+        }
+      }
+    },
+    "Model Library…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Набор моделей…"
           }
         }
       }
@@ -943,6 +1073,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Модели"
+          }
+        }
+      }
+    },
+    "Needed only for gated models. Create a token with the Read role and paste it here." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нужен только для закрытых моделей. Создайте токен с ролью Read и вставьте его сюда."
+          }
+        }
+      }
+    },
+    "Network Diagnostics" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сетевая диагностика"
           }
         }
       }
@@ -1083,6 +1233,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ollama %1$@ занимает порт %2$lld; API Mac-Olama займёт следующий свободный порт."
+          }
+        }
+      }
+    },
+    "Open %@?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть %@?"
           }
         }
       }
@@ -1287,12 +1447,32 @@
         }
       }
     },
+    "Replace" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заменить"
+          }
+        }
+      }
+    },
     "Repository not found." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Репозиторий не найден."
+          }
+        }
+      }
+    },
+    "Repository or link" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Репозиторий или ссылка"
           }
         }
       }
@@ -1437,6 +1617,19 @@
         }
       }
     },
+    "Show only models built for MLX. Turn off to search every repository; MLX builds stay on top." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показывать только модели для MLX. Если выключить, поиск идёт по всем репозиториям, а MLX-сборки остаются вверху."
+          }
+        }
+      }
+    },
+    "Show the chat list" : {
+
+    },
     "Starting…" : {
       "localizations" : {
         "ru" : {
@@ -1457,22 +1650,22 @@
         }
       }
     },
-    "System Prompt…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Системный промпт…"
-          }
-        }
-      }
-    },
     "System prompt for this chat" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Системный промпт для этого чата"
+          }
+        }
+      }
+    },
+    "System Prompt…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Системный промпт…"
           }
         }
       }
@@ -1488,12 +1681,52 @@
         }
       }
     },
+    "text → text" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "текст → текст"
+          }
+        }
+      }
+    },
     "Text only" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Только текст"
+          }
+        }
+      }
+    },
+    "text, images → text" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "текст, изображения → текст"
+          }
+        }
+      }
+    },
+    "the answer is not JSON" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ответ не в формате JSON"
+          }
+        }
+      }
+    },
+    "The model computes in JavaScript instead of doing arithmetic in its head" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель считает на JavaScript, а не в уме"
           }
         }
       }
@@ -1508,12 +1741,52 @@
         }
       }
     },
+    "The model gave no answer. Ask again or rephrase the question." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель не дала ответа. Спросите ещё раз или переформулируйте вопрос."
+          }
+        }
+      }
+    },
     "The model is busy with another request." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Модель занята другим запросом."
+          }
+        }
+      }
+    },
+    "The model may look up the weather (Open-Meteo)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может узнать погоду (Open-Meteo)"
+          }
+        }
+      }
+    },
+    "The model may read this Mac's state: battery, disk space, memory, processes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может читать состояние этого Mac: батарея, место на диске, память, процессы"
+          }
+        }
+      }
+    },
+    "The model may run ping, traceroute, DNS and port checks from this Mac" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может запускать с этого Mac ping, traceroute, DNS и проверку портов"
           }
         }
       }
@@ -1758,6 +2031,16 @@
         }
       }
     },
+    "up to %lldk context" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "контекст до %lldk"
+          }
+        }
+      }
+    },
     "Update" : {
       "localizations" : {
         "ru" : {
@@ -1828,6 +2111,16 @@
         }
       }
     },
+    "Weather" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Погода"
+          }
+        }
+      }
+    },
     "Web Search" : {
       "localizations" : {
         "ru" : {
@@ -1848,6 +2141,16 @@
         }
       }
     },
+    "Would fit (about %@ of %@), but only %@ is free right now: close some apps or expect swapping." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Would fit (about %1$@ of %2$@), but only %3$@ is free right now: close some apps or expect swapping."
+          }
+        }
+      }
+    },
     "Yesterday" : {
       "localizations" : {
         "ru" : {
@@ -1864,286 +2167,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "У вашей учётной записи Hugging Face пока нет доступа к этой модели. Нажмите, чтобы открыть её страницу и запросить доступ."
-          }
-        }
-      }
-    },
-    "text → text" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "текст → текст"
-          }
-        }
-      }
-    },
-    "text, images → text" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "текст, изображения → текст"
-          }
-        }
-      }
-    },
-    "the answer is not JSON" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ответ не в формате JSON"
-          }
-        }
-      }
-    },
-    "up to %lldk context" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "контекст до %lldk"
-          }
-        }
-      }
-    },
-    "Needed only for gated models. Create a token with the Read role and paste it here." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Нужен только для закрытых моделей. Создайте токен с ролью Read и вставьте его сюда."
-          }
-        }
-      }
-    },
-    "Attach file" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Прикрепить файл"
-          }
-        }
-      }
-    },
-    "Keep the panel open when you click outside it" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не закрывать панель при клике вне её"
-          }
-        }
-      }
-    },
-    "Check whether the server answers" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Проверить, отвечает ли сервер"
-          }
-        }
-      }
-    },
-    "Could not reach the model hubs." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось связаться с хабами моделей."
-          }
-        }
-      }
-    },
-    "Repository or link" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Репозиторий или ссылка"
-          }
-        }
-      }
-    },
-    "Show only models built for MLX. Turn off to search every repository; MLX builds stay on top." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Показывать только модели для MLX. Если выключить, поиск идёт по всем репозиториям, а MLX-сборки остаются вверху."
-          }
-        }
-      }
-    },
-    "%@ has a newer revision on its hub." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Для %@ на хабе есть новая версия."
-          }
-        }
-      }
-    },
-    "Enter mlx-community/Qwen3.5-9B-MLX-4bit or a huggingface.co / modelscope.cn link" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Введите mlx-community/Qwen3.5-9B-MLX-4bit или ссылку на huggingface.co / modelscope.cn"
-          }
-        }
-      }
-    },
-    "The model gave no answer. Ask again or rephrase the question." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Модель не дала ответа. Спросите ещё раз или переформулируйте вопрос."
-          }
-        }
-      }
-    },
-    "%@ file %@?" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$@ файл %2$@?"
-          }
-        }
-      }
-    },
-    "About This Mac" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Об этом Mac"
-          }
-        }
-      }
-    },
-    "Append to" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Дописать в"
-          }
-        }
-      }
-    },
-    "Calculator" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Калькулятор"
-          }
-        }
-      }
-    },
-    "Check a local address?" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Проверить локальный адрес?"
-          }
-        }
-      }
-    },
-    "Create" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Создать"
-          }
-        }
-      }
-    },
-    "Network Diagnostics" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сетевая диагностика"
-          }
-        }
-      }
-    },
-    "Open %@?" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Открыть %@?"
-          }
-        }
-      }
-    },
-    "Replace" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Заменить"
-          }
-        }
-      }
-    },
-    "The model computes in JavaScript instead of doing arithmetic in its head" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Модель считает на JavaScript, а не в уме"
-          }
-        }
-      }
-    },
-    "The model may look up the weather (Open-Meteo)" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Модель может узнать погоду (Open-Meteo)"
-          }
-        }
-      }
-    },
-    "The model may read this Mac's state: battery, disk space, memory, processes" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Модель может читать состояние этого Mac: батарея, место на диске, память, процессы"
-          }
-        }
-      }
-    },
-    "The model may run ping, traceroute, DNS and port checks from this Mac" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Модель может запускать с этого Mac ping, traceroute, DNS и проверку портов"
-          }
-        }
-      }
-    },
-    "Weather" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Погода"
           }
         }
       }

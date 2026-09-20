@@ -132,3 +132,45 @@ import Testing
         #expect(provider.resolveForWriting("") == nil)
     }
 }
+
+@Suite struct FitEstimateTests {
+    /// Qwen 3.5 9B: 32 layers, only 8 of them plain attention (the rest are linear), 4 KV heads of 256.
+    private let hybrid = Data(
+        #"{"num_hidden_layers":32,"num_attention_heads":16,"num_key_value_heads":4,"head_dim":256,"hidden_size":4096,"layer_types":["linear_attention","linear_attention","linear_attention","full_attention","linear_attention","linear_attention","linear_attention","full_attention","linear_attention","linear_attention","linear_attention","full_attention","linear_attention","linear_attention","linear_attention","full_attention","linear_attention","linear_attention","linear_attention","full_attention","linear_attention","linear_attention","linear_attention","full_attention","linear_attention","linear_attention","linear_attention","full_attention","linear_attention","linear_attention","linear_attention","full_attention"]}"#
+            .utf8)
+    private let sliding = Data(
+        #"{"text_config":{"num_hidden_layers":12,"num_attention_heads":8,"num_key_value_heads":2,"head_dim":128,"sliding_window":1024,"sliding_window_pattern":6}}"#
+            .utf8)
+
+    @Test func hybridLayersCostOnlyWhatTheyKeep() throws {
+        let profile = try #require(KVCacheProfile.read(configJSON: hybrid))
+        #expect(profile.fullLayers == 8 && profile.slidingLayers == 0)
+        #expect(profile.bytesPerTokenPerLayer == 2 * 4 * 256 * 2)
+        #expect(profile.bytes(context: 32768) == 32768 * 8 * 4096)  // 1 GB, not the ~5 GB the rule of thumb gave
+    }
+
+    @Test func slidingWindowCapsTheCache() throws {
+        let profile = try #require(KVCacheProfile.read(configJSON: sliding))
+        #expect(profile.fullLayers == 2 && profile.slidingLayers == 10 && profile.window == 1024)
+        // Beyond the window the sliding layers stop growing; the two full layers keep going.
+        #expect(profile.bytes(context: 8192) == Int64(2 * 8192 + 10 * 1024) * Int64(profile.bytesPerTokenPerLayer))
+    }
+
+    @Test func unknownConfigsFallBack() {
+        #expect(KVCacheProfile.read(configJSON: Data(#"{"model_type":"mystery"}"#.utf8)) == nil)
+    }
+
+    @Test func freeMemoryIsReported() {
+        #expect(HardwareProfile.availableMemoryBytes() > 0)
+    }
+
+    @Test func busyMemoryMakesTheVerdictCautious() {
+        let hardware = HardwareProfile(
+            chipName: "Apple M3 Pro", family: 3, tier: .pro, gpuCores: 18, memoryBytes: 18 << 30, wiredLimitBytes: 12 << 30,
+            bandwidthGBs: 150)
+        let roomy = ModelFitReport.evaluate(modelBytes: 6 << 30, contextLength: 8192, hardware: hardware, availableBytes: 12 << 30)
+        let busy = ModelFitReport.evaluate(modelBytes: 6 << 30, contextLength: 8192, hardware: hardware, availableBytes: 3 << 30)
+        #expect(roomy.fit == .comfortable)
+        #expect(busy.fit == .tight && busy.warnings.contains("memory-busy"))
+    }
+}

@@ -4,6 +4,9 @@
 import AppKit
 import SwiftUI
 
+// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
+// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
+
 // StatusItemController
 
 /// Menu bar icon: left click opens the panel, right click the menu. Follows `AppContainer.engineState` through the tooltip

@@ -3,6 +3,9 @@
 
 import SwiftUI
 
+// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
+// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
+
 // How long a reply takes is unknown in advance, so progress is shown as what has really happened: finished tool steps,
 // the running one, and the thinking stretch with its time and hidden tokens. A finished reply keeps one summary line.
 

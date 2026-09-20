@@ -45,7 +45,7 @@ actor RemoteEngine: InferenceEngine {
 
     func load(_ model: ModelDescriptor, progress: @Sendable @escaping (Double) -> Void) async throws {
         let endpoint = try RemoteEndpoint.load(from: model.directory)
-        let token = KeychainStore.get(account: RemoteEndpoint.tokenAccount(modelID: model.id))
+        let token = RemoteTokens.token(for: model.id)
         progress(0.3)
         // "Loading" a remote model is checking that the server is up and still has it.
         _ = try await Self.probe(baseURL: endpoint.baseURL, model: endpoint.model, token: token)

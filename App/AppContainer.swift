@@ -22,7 +22,7 @@ final class AppContainer {
     let modelScopeClient = ModelScopeClient()
     private(set) var downloader: ModelDownloader
     private(set) var updates: UpdateChecker!
-    let logger = Logger(subsystem: "com.macolama.app", category: "container")
+    let logger = Logger(subsystem: "ru.lysnet.macolama", category: "container")
 
     // UI mirror
     private(set) var engineState: EngineState = .unloaded
@@ -180,10 +180,11 @@ final class AppContainer {
             let results = await withTaskGroup(of: (ModelDescriptor, RemoteEndpoint, RemoteEngine.Probe?, up: Bool).self) { group in
                 for (model, endpoint) in targets {
                     group.addTask {
-                        // No token: reading the Keychain on every open made macOS ask for the password. A server that
-                        // refuses us without one is still up.
+                        // With its token, so a server that only answers authenticated requests is checked properly;
+                        // one that refuses us is still up.
                         do {
-                            let probe = try await RemoteEngine.probe(baseURL: endpoint.baseURL, model: endpoint.model, token: nil)
+                            let probe = try await RemoteEngine.probe(
+                                baseURL: endpoint.baseURL, model: endpoint.model, token: RemoteTokens.token(for: model.id))
                             return (model, endpoint, probe, true)
                         } catch RemoteError.http(let status, _) where status == 401 || status == 403 {
                             return (model, endpoint, nil, true)
@@ -269,7 +270,7 @@ final class AppContainer {
     }
 
     func deleteModel(_ model: ModelDescriptor) {
-        if model.source == .remote { KeychainStore.set(nil, account: RemoteEndpoint.tokenAccount(modelID: model.id)) }
+        if model.source == .remote { RemoteTokens.set(nil, for: model.id) }
         Task {
             if engineState.modelID == model.id { await engineManager.unload() }
             try? await catalog.remove(id: model.id)
@@ -278,7 +279,7 @@ final class AppContainer {
     }
 
     /// "Connect by API": checks that the server answers and has the model, then adds it to the library like a downloaded one.
-    /// `address` may omit the scheme (`localhost:11434`); the optional token goes to the Keychain.
+    /// `address` may omit the scheme (`localhost:11434`); the optional token is saved with the settings.
     func connectRemote(model: String, address: String, token: String) async throws {
         let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let base = URL(string: trimmed.contains("://") ? trimmed : "http://" + trimmed), base.host() != nil else {
@@ -291,7 +292,7 @@ final class AppContainer {
         let directory = paths.models.appendingPathComponent(endpoint.directoryName)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try endpoint.save(to: directory)
-        KeychainStore.set(token.isEmpty ? nil : token, account: RemoteEndpoint.tokenAccount(modelID: endpoint.directoryName))
+        RemoteTokens.set(token, for: endpoint.directoryName)
         // The manifest goes last: a folder watcher refreshing in between would otherwise list a half-written model.
         try ModelManifest(
             repoID: "\(endpoint.hostAndPort)/\(probe.model)", revision: "", source: .remote, kind: probe.supportsVision ? .vlm : .llm,
@@ -356,7 +357,9 @@ final class AppContainer {
     }
 
     func fit(for model: ModelDescriptor) -> ModelFitReport {
-        ModelFitReport.evaluate(modelBytes: model.sizeBytes, contextLength: model.contextLength, hardware: hardware)
+        ModelFitReport.evaluate(
+            modelBytes: model.sizeBytes, contextLength: model.contextLength, hardware: hardware, kvCache: model.kvCache,
+            availableBytes: HardwareProfile.availableMemoryBytes())
     }
 
     // Downloads (shared by the download window, menu, notifications and the update checker)
@@ -549,6 +552,14 @@ final class AppContainer {
             )
         case HubError.checksumMismatch(let file): String(localized: "Checksum mismatch for \(file). Try again.")
         case HubError.cancelled: String(localized: "Cancelled.")
+        // A hub that cannot be reached at all (ModelScope is blocked on some networks): the reason is the network,
+        // not the search, so it is worded the same whichever way the connection failed.
+        case let error as URLError
+        where [
+            URLError.Code.timedOut, .cannotConnectToHost, .cannotFindHost, .networkConnectionLost, .notConnectedToInternet,
+            .secureConnectionFailed, .dnsLookupFailed,
+        ].contains(error.code):
+            String(localized: "Connection failed")
         default: error.localizedDescription
         }
     }
@@ -812,6 +823,10 @@ final class AppSettings {
     var lastModelUpdateCheck: Date? {
         get { access(keyPath: \.token); return defaults.object(forKey: SettingsKey.lastModelUpdateCheck.rawValue) as? Date }
         set { set(newValue, .lastModelUpdateCheck) }
+    }
+    var sidebarWidth: Double {
+        get { double(.sidebarWidth) }
+        set { set(newValue, .sidebarWidth) }
     }
     var extraTools: [String] {
         get { access(keyPath: \.token); return defaults.stringArray(forKey: SettingsKey.extraTools.rawValue) ?? [] }

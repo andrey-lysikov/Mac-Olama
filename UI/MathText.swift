@@ -3,6 +3,9 @@
 
 import Foundation
 
+// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
+// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
+
 // Markdown would mangle LaTeX, so formulas outside code become placeholders before parsing and SwiftMath typesets them.
 // `unicode(_:)` is the plain-text fallback for formulas SwiftMath cannot parse (√40, x², ≤).
 

@@ -637,6 +637,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				ARCHS = arm64;  /* Apple Silicon only: MLX needs Metal on arm64 */
 				CURRENT_PROJECT_VERSION = 0.2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = NO;
@@ -653,7 +654,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.2;
-				PRODUCT_BUNDLE_IDENTIFIER = com.macolama.app;
+				PRODUCT_BUNDLE_IDENTIFIER = ru.lysnet.macolama;
 				PRODUCT_MODULE_NAME = MacOlama;
 				PRODUCT_NAME = "Mac-Olama";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -669,6 +670,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				ARCHS = arm64;  /* Apple Silicon only: MLX needs Metal on arm64 */
 				CURRENT_PROJECT_VERSION = 0.2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = NO;
@@ -685,7 +687,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.2;
-				PRODUCT_BUNDLE_IDENTIFIER = com.macolama.app;
+				PRODUCT_BUNDLE_IDENTIFIER = ru.lysnet.macolama;
 				PRODUCT_MODULE_NAME = MacOlama;
 				PRODUCT_NAME = "Mac-Olama";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -702,7 +704,7 @@
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.macolama.app.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = ru.lysnet.macolama.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mac-Olama.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mac-Olama";
@@ -719,7 +721,7 @@
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.macolama.app.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = ru.lysnet.macolama.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mac-Olama.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mac-Olama";
@@ -731,6 +733,7 @@
 			buildSettings = {
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
+				ARCHS = arm64;  /* Apple Silicon only: MLX needs Metal on arm64 */
 				CURRENT_PROJECT_VERSION = 0.2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
@@ -745,7 +748,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MARKETING_VERSION = 0.2;
-				PRODUCT_BUNDLE_IDENTIFIER = com.macolama.app.safari;
+				PRODUCT_BUNDLE_IDENTIFIER = ru.lysnet.macolama.safari;
 				PRODUCT_MODULE_NAME = MacOlamaSafari;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -758,6 +761,7 @@
 			buildSettings = {
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
+				ARCHS = arm64;  /* Apple Silicon only: MLX needs Metal on arm64 */
 				CURRENT_PROJECT_VERSION = 0.2;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
@@ -772,7 +776,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MARKETING_VERSION = 0.2;
-				PRODUCT_BUNDLE_IDENTIFIER = com.macolama.app.safari;
+				PRODUCT_BUNDLE_IDENTIFIER = ru.lysnet.macolama.safari;
 				PRODUCT_MODULE_NAME = MacOlamaSafari;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

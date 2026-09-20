@@ -6,6 +6,9 @@ import Observation
 import SwiftUI
 import UniformTypeIdentifiers
 
+// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
+// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
+
 // QuickPanelController
 
 /// Spotlight-style floating panel. Non-activating: keeps the front app active but still accepts input.
@@ -54,7 +57,9 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         panel.standardWindowButton(.zoomButton)?.isHidden = true
         panel.isMovableByWindowBackground = true
         // Above other apps' floating palettes too, like Spotlight; menus still open over it.
-        panel.level = .statusBar
+        // Above everything, as the OSD panel of System-Spinner does it: the screen-saver level clears other apps' floating
+        // palettes and full-screen windows too.
+        panel.level = .screenSaver
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
@@ -139,14 +144,14 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         installFocusObserver()
     }
 
-    /// The open dialog goes above the panel (level `.statusBar`) and takes the keyboard; the panel must not auto-close
+    /// The open dialog goes above the panel (one level over it) and takes the keyboard; the panel must not auto-close
     /// while the dialog is key, so the focus observer rests until it is dismissed.
     private func chooseFiles() {
         removeFocusObserver()
         let dialog = NSOpenPanel()
         dialog.allowedContentTypes = [.pdf, .text, .sourceCode, .json, .rtf] + (viewModel.canAttachImages ? [.image] : [])
         dialog.allowsMultipleSelection = true
-        dialog.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+        dialog.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
         NSApp.activate()
         dialog.begin { [weak self] response in
             guard let self else { return }
@@ -292,6 +297,10 @@ final class QuickPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    /// Private AppKit hook (as System-Spinner's OSD uses): the glass and the controls keep their active look while the
+    /// app itself stays in the background, which is where this panel spends its life.
+    @objc(_hasActiveAppearance) dynamic func hasActiveAppearance() -> Bool { true }
 
     override func cancelOperation(_ sender: Any?) {
         onEscape?()
