@@ -21,7 +21,8 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
     private(set) var chats: [Chat] = []
     /// Another surface (panel, API) is writing into the selected chat; the stored messages are all there is to show.
     private var remoteGenerating = false
-    /// Bumped when the transcript should land on the newest message: history loaded, or the window came back to the front.
+    /// Bumped when the transcript should land on the newest message whatever the user was reading: another chat
+    /// opened, the window came back to the front, a question sent. A reply growing or ending is followed by the view.
     private(set) var transcriptToken = 0
     /// Bumped when the window becomes key: the composer takes the keyboard, ready for the next question.
     private(set) var focusToken = 0
@@ -98,9 +99,8 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
 
     func displaysChat(_ chatID: UUID) -> Bool { selectedChatID == chatID }
 
-    func streamDidFinish(chatID: UUID) {
-        transcriptToken += 1
-    }
+    /// Nothing to refresh here: the end of a reply is followed by the transcript unless the user scrolled up to read.
+    func streamDidFinish(chatID: UUID) {}
 
     var acceptsImages: Bool { activeModel?.kind == .vlm }
 
@@ -119,13 +119,15 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
         }
         let loaded = await stream.fetchMessages(chatID: id)
         guard id == selectedChatID else { return }  // another chat was picked meanwhile; its own load follows
+        // The same chat reloads four times a second while another surface writes into it; only a new one jumps.
+        let opened = loadedChatID != id
         stream.setMessages(loaded)
         loadedChatID = id
         let wasRemote = remoteGenerating
         remoteGenerating = await container.conversation.isGenerating(chatID: id) && !stream.isGenerating
         // A reply that ran on another surface just ended: questions queued here may go out now.
         if wasRemote, !remoteGenerating { stream.drainQueue() }
-        transcriptToken += 1
+        if opened { transcriptToken += 1 }
     }
 
     /// The chat whose messages are on screen; until it matches the selection the transcript is still loading.
@@ -214,6 +216,7 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
     /// Sends the composer, or queues it while the model is still answering or thinking (here or on another surface).
     func send() {
         stream.send(chatID: selectedChatID, surfaceBusy: remoteGenerating)
+        transcriptToken += 1
     }
 
     /// Questions waiting for the chat on screen.
@@ -223,6 +226,7 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
     func regenerate() {
         guard let chatID = selectedChatID else { return }
         stream.regenerate(chatID: chatID)
+        transcriptToken += 1
     }
 
     func stop() {
@@ -629,71 +633,51 @@ private struct ChatsSplitView: View {
 
     private var transcript: some View {
         let visible = viewModel.messages.filter { $0.role == .user || $0.role == .assistant }
-        return ScrollViewReader { proxy in
-            ScrollView {
-                // Not lazy: a lazy stack guessed the heights of rows it had not drawn yet, so the scroll jumped while an
-                // answer streamed, rows stayed blank until another chat was opened and a reused row could draw flipped.
-                VStack(alignment: .leading, spacing: 18) {
-                    ForEach(Array(visible.enumerated()), id: \.element.id) { position, m in
-                        TranscriptRow(
-                            message: m, position: position, context: visible,
-                            isStreamedPlaceholder: isStreamedPlaceholder(m),
-                            thoughtSeconds: viewModel.thoughtSeconds[m.id]
-                        ) { message, summary in
-                            ChatMessageView(
-                                message: message, summary: summary,
-                                onRegenerate: message.id == visible.last?.id && message.role == .assistant && !viewModel.isGenerating
-                                    ? { viewModel.regenerate() } : nil)
-                        }
-                    }
-                    TranscriptTail(
-                        progress: viewModel.progress, engineState: viewModel.engineState,
-                        errorMessage: viewModel.errorMessage, anchorHeight: 1
-                    ) {
-                        // While the model's thinking is shown, the raw stream goes in and the view splits it.
-                        let thinkingShown = viewModel.activeModel.map { container.showsReasoning(modelID: $0.id) } ?? false
-                        if !viewModel.visibleStreamingText.isEmpty || (thinkingShown && !viewModel.streamingText.isEmpty) {
-                            ChatMessageView(
-                                message: Message(
-                                    chatID: UUID(), role: .assistant,
-                                    text: thinkingShown ? viewModel.streamingText : viewModel.visibleStreamingText, isPartial: true,
-                                    modelID: thinkingShown ? viewModel.activeModel?.id : nil),
-                                onRegenerate: nil
-                            )
-                            .id("streaming")
-                        }
+        return ScrollView {
+            // Not lazy: a lazy stack guessed the heights of rows it had not drawn yet, so the scroll jumped while an
+            // answer streamed, rows stayed blank until another chat was opened and a reused row could draw flipped.
+            VStack(alignment: .leading, spacing: 18) {
+                ForEach(Array(visible.enumerated()), id: \.element.id) { position, m in
+                    TranscriptRow(
+                        message: m, position: position, context: visible,
+                        isStreamedPlaceholder: isStreamedPlaceholder(m),
+                        thoughtSeconds: viewModel.thoughtSeconds[m.id]
+                    ) { message, summary in
+                        ChatMessageView(
+                            message: message, summary: summary,
+                            onRegenerate: message.id == visible.last?.id && message.role == .assistant && !viewModel.isGenerating
+                                ? { viewModel.regenerate() } : nil)
                     }
                 }
-                .padding(.horizontal, 16).padding(.vertical, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                TranscriptTail(
+                    progress: viewModel.progress, engineState: viewModel.engineState,
+                    errorMessage: viewModel.errorMessage
+                ) {
+                    // While the model's thinking is shown, the raw stream goes in and the view splits it.
+                    let thinkingShown = viewModel.activeModel.map { container.showsReasoning(modelID: $0.id) } ?? false
+                    if !viewModel.visibleStreamingText.isEmpty || (thinkingShown && !viewModel.streamingText.isEmpty) {
+                        ChatMessageView(
+                            message: Message(
+                                chatID: UUID(), role: .assistant,
+                                text: thinkingShown ? viewModel.streamingText : viewModel.visibleStreamingText, isPartial: true,
+                                modelID: thinkingShown ? viewModel.activeModel?.id : nil),
+                            onRegenerate: nil
+                        )
+                        .id("streaming")
+                    }
+                }
             }
-            // Growing content stays pinned to the bottom by the anchor; no scroll per token, which made the view jump.
-            .defaultScrollAnchor(.bottom, for: .initialOffset)
-            .defaultScrollAnchor(.bottom, for: .sizeChanges)
-            .onChange(of: viewModel.messages.count) { _, _ in scrollToEnd(proxy) }
-            // A freshly loaded history is laid out a frame later, so the jump to its end waits for that.
-            .onAppear { scrollToEnd(proxy) }
-            .onChange(of: viewModel.transcriptToken) { _, _ in scrollToEnd(proxy) }
-            // Questions put in the queue are pinned above the composer: the transcript loses that much height, and
-            // without this the end of the reply being written is pushed out of sight.
-            .onChange(of: viewModel.queuedHere.count) { _, _ in scrollToEnd(proxy) }
-            // A finished reply does not change the message count — its stored copy was inserted when it began — yet the
-            // streamed tail is swapped for that copy, which adds the summary line, the buttons and Markdown laid out in
-            // full. Nothing above would scroll for that, and with the thinking shown the transcript is long enough by
-            // then for the swap to leave the answer below the fold.
-            .onChange(of: viewModel.streamsHere) { _, streams in if !streams { scrollToEnd(proxy) } }
-            // The stored copy comes from the store a frame or more after the tail goes, carrying the final text.
-            .onChange(of: viewModel.messages.last?.isPartial) { _, _ in scrollToEnd(proxy) }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // Growing text, the finished reply replacing the streamed one and the queue taking height are all followed
+        // there, and only while the user has not scrolled up to read.
+        .followsTranscriptEnd(jumpOn: viewModel.transcriptToken)
     }
 
     /// The stored copy of the reply being written: the streamed text stands for it, otherwise it shows as a stray "…".
     private func isStreamedPlaceholder(_ message: Message) -> Bool {
         viewModel.streamsHere && message.id == viewModel.messages.last?.id && message.role == .assistant && message.toolCalls.isEmpty
-    }
-
-    private func scrollToEnd(_ proxy: ScrollViewProxy) {
-        TranscriptScroll.toBottom(proxy, after: 60)
     }
 
     // Composer: text on top; below it attach, context usage, the chat's model and send/stop.

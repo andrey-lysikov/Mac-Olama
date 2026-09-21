@@ -2149,6 +2149,16 @@
         }
       }
     },
+    "Scroll to the end" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прокрутить до конца"
+          }
+        }
+      }
+    },
     "Search" : {
       "localizations" : {
         "ru" : {

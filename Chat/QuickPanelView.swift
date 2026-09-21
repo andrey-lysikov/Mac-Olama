@@ -172,74 +172,55 @@ struct QuickPanelView: View {
     }
 
     private var transcript: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                // Not lazy: in a viewport that starts one point tall a lazy stack renders only its bottom rows and guesses
-                // the rest, so the question went missing and the measured height was wrong.
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(Array(exchanges.enumerated()), id: \.offset) { index, exchange in
-                        if index > 0 { Divider() }
-                        ForEach(Array(exchange.enumerated()), id: \.element.id) { position, message in
-                            TranscriptRow(
-                                message: message, position: position, context: exchange,
-                                isStreamedPlaceholder: isStreamedPlaceholder(message),
-                                thoughtSeconds: viewModel.thoughtSeconds[message.id]
-                            ) { message, summary in
-                                MessageView(message: message, summary: summary)
-                            }
-                        }
-                    }
-                    TranscriptTail(
-                        progress: viewModel.progress, engineState: viewModel.engineState, errorMessage: viewModel.errorMessage
-                    ) {
-                        // While the model's thinking is shown, the raw stream goes in and the view splits it.
-                        let thinkingShown = viewModel.activeModel.map { container.showsReasoning(modelID: $0.id) } ?? false
-                        if !viewModel.visibleStreamingText.isEmpty || (thinkingShown && !viewModel.streamingText.isEmpty) {
-                            MessageView(
-                                message: Message(
-                                    chatID: UUID(), role: .assistant,
-                                    text: thinkingShown ? viewModel.streamingText : viewModel.visibleStreamingText, isPartial: true,
-                                    modelID: thinkingShown ? viewModel.activeModel?.id : nil))
+        ScrollView {
+            // Not lazy: in a viewport that starts one point tall a lazy stack renders only its bottom rows and guesses
+            // the rest, so the question went missing and the measured height was wrong.
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(Array(exchanges.enumerated()), id: \.offset) { index, exchange in
+                    if index > 0 { Divider() }
+                    ForEach(Array(exchange.enumerated()), id: \.element.id) { position, message in
+                        TranscriptRow(
+                            message: message, position: position, context: exchange,
+                            isStreamedPlaceholder: isStreamedPlaceholder(message),
+                            thoughtSeconds: viewModel.thoughtSeconds[message.id]
+                        ) { message, summary in
+                            MessageView(message: message, summary: summary)
                         }
                     }
                 }
-                // The extra top inset keeps the first lines clear of the rounded glass edge when scrolled to the start.
-                .padding(.horizontal, 16).padding(.top, 20).padding(.bottom, 12)
-                .onGeometryChange(for: CGFloat.self) {
-                    $0.size.height
-                } action: {
-                    transcriptHeight = $0
+                TranscriptTail(
+                    progress: viewModel.progress, engineState: viewModel.engineState, errorMessage: viewModel.errorMessage
+                ) {
+                    // While the model's thinking is shown, the raw stream goes in and the view splits it.
+                    let thinkingShown = viewModel.activeModel.map { container.showsReasoning(modelID: $0.id) } ?? false
+                    if !viewModel.visibleStreamingText.isEmpty || (thinkingShown && !viewModel.streamingText.isEmpty) {
+                        MessageView(
+                            message: Message(
+                                chatID: UUID(), role: .assistant,
+                                text: thinkingShown ? viewModel.streamingText : viewModel.visibleStreamingText, isPartial: true,
+                                modelID: thinkingShown ? viewModel.activeModel?.id : nil))
+                    }
                 }
             }
-            // A scroll view has no height of its own: it follows the text until the panel reaches its height limit,
-            // then the text scrolls inside it.
-            .frame(height: min(max(transcriptHeight, 1), max(viewModel.heightLimit - controlsHeight - 1, 64)))
-            // Growing content stays pinned to its bottom, so the streamed answer never runs below the fold.
-            .defaultScrollAnchor(.bottom, for: .initialOffset)
-            .defaultScrollAnchor(.bottom, for: .sizeChanges)
-            // The anchor above keeps the streamed answer in view; scrolling on every token as well made the view jump.
-            .onChange(of: viewModel.messages.count) { _, _ in scrollToBottom(proxy) }
-            .onChange(of: viewModel.progress?.steps.count) { _, _ in scrollToBottom(proxy) }
-            // Opening the panel keeps the transcript it had last time: start at the newest exchange, not where it was left.
-            .onChange(of: viewModel.transcriptToken) { _, _ in scrollToBottom(proxy) }
-            // Questions put in the queue are pinned above the input: the transcript loses that much height, and
-            // without this the end of the reply being written is pushed out of sight.
-            .onChange(of: viewModel.queuedQuestions.count) { _, _ in scrollToBottom(proxy) }
-            .onChange(of: viewModel.isGenerating) { _, generating in
-                guard !generating else { return }
-                scrollToBottom(proxy)
+            // The extra top inset keeps the first lines clear of the rounded glass edge when scrolled to the start.
+            .padding(.horizontal, 16).padding(.top, 20).padding(.bottom, 12)
+            .onGeometryChange(for: CGFloat.self) {
+                $0.size.height
+            } action: {
+                transcriptHeight = $0
             }
         }
+        // Growing text, a tool round, the finished reply and the queue taking height are followed there, and only
+        // while the user has not scrolled up to read. Applied to the scroll view itself, inside the frame below.
+        .followsTranscriptEnd(jumpOn: viewModel.transcriptToken)
+        // A scroll view has no height of its own: it follows the text until the panel reaches its height limit,
+        // then the text scrolls inside it.
+        .frame(height: min(max(transcriptHeight, 1), max(viewModel.heightLimit - controlsHeight - 1, 64)))
     }
 
     /// The stored copy of the reply being written: the streamed text below stands for it, otherwise it shows as a stray "…".
     private func isStreamedPlaceholder(_ message: Message) -> Bool {
         viewModel.isGenerating && message.id == viewModel.messages.last?.id && message.role == .assistant && message.toolCalls.isEmpty
-    }
-
-    /// The panel grows a frame later than the text, so the shared scroll helper waits a little longer here.
-    private func scrollToBottom(_ proxy: ScrollViewProxy) {
-        TranscriptScroll.toBottom(proxy, after: 120)
     }
 
 }

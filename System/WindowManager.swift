@@ -170,12 +170,16 @@ final class WindowManager: NSObject, NSWindowDelegate {
         return window
     }
 
-    /// Back to accessory mode when the last regular window closes, so no Dock icon lingers.
-    func windowWillClose(_ notification: Notification) {
-        guard let closing = notification.object as? NSWindow else { return }
-        let others = NSApp.windows.filter { $0 !== closing && $0.isVisible && !($0 is NSPanel) && $0.styleMask.contains(.titled) }
+    /// Closing only hides the window. A closed window keeps its SwiftUI content alive but detached from the screen, and
+    /// selectable text laid out meanwhile — a reply streaming in, the panel writing into the chat — came back drawn
+    /// upside down. A window ordered out lays it out the right way up.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender.orderOut(nil)
+        // Back to accessory mode when the last regular window goes, so no Dock icon lingers.
+        let others = NSApp.windows.filter { $0 !== sender && $0.isVisible && !($0 is NSPanel) && $0.styleMask.contains(.titled) }
         if others.isEmpty {
             DispatchQueue.main.async { NSApp.setActivationPolicy(.accessory) }
         }
+        return false
     }
 }

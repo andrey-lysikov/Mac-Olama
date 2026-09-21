@@ -351,7 +351,8 @@ final class QuickPanelViewModel: ConversationStreamDelegate, ConversationStreamH
     /// What the panel may really take: the limit above, cut by the room between the field and the top of the screen.
     var heightLimit: CGFloat = 480
     private(set) var chat: Chat? { didSet { container.panelChatID = chat?.id } }
-    /// Bumped when the transcript should jump back to the newest exchange: the panel was opened, or the chat changed.
+    /// Bumped when the transcript should jump back to the newest exchange: the panel was opened, the chat changed, or a
+    /// question was sent. A reply growing or ending is followed by the view.
     private(set) var transcriptToken = 0
     private var storeTask: Task<Void, Never>?
 
@@ -431,6 +432,7 @@ final class QuickPanelViewModel: ConversationStreamDelegate, ConversationStreamH
             return
         }
         stream.send(chatID: chat?.id)
+        transcriptToken += 1
     }
 
     // Store sync (the reply may have finished while the panel was closed)

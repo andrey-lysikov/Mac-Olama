@@ -41,14 +41,12 @@ struct TranscriptRow<Row: View>: View {
 
 // TranscriptTail
 
-/// The tail of a transcript: live progress of the running reply, the streamed text, the error, and the anchor
-/// every scroll below aims at. The surface passes the streamed message as `streaming` (its condition differs).
+/// The tail of a transcript: live progress of the running reply, the streamed text and the error. The surface passes
+/// the streamed message as `streaming` (its condition differs).
 struct TranscriptTail<Streaming: View>: View {
     let progress: GenerationProgress?
     let engineState: EngineState
     let errorMessage: String?
-    /// Height of the anchor line; the window keeps 1 pt, the panel 0.
-    var anchorHeight: CGFloat = 0
     @ViewBuilder let streaming: () -> Streaming
 
     var body: some View {
@@ -57,7 +55,6 @@ struct TranscriptTail<Streaming: View>: View {
         }
         streaming()
         if let errorMessage { ErrorLine(text: errorMessage) }
-        Color.clear.frame(height: anchorHeight).id("bottom")
     }
 }
 
@@ -76,17 +73,73 @@ struct ErrorLine: View {
     }
 }
 
-// TranscriptScroll
+// TranscriptFollow
 
-/// The last token, the layout growing and the stored message replacing the streamed one land in different frames,
-/// so the jump to the transcript's end waits for the layout to settle. No animation: it fought the layout changing.
-@MainActor
-enum TranscriptScroll {
-    static func toBottom(_ proxy: ScrollViewProxy, after milliseconds: Int) {
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(milliseconds))
-            proxy.scrollTo("bottom", anchor: .bottom)
-        }
+/// Keeps the transcript on its end while a reply is thought and written, and lets go as soon as the user scrolls up
+/// to read. The arrow at the bottom right brings it back and it follows again; scrolling down to the end by hand does
+/// the same. `jumpOn` changes when the newest message must come into view regardless: a sent question, another chat.
+struct TranscriptFollow<Jump: Equatable>: ViewModifier {
+    let jumpOn: Jump
+    @State private var position = ScrollPosition(edge: .bottom)
+    @State private var following = true
+
+    /// Where the view stands. A growing transcript never moves the offset back, only the user scrolling up does,
+    /// so the two are told apart without scroll phases, which the scroller's knob does not report.
+    private struct Place: Equatable {
+        var offset: CGFloat
+        var gap: CGFloat
+    }
+
+    /// Closer than this to the end still counts as the end, so a nudge of the trackpad does not let go.
+    private static var slack: CGFloat { 32 }
+
+    func body(content: Content) -> some View {
+        content
+            .scrollPosition($position)
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            // While following, the anchor holds the end as text grows, without a scroll per token; while the user
+            // reads, it is off, so the lines being read do not slide away under the new ones.
+            .defaultScrollAnchor(following ? .bottom : nil, for: .sizeChanges)
+            .onScrollGeometryChange(for: Place.self) { geometry in
+                Place(offset: geometry.contentOffset.y, gap: max(0, geometry.contentSize.height - geometry.visibleRect.maxY))
+            } action: { old, new in
+                if new.gap <= Self.slack {
+                    following = true
+                } else if new.offset < old.offset - 1 {
+                    following = false
+                } else if following {
+                    // What the anchor does not cover: the streamed tail swapped for the stored reply, a tool round.
+                    position.scrollTo(edge: .bottom)
+                }
+            }
+            .onChange(of: jumpOn) { _, _ in toEnd() }
+            .overlay(alignment: .bottomTrailing) {
+                ZStack {
+                    if !following {
+                        Button(action: toEnd) {
+                            Image(systemName: "arrow.down")
+                        }
+                        .buttonStyle(.glass).buttonBorderShape(.circle).controlSize(.large)
+                        .help(String(localized: "Scroll to the end"))
+                        .padding(16)
+                        .transition(.opacity)
+                    }
+                }
+                // Only the arrow fades: an animation on the scroll view itself fought the layout changing.
+                .animation(.easeOut(duration: 0.15), value: following)
+            }
+    }
+
+    private func toEnd() {
+        following = true
+        position.scrollTo(edge: .bottom)
+    }
+}
+
+extension View {
+    /// See `TranscriptFollow`.
+    func followsTranscriptEnd(jumpOn: some Equatable) -> some View {
+        modifier(TranscriptFollow(jumpOn: jumpOn))
     }
 }
 
