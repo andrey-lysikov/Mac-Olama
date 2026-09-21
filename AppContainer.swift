@@ -1007,6 +1007,8 @@ final class AppContainer {
     func setSearchResults(_ count: Int) { updateToolSetting(\.searchResults, to: min(max(count, 3), 12)) }
 
     func setPanelClosesOnFocusLoss(_ closes: Bool) { settings.panelClosesOnFocusLoss = closes }
+    func setVoiceInputEnabled(_ enabled: Bool) { settings.voiceInputEnabled = enabled }
+    func setVoiceAutoSend(_ sends: Bool) { settings.voiceAutoSend = sends }
 
     /// Writes one API setting and restarts the server; an unchanged value restarts nothing.
     private func updateAPISetting<V: Equatable>(_ keyPath: ReferenceWritableKeyPath<AppSettings, V>, to value: V) {
@@ -1356,6 +1358,14 @@ final class AppSettings {
     var panelClosesOnFocusLoss: Bool {
         get { bool(.panelClosesOnFocusLoss) }
         set { set(newValue, .panelClosesOnFocusLoss) }
+    }
+    var voiceInputEnabled: Bool {
+        get { bool(.voiceInputEnabled) }
+        set { set(newValue, .voiceInputEnabled) }
+    }
+    var voiceAutoSend: Bool {
+        get { bool(.voiceAutoSend) }
+        set { set(newValue, .voiceAutoSend) }
     }
     var panelGeometry: [Double] {
         get { access(keyPath: \.token); return defaults.array(forKey: SettingsKey.panelGeometry.rawValue) as? [Double] ?? [] }

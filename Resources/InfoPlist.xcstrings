@@ -176,6 +176,24 @@
         }
       }
     },
+    "NSMicrophoneUsageDescription" : {
+      "comment" : "NSMicrophone usage",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama listens only while you press the microphone button, to turn your question into text on this Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama слушает, только пока вы нажали кнопку микрофона, чтобы превратить ваш вопрос в текст прямо на этом Mac."
+          }
+        }
+      }
+    },
     "NSRemindersFullAccessUsageDescription" : {
       "comment" : "NSRemindersFullAccess usage",
       "extractionState" : "manual",
@@ -208,6 +226,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mac-Olama читает ваши напоминания для модели, только когда включены «Календарь и напоминания»; добавление ждёт вашего подтверждения."
+          }
+        }
+      }
+    },
+    "NSSpeechRecognitionUsageDescription" : {
+      "comment" : "NSSpeechRecognition usage",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Speech is recognized on this Mac to type your dictated question into the field."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Речь распознаётся на этом Mac, чтобы вписать надиктованный вопрос в поле."
           }
         }
       }

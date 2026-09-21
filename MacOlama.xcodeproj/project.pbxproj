@@ -73,6 +73,7 @@
 				SwiftDataChatStore.swift,
 				Transcript.swift,
 				TranscriptMap.swift,
+				VoiceInput.swift,
 			);
 			target = E100000000000000000000E1 /* MacOlama */;
 		};

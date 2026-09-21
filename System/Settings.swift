@@ -78,6 +78,8 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case downloadSpeedLimitMBps = "downloadSpeedLimitMBps"  // Int, MB/s cap for model downloads; 0 = unlimited
     case downloadConcurrentFiles = "downloadConcurrentFiles"  // Int 1...4: files of one download fetched in parallel
     case preferredLanguage = "preferredLanguage"  // String: English name of the language replies come in; "" = follow the user
+    case voiceInputEnabled = "voiceInputEnabled"  // Bool: the microphone button next to the paperclip
+    case voiceAutoSend = "voiceAutoSend"  // Bool: a dictated question goes out by itself after a pause
 }
 
 public enum SettingsDefaults {
@@ -117,6 +119,8 @@ public enum SettingsDefaults {
             SettingsKey.downloadSpeedLimitMBps.rawValue: 0,
             SettingsKey.downloadConcurrentFiles.rawValue: downloadConcurrentFiles,
             SettingsKey.preferredLanguage.rawValue: "",
+            SettingsKey.voiceInputEnabled.rawValue: true,
+            SettingsKey.voiceAutoSend.rawValue: false,
         ]
     }
 }

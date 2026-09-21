@@ -35,6 +35,7 @@ struct SettingsSectionView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 group(String(localized: "Replies")) { replies }
+                group(String(localized: "Voice input")) { voiceInput }
                 group(String(localized: "Model Plugins")) { pluginGroups }
                 group(String(localized: "Web pages")) { web }
                 group(String(localized: "Unload the model automatically")) { unloading }
@@ -64,6 +65,21 @@ struct SettingsSectionView: View {
     ]
 
     // Sections
+
+    /// Dictation is recognized on this Mac in the preferred reply language, or the system's.
+    private var voiceInput: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            switchRow(
+                String(localized: "Microphone button"),
+                help: String(localized: "Dictate a question next to the paperclip, in the chats window and the panel"),
+                get: { container.settings.voiceInputEnabled }, set: { container.setVoiceInputEnabled($0) })
+            switchRow(
+                String(localized: "Send after a pause"),
+                help: String(localized: "A dictated question goes out by itself when you stop speaking"),
+                indented: true,
+                get: { container.settings.voiceAutoSend }, set: { container.setVoiceAutoSend($0) })
+        }
+    }
 
     private var replies: some View {
         pickerRow(

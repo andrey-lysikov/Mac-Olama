@@ -103,6 +103,10 @@ struct QuickPanelView: View {
             }
             .buttonStyle(.plain).font(.system(size: 16)).foregroundStyle(.secondary)
             .help(String(localized: "Attach file"))
+            if container.settings.voiceInputEnabled {
+                VoiceInputButton(text: $viewModel.input, disabled: viewModel.isGenerating) { viewModel.send() }
+                    .buttonStyle(.plain).font(.system(size: 16)).foregroundStyle(.secondary)
+            }
             TextField(String(localized: "Ask a question…"), text: $viewModel.input, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 20, weight: .regular))

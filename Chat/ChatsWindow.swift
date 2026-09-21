@@ -705,6 +705,10 @@ private struct ChatsSplitView: View {
                 }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
                 .help(String(localized: "Attach files"))
+                if container.settings.voiceInputEnabled {
+                    VoiceInputButton(text: $viewModel.input, disabled: viewModel.isGenerating) { viewModel.send() }
+                        .buttonStyle(.plain).foregroundStyle(.secondary)
+                }
                 Spacer(minLength: 4)
                 // Narrow window: the context estimate is the first thing to go, the model name truncates next.
                 ViewThatFits(in: .horizontal) {

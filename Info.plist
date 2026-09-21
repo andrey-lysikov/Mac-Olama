@@ -20,6 +20,10 @@
 	<string>Mac-Olama reads your reminders for a model only when you turn on Calendar and Reminders; adding one waits for your approval.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Mac-Olama looks up your contacts for a model only when you turn on Contacts and ask about someone.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Mac-Olama listens only while you press the microphone button, to turn your question into text on this Mac.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Speech is recognized on this Mac to type your dictated question into the field.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Mac-Olama needs this to reach a model served on your local network and to run network checks you ask for.</string>
 	<key>NSLocationUsageDescription</key>

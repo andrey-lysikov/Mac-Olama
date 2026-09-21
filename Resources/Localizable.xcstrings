@@ -115,6 +115,16 @@
         }
       }
     },
+    "A dictated question goes out by itself when you stop speaking" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Надиктованный вопрос отправляется сам, когда вы замолкаете"
+          }
+        }
+      }
+    },
     "A drafter is installed, MTP is off" : {
       "localizations" : {
         "ru" : {
@@ -948,6 +958,26 @@
         }
       }
     },
+    "Dictate" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Диктовать"
+          }
+        }
+      }
+    },
+    "Dictate a question next to the paperclip, in the chats window and the panel" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Надиктовать вопрос кнопкой рядом со скрепкой — в окне чатов и в панели"
+          }
+        }
+      }
+    },
     "Do not unload" : {
       "localizations" : {
         "ru" : {
@@ -1268,6 +1298,16 @@
         }
       }
     },
+    "Getting speech recognition ready…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готовлю распознавание речи…"
+          }
+        }
+      }
+    },
     "Hide the chat list" : {
       "localizations" : {
         "ru" : {
@@ -1409,6 +1449,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не закрывать панель при клике вне её"
+          }
+        }
+      }
+    },
+    "Listening… press again or pause to stop" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Слушаю… нажмите ещё раз или сделайте паузу, чтобы закончить"
           }
         }
       }
@@ -1567,6 +1617,16 @@
     "Mac-Olama" : {
       "shouldTranslate" : false
     },
+    "Mac-Olama may not use the microphone: allow it in System Settings → Privacy & Security → Microphone." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama не может использовать микрофон: разрешите его в Системных настройках → Конфиденциальность и безопасность → Микрофон."
+          }
+        }
+      }
+    },
     "Mac-Olama update" : {
       "localizations" : {
         "ru" : {
@@ -1623,6 +1683,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Максимум (%lldk)"
+          }
+        }
+      }
+    },
+    "Microphone button" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кнопка микрофона"
           }
         }
       }
@@ -2779,6 +2849,16 @@
         }
       }
     },
+    "Send after a pause" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправлять после паузы"
+          }
+        }
+      }
+    },
     "Server error %lld: %@" : {
       "localizations" : {
         "ru" : {
@@ -2855,6 +2935,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Показать список чатов"
+          }
+        }
+      }
+    },
+    "Speech recognition did not start: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Распознавание речи не запустилось: %@"
+          }
+        }
+      }
+    },
+    "Speech recognition has no audio format for this microphone." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Распознавание речи не поддерживает формат звука этого микрофона."
           }
         }
       }
@@ -3462,6 +3562,16 @@
         }
       }
     },
+    "This Mac cannot recognize speech in %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот Mac не умеет распознавать речь на языке: %@."
+          }
+        }
+      }
+    },
     "This Mac only" : {
       "localizations" : {
         "ru" : {
@@ -3748,6 +3858,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Версия %@ актуальна."
+          }
+        }
+      }
+    },
+    "Voice input" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Голосовой ввод"
           }
         }
       }
