@@ -19,6 +19,7 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
     private var panel: QuickPanel!
     private var focusObserver: Any?
     private var screenObserver: Any?
+    private var overlayObserver: Any?
 
     // Plain constants: `PanelPlacement` and the tests read them outside the main actor.
     nonisolated static let defaultWidth: CGFloat = 680
@@ -41,6 +42,23 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.screenParametersDidChange() }
         }
+        // Tooltips and popovers are windows of their own, below the panel's screen-saver level, so one shown over the
+        // panel came out under it. Each is lifted over the panel as it appears (its occlusion changes then).
+        overlayObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification, object: nil, queue: .main
+        ) { note in
+            let window = note.object as? NSWindow
+            MainActor.assumeIsolated { Self.lift(window) }
+        }
+    }
+
+    /// Over the panel, as the file dialog is: AppKit's tooltip panel and popover windows only, by their class names.
+    private static func lift(_ window: NSWindow?) {
+        guard let window, window.isVisible else { return }
+        let kind = String(describing: type(of: window))
+        guard kind.contains("ToolTip") || kind.contains("Popover") else { return }
+        let above = NSWindow.Level.screenSaver.rawValue + 1
+        if window.level.rawValue < above { window.level = NSWindow.Level(rawValue: above) }
     }
 
     private func makePanel() {
