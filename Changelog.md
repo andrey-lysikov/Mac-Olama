@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4
+
+- Enable arrow for chat scroll position.
+- Update icon for new chat in panel.
+- Contexts are shown in the panel search input; move them to the bottom.
+- Get Location plugin.
+- Maps plugin for LLM.
+- Safari browser control plugin for LLM.
+- Calendar plugin control.
+- Screen control plugin.
+- Timer and Time plugin.
+
 ## 0.3
 
 - Rewrite chat windows
