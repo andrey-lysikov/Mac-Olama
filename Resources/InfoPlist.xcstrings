@@ -37,6 +37,24 @@
         }
       }
     },
+    "NSAppleEventsUsageDescription" : {
+      "comment" : "Apple Events usage",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama controls Safari only when you turn on Safari Control and ask a model to open or read a page."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama управляет Safari, только когда вы включили «Управление Safari» и попросили модель открыть или прочитать страницу."
+          }
+        }
+      }
+    },
     "NSHumanReadableCopyright" : {
       "comment" : "Copyright (human-readable)",
       "extractionState" : "extracted_with_value",

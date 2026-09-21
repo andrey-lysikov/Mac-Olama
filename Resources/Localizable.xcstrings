@@ -576,6 +576,16 @@
         }
       }
     },
+    "Clicking in Safari…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нажимаю в Safari…"
+          }
+        }
+      }
+    },
     "Close the panel when it loses focus" : {
       "localizations" : {
         "ru" : {
@@ -1273,6 +1283,16 @@
         }
       }
     },
+    "Looking at Safari…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Смотрю страницу в Safari…"
+          }
+        }
+      }
+    },
     "Looking at your files…" : {
       "localizations" : {
         "ru" : {
@@ -1848,6 +1868,26 @@
         }
       }
     },
+    "Opening %@ in Safari…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открываю %@ в Safari…"
+          }
+        }
+      }
+    },
+    "Opening a page in Safari…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открываю страницу в Safari…"
+          }
+        }
+      }
+    },
     "Opening the page…" : {
       "localizations" : {
         "ru" : {
@@ -1964,6 +2004,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Предпочитаемый язык"
+          }
+        }
+      }
+    },
+    "Press “%@” on %@?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нажать «%1$@» на %2$@?"
           }
         }
       }
@@ -2195,6 +2245,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Запускаю быструю команду «%@»…"
+          }
+        }
+      }
+    },
+    "Safari Control" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Управление Safari"
           }
         }
       }
@@ -2501,6 +2561,16 @@
         }
       }
     },
+    "Text: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Текст: %@"
+          }
+        }
+      }
+    },
     "the answer is not JSON" : {
       "localizations" : {
         "ru" : {
@@ -2651,6 +2721,16 @@
         }
       }
     },
+    "The model may open, read and click pages in your Safari; you approve typing and sending forms. Needs Safari's Develop → Allow JavaScript from Apple Events" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может открывать, читать и нажимать страницы в вашем Safari; ввод текста и отправку форм подтверждаете вы. Нужно включить в Safari «Разработка → Разрешить JavaScript из Apple Events»"
+          }
+        }
+      }
+    },
     "The model may read this Mac's state: battery, disk space, memory, processes" : {
       "localizations" : {
         "ru" : {
@@ -2772,6 +2852,16 @@
         }
       }
     },
+    "Then the form is sent." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Затем форма будет отправлена."
+          }
+        }
+      }
+    },
     "Thinking · %lld s" : {
       "localizations" : {
         "ru" : {
@@ -2812,6 +2902,16 @@
         }
       }
     },
+    "This downloads a file." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это скачает файл."
+          }
+        }
+      }
+    },
     "This drafter only verifies greedy decoding, so the temperature stays at 0" : {
       "localizations" : {
         "ru" : {
@@ -2848,6 +2948,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Репозиторий закрыт. Добавьте токен Hugging Face и примите лицензию на huggingface.co."
+          }
+        }
+      }
+    },
+    "This sends a form." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это отправит форму."
           }
         }
       }
@@ -2912,12 +3022,32 @@
         }
       }
     },
+    "Type into “%@” on %@?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ввести текст в «%1$@» на %2$@?"
+          }
+        }
+      }
+    },
     "Type the model's name as the server knows it, e.g. qwen3:8b." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Введите имя модели так, как его знает сервер, например qwen3:8b."
+          }
+        }
+      }
+    },
+    "Typing in Safari…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ввожу текст в Safari…"
           }
         }
       }

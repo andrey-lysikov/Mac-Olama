@@ -112,6 +112,7 @@
 				LocalTools.swift,
 				LocationTool.swift,
 				MapsTool.swift,
+				SafariTool.swift,
 				Settings.swift,
 				SettingsSection.swift,
 				SystemServices.swift,

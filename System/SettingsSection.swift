@@ -367,6 +367,7 @@ struct SettingsSectionView: View {
         case .network: String(localized: "Network Diagnostics")
         case .weather: String(localized: "Weather")
         case .location: String(localized: "Maps and Location")
+        case .browser: String(localized: "Safari Control")
         }
     }
 
@@ -378,6 +379,11 @@ struct SettingsSectionView: View {
         case .weather: String(localized: "The model may look up the weather (Open-Meteo)")
         case .location:
             String(localized: "The model may find out where this Mac is and use Apple Maps for routes, distances and places")
+        case .browser:
+            String(
+                localized:
+                    "The model may open, read and click pages in your Safari; you approve typing and sending forms. Needs Safari's Develop → Allow JavaScript from Apple Events"
+            )
         }
     }
 }

@@ -8,6 +8,8 @@
 	<true/>
 	<key>LSRequiresNativeExecution</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Mac-Olama controls Safari only when you turn on Safari Control and ask a model to open or read a page.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Mac-Olama needs this to reach a model served on your local network and to run network checks you ask for.</string>
 	<key>NSLocationUsageDescription</key>

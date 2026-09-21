@@ -7,5 +7,8 @@
 	<!-- Hardened runtime keeps Location Services closed without it; used only by the Location tool (off by default). -->
 	<key>com.apple.security.personal-information.location</key>
 	<true/>
+	<!-- Hardened runtime blocks Apple Events without it; used only by Safari Control (off by default). -->
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
 </dict>
 </plist>

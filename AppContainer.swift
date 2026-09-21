@@ -1101,6 +1101,10 @@ final class AppContainer {
                 weather.usesCurrentPlace = isToolEnabled(.location)
                 providers.append(weather)
             case .location: providers += [LocationToolProvider(), MapsToolProvider()]
+            case .browser:
+                providers.append(
+                    SafariToolProvider(
+                        configuration: .init(pageCharacters: settings.pageCharacters, confirmation: NotificationService.shared)))
             }
         }
         if settings.shortcutsToolEnabled {
