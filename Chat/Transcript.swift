@@ -41,7 +41,7 @@ struct TranscriptRow<Row: View>: View {
 
 // TranscriptTail
 
-/// The tail of a transcript: live progress of the running reply, the streamed text and the error. The surface passes
+/// The tail of a transcript: the streamed text, live progress of the running reply and the error. The surface passes
 /// the streamed message as `streaming` (its condition differs).
 struct TranscriptTail<Streaming: View>: View {
     let progress: GenerationProgress?
@@ -50,10 +50,12 @@ struct TranscriptTail<Streaming: View>: View {
     @ViewBuilder let streaming: () -> Streaming
 
     var body: some View {
+        streaming()
+        // Under the text, not above it: the tool steps and the thinking counter scrolled out of sight over a long
+        // reply, while the end of the transcript is where the eye stays.
         if let progress {
             GenerationProgressView(progress: progress, engineState: engineState)
         }
-        streaming()
         if let errorMessage { ErrorLine(text: errorMessage) }
     }
 }
