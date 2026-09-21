@@ -4,30 +4,11 @@
 import AppKit
 import Foundation
 import PDFKit
-import Synchronization
 import UniformTypeIdentifiers
 import Vision
 
-// Local tools: read/search files inside user-approved folders and run user-made Shortcuts.
-// Every path is canonicalised and must sit under an allowed folder; side effects go through `ToolConfirmation`.
-
-/// Asks the user before a tool with side effects runs (the app shows a notification with Allow/Deny).
-public protocol ToolConfirmation: Sendable {
-    func confirm(title: String, detail: String) async -> Bool
-}
-
-/// Runs several providers as one; tool names must be unique across them.
-public struct CompositeToolProvider: ToolProvider {
-    let providers: [any ToolProvider]
-    public init(_ providers: [any ToolProvider]) { self.providers = providers }
-    public var specs: [ToolSpec] { providers.flatMap(\.specs) }
-    public func execute(_ call: ToolCall) async throws -> String {
-        guard let p = providers.first(where: { $0.specs.contains { $0.name == call.name } }) else {
-            throw ConversationError.unknownTool(call.name)
-        }
-        return try await p.execute(call)
-    }
-}
+// Files: read, search, recognize, write, move and pack inside user-approved folders, and find anything with Spotlight. Every path is canonicalised and must sit
+// under an allowed folder; side effects go through `ToolConfirmation`.
 
 // Files
 
@@ -93,6 +74,20 @@ public struct FileToolProvider: ToolProvider {
                 parametersJSONSchema:
                     #"{"type":"object","properties":{"target":{"type":"string","description":"File path inside an allowed folder, or an http(s) URL"}},"required":["target"]}"#
             ),
+            ToolSpec(
+                name: "move_file",
+                description:
+                    "Move or rename a file or folder inside the allowed folders (\(folders)). The user approves every move; an existing file is never replaced.",
+                parametersJSONSchema:
+                    #"{"type":"object","properties":{"from":{"type":"string","description":"What to move"},"to":{"type":"string","description":"New path, or an allowed folder to move it into"}},"required":["from","to"]}"#
+            ),
+            ToolSpec(
+                name: "make_archive",
+                description:
+                    "Pack a file or folder from the allowed folders (\(folders)) into a .zip next to it. The user approves it first.",
+                parametersJSONSchema:
+                    #"{"type":"object","properties":{"path":{"type":"string"},"to":{"type":"string","description":"Name or path of the archive; default <name>.zip next to it"}},"required":["path"]}"#
+            ),
         ]
     }
 
@@ -122,6 +117,12 @@ public struct FileToolProvider: ToolProvider {
         case "open_item":
             guard let target = args.string("target") else { return toolFailure(missing: "target") }
             return await openItem(target)
+        case "move_file":
+            guard let from = args.string("from"), let to = args.string("to") else { return toolFailure(missing: "from or to") }
+            return await move(from: from, to: to)
+        case "make_archive":
+            guard let path = args.string("path") else { return toolFailure(missing: "path") }
+            return try await archive(path, to: args.string("to"))
         default:
             throw ConversationError.unknownTool(call.name)
         }
@@ -259,6 +260,67 @@ public struct FileToolProvider: ToolProvider {
         return opened ? "Opened \(url.absoluteString)." : "error: the system could not open it"
     }
 
+    /// Both ends inside the allowed folders; a folder as the target takes the item in under its own name.
+    func move(from: String, to: String) async -> String {
+        guard let source = resolve(from) else { return "error: \(from) is not inside the allowed folders" }
+        var destination: URL
+        if let folder = resolve(to), (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+            destination = folder.appendingPathComponent(source.lastPathComponent)
+        } else if let target = resolveForWriting(to.contains("/") ? to : source.deletingLastPathComponent().appendingPathComponent(to).path)
+        {
+            destination = target
+        } else {
+            return "error: \(to) is not inside the allowed folders"
+        }
+        destination = destination.standardizedFileURL
+        guard !FileManager.default.fileExists(atPath: destination.path) else {
+            return "error: \(destination.path) already exists; it is never replaced"
+        }
+        let renaming = source.deletingLastPathComponent() == destination.deletingLastPathComponent()
+        guard let confirmation = configuration.confirmation else { return "error: moving needs the user's approval" }
+        let title =
+            renaming
+            ? String(localized: "Rename \(source.lastPathComponent) to \(destination.lastPathComponent)?")
+            : String(localized: "Move \(source.lastPathComponent)?")
+        guard await confirmation.confirm(title: title, detail: "\(source.path)\n→ \(destination.path)") else {
+            return "error: the user declined the move"
+        }
+        do {
+            try FileManager.default.moveItem(at: source, to: destination)
+            return "Moved \(source.path) to \(destination.path)."
+        } catch {
+            return "error: \(error.localizedDescription)"
+        }
+    }
+
+    /// A zip made by ditto, the way Finder's Compress makes one; it lands inside the allowed folders.
+    func archive(_ path: String, to target: String?) async throws -> String {
+        guard let source = resolve(path) else { return "error: \(path) is not inside the allowed folders" }
+        var name = target ?? source.lastPathComponent + ".zip"
+        if !name.lowercased().hasSuffix(".zip") { name += ".zip" }
+        guard
+            let destination = resolveForWriting(
+                name.contains("/") ? name : source.deletingLastPathComponent().appendingPathComponent(name).path)
+        else { return "error: the archive would land outside the allowed folders" }
+        guard !FileManager.default.fileExists(atPath: destination.path) else { return "error: \(destination.path) already exists" }
+        guard let confirmation = configuration.confirmation else { return "error: making an archive needs the user's approval" }
+        guard
+            await confirmation.confirm(
+                title: String(localized: "Pack \(source.lastPathComponent) into \(destination.lastPathComponent)?"),
+                detail: destination.path)
+        else { return "error: the user declined the archive" }
+        let out = try await ToolProcess.run(
+            URL(fileURLWithPath: "/usr/bin/ditto"), ["-c", "-k", "--sequesterRsrc", "--keepParent", source.path, destination.path],
+            timeout: 120)
+        guard FileManager.default.fileExists(atPath: destination.path) else {
+            return "error: the archive was not made (\(out.prefix(200)))"
+        }
+        let size = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map {
+            ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file)
+        }
+        return "Made \(destination.path)" + (size.map { " (\($0))." } ?? ".")
+    }
+
     func search(query: String, inContents: Bool, roots: [URL]) -> String {
         let needle = query.lowercased()
         var hits: [(URL, Int64, Date)] = []
@@ -297,235 +359,51 @@ public struct FileToolProvider: ToolProvider {
     }
 }
 
-// Shortcuts
+// Spotlight
 
-/// Runs user-created Shortcuts via `/usr/bin/shortcuts`. The user builds the shortcut; macOS asks for its permissions.
-public struct ShortcutToolProvider: ToolProvider {
-    public struct Configuration: Sendable {
-        public var binary = URL(fileURLWithPath: "/usr/bin/shortcuts")
-        public var timeout: TimeInterval = 120
-        public var maxOutputCharacters = 8000
-        public var confirmation: (any ToolConfirmation)?
-        public init(confirmation: (any ToolConfirmation)? = nil) { self.confirmation = confirmation }
-    }
+/// `spotlight_search`: files anywhere on this Mac by name and content, as the Spotlight menu finds them (mdfind). It
+/// only lists them: reading or opening one still needs its folder among the allowed ones.
+public struct SpotlightToolProvider: ToolProvider {
+    public var limit = 20
 
-    let configuration: Configuration
-    public init(configuration: Configuration = .init()) { self.configuration = configuration }
-
-    public var isAvailable: Bool { FileManager.default.isExecutableFile(atPath: configuration.binary.path) }
+    public init() {}
 
     public var specs: [ToolSpec] {
         [
             ToolSpec(
-                name: "list_shortcuts", description: "List the names of the user's Shortcuts (Apple Shortcuts app) that can be run.",
-                parametersJSONSchema: #"{"type":"object","properties":{}}"#),
-            ToolSpec(
-                name: "run_shortcut",
+                name: "spotlight_search",
                 description:
-                    "Run one of the user's Shortcuts by exact name, optionally passing text input. The user is asked to approve each run. Returns the shortcut's text output.",
+                    "Find files anywhere on this Mac by name or content with Spotlight: path, size, date changed. It only lists them; read_file and open_item work in the allowed folders.",
                 parametersJSONSchema:
-                    #"{"type":"object","properties":{"name":{"type":"string","description":"Exact shortcut name from list_shortcuts"},"input":{"type":"string","description":"Optional text passed as input"}},"required":["name"]}"#
-            ),
+                    #"{"type":"object","properties":{"query":{"type":"string","description":"Words to find in names or contents"},"kind":{"type":"string","enum":["any","document","pdf","image","presentation","spreadsheet","folder","music","movie"],"description":"Default any"}},"required":["query"]}"#
+            )
         ]
     }
 
     public func execute(_ call: ToolCall) async throws -> String {
-        guard isAvailable else { return "error: the shortcuts command is not available on this system" }
         let args = ToolArguments(call.argumentsJSON)
-        switch call.name {
-        case "list_shortcuts":
-            let out = try await ToolProcess.run(configuration.binary, ["list"], timeout: configuration.timeout)
-            return ToolOutput.wrap(out, source: "shortcuts list")
-        case "run_shortcut":
-            guard let name = args.string("name"), !name.isEmpty else { return toolFailure(missing: "name") }
-            let known = try await ToolProcess.run(configuration.binary, ["list"], timeout: configuration.timeout)
-                .split(whereSeparator: \.isNewline).map(String.init)
-            guard known.contains(name) else { return "error: no shortcut named \"\(name)\"; call list_shortcuts" }
-            let input = args.string("input")
-            if let confirmation = configuration.confirmation {
-                let allowed = await confirmation.confirm(
-                    title: "Run shortcut “\(name)”?", detail: input.map { "Input: \($0.prefix(200))" } ?? "No input")
-                guard allowed else { return "error: the user declined to run the shortcut" }
-            }
-            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("macolama-shortcut-\(UUID().uuidString).txt")
-            defer { try? FileManager.default.removeItem(at: tmp) }
-            var arguments = ["run", name, "--output-path", tmp.path]
-            var stdinData: Data?
-            if let input { arguments += ["--input-path", "-"]; stdinData = Data(input.utf8) }
-            let stderr = try await ToolProcess.run(configuration.binary, arguments, stdin: stdinData, timeout: configuration.timeout)
-            let output = (try? String(contentsOf: tmp, encoding: .utf8)) ?? ""
-            let text = output.isEmpty ? (stderr.isEmpty ? "Shortcut finished with no text output." : stderr) : output
-            return ToolOutput.wrap(String(text.prefix(configuration.maxOutputCharacters)), source: "shortcut: \(name)")
-        default:
-            throw ConversationError.unknownTool(call.name)
+        guard let query = args.string("query")?.trimmingCharacters(in: .whitespaces), !query.isEmpty else {
+            return toolFailure(missing: "query")
         }
-    }
-}
-
-// Processes
-
-/// Runs a fixed program (no shell) with a timeout; stdout and stderr together. Cancellation terminates the child.
-enum ToolProcess {
-    /// One-shot flag; a reference type, so the escaping completion can hold it without copying the non-copyable Mutex.
-    private final class ResumeGate: Sendable {
-        private let resumed = Mutex(false)
-        /// True the first time only.
-        func begin() -> Bool {
-            resumed.withLock { done -> Bool in
-                if done { return false }
-                done = true
-                return true
-            }
+        let kind = args.string("kind").flatMap { $0 == "any" ? nil : $0 }
+        // "kind:pdf" is read the way the Spotlight menu reads it; the query stays one argument, never a shell string.
+        let arguments = kind.map { ["-interpret", "\(query) kind:\($0)"] } ?? [query]
+        let out = try await ToolProcess.run(URL(fileURLWithPath: "/usr/bin/mdfind"), arguments, timeout: 15)
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        // What the user keeps, not the system's and the apps' own files that match any word.
+        let paths = out.split(separator: "\n").map(String.init).filter { path in
+            path.hasPrefix("/") && !path.contains("/Library/") && !path.contains("/.") && !path.contains(".app/")
+                && !path.hasPrefix("/System/") && !path.hasPrefix("/private/")
         }
-    }
-
-    static func run(_ binary: URL, _ arguments: [String], stdin: Data? = nil, timeout: TimeInterval = 20) async throws -> String {
-        let box = ProcessBox(binary: binary, arguments: arguments, stdin: stdin)
-        // Insurance against a double resume: whatever paths inside start() ever fire, the continuation resumes once.
-        let gate = ResumeGate()
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, any Error>) in
-                let finish: @Sendable (Result<String, any Error>) -> Void = { result in
-                    if gate.begin() { continuation.resume(with: result) }
-                }
-                do { try box.start(timeout: timeout) { finish(.success($0)) } } catch { finish(.failure(error)) }
-            }
-        } onCancel: {
-            box.terminate()
+        guard !paths.isEmpty else { return "Spotlight found nothing for \"\(query)\"." }
+        let lines = paths.prefix(limit).map { path -> String in
+            let values = try? URL(fileURLWithPath: path).resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            var line = path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : Substring(path)
+            if let size = values?.fileSize { line += ", " + ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file) }
+            if let date = values?.contentModificationDate { line += ", changed " + ToolDate.string(date, time: false) }
+            return "- " + line
         }
-    }
-
-    static func run(_ path: String, _ arguments: [String], timeout: TimeInterval = 20) async throws -> String {
-        try await run(URL(fileURLWithPath: path), arguments, timeout: timeout)
-    }
-}
-
-/// Shared output buffer: a reference type, so the pipe callbacks can hold it without copying the non-copyable Mutex.
-private final class OutputBuffer: Sendable {
-    private let storage = Mutex(Data())
-
-    /// Appends a chunk and reports the total size collected so far.
-    func append(_ chunk: Data) -> Int {
-        storage.withLock { data in
-            data.append(chunk)
-            return data.count
-        }
-    }
-
-    /// Appends the final drain and returns everything collected.
-    func finish(with rest: Data) -> Data {
-        storage.withLock { data in
-            data.append(rest)
-            return data
-        }
-    }
-}
-
-/// Owns a Process and its pipes; @unchecked because Process is not Sendable but is only touched from here.
-/// Output is drained concurrently so a chatty child never deadlocks on a full pipe; stdin is written after launch.
-final class ProcessBox: @unchecked Sendable {
-    static let maxOutputBytes = 2 << 20
-
-    private let process = Process()
-    private let output = Pipe()
-    private let stdin: Data?
-    private let collected = OutputBuffer()
-    /// One lock for the whole lifecycle: `run()` and `terminate()` race from different threads (cancel, timeout,
-    /// output overflow), and NSTask throws uncatchable ObjC exceptions when poked in the wrong state.
-    private let state = Mutex((terminated: false, launched: false))
-
-    init(binary: URL, arguments: [String], stdin: Data?) {
-        process.executableURL = binary
-        process.arguments = arguments
-        process.standardOutput = output
-        process.standardError = output
-        self.stdin = stdin
-        if stdin != nil { process.standardInput = Pipe() }
-    }
-
-    func start(timeout: TimeInterval, completion: @escaping @Sendable (String) -> Void) throws {
-        // Cancelled before launch: the child must not run at all, and the caller must still get an answer.
-        if state.withLock({ $0.terminated }) {
-            completion("")
-            return
-        }
-        let output = self.output
-        let collected = self.collected
-        // Raw read(2) instead of `availableData`: the drain in the termination handler may empty (or switch) this
-        // descriptor while a queued handler call is still in flight, and `availableData` answers that with an
-        // NSFileHandleOperationException Swift cannot catch.
-        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            var buffer = [UInt8](repeating: 0, count: 64 << 10)
-            let n = read(handle.fileDescriptor, &buffer, buffer.count)
-            guard n > 0 else {
-                handle.readabilityHandler = nil
-                return
-            }
-            if collected.append(Data(buffer[0..<n])) > Self.maxOutputBytes { self?.terminate() }
-        }
-        process.terminationHandler = { _ in
-            let reader = output.fileHandleForReading
-            reader.readabilityHandler = nil
-            // Non-blocking drain: a grandchild inheriting the write end would make readToEnd() wait forever.
-            _ = fcntl(reader.fileDescriptor, F_SETFL, O_NONBLOCK)
-            var rest = Data()
-            var buffer = [UInt8](repeating: 0, count: 64 << 10)
-            while true {
-                let n = read(reader.fileDescriptor, &buffer, buffer.count)
-                guard n > 0 else { break }
-                rest.append(contentsOf: buffer[0..<n])
-            }
-            let data = collected.finish(with: rest)
-            var text = String(decoding: data.prefix(Self.maxOutputBytes), as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if data.count > Self.maxOutputBytes { text += "\n…[output truncated]" }
-            completion(text)
-        }
-        // Launch under the lock so a concurrent terminate() sees either "not launched yet" or "launched", never the
-        // half-built NSTask state that makes `terminate()` throw.
-        let launched: Bool = try state.withLock { s in
-            guard !s.terminated else { return false }
-            try process.run()
-            s.launched = true
-            return true
-        }
-        guard launched else {
-            output.fileHandleForReading.readabilityHandler = nil
-            completion("")
-            return
-        }
-        if let stdin, let pipe = process.standardInput as? Pipe {
-            let writer = pipe.fileHandleForWriting
-            _ = fcntl(writer.fileDescriptor, F_SETNOSIGPIPE, 1)
-            DispatchQueue.global().async {
-                stdin.withUnsafeBytes { raw in
-                    var offset = 0
-                    while offset < raw.count {
-                        let n = write(writer.fileDescriptor, raw.baseAddress! + offset, raw.count - offset)
-                        if n <= 0 { break }
-                        offset += n
-                    }
-                }
-                try? writer.close()
-            }
-        }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [self] in terminate() }
-    }
-
-    /// SIGTERM now; SIGKILL two seconds later if the child ignored it.
-    func terminate() {
-        let pid: pid_t? = state.withLock { s in
-            s.terminated = true
-            guard s.launched, process.isRunning else { return nil }
-            process.terminate()
-            return process.processIdentifier
-        }
-        // pid is captured once, under the lock: `processIdentifier` of a reaped task is 0, and kill(0, SIGKILL)
-        // would take down our own process group.
-        guard let pid, pid > 0 else { return }
-        let process = self.process
-        DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
-            if process.isRunning { kill(pid, SIGKILL) }
-        }
+        let more = paths.count > limit ? "\n…and \(paths.count - limit) more; narrow the words or the kind" : ""
+        return ToolOutput.wrap((["Spotlight found for \"\(query)\":"] + lines).joined(separator: "\n") + more, source: "spotlight_search")
     }
 }

@@ -109,19 +109,27 @@
 				DocumentExtractor.swift,
 				GlobalHotkey.swift,
 				HTMLDocument.swift,
-				LocalTools.swift,
-				LocationTool.swift,
-				MapsTool.swift,
-				SafariTool.swift,
 				Settings.swift,
 				SettingsSection.swift,
 				SystemServices.swift,
-				SystemTools.swift,
-				ToolSupport.swift,
 				Updates.swift,
-				WeatherTool.swift,
-				WebTools.swift,
 				WindowManager.swift,
+			);
+			target = E100000000000000000000E1 /* MacOlama */;
+		};
+		7FE000000000000000000015 /* Exceptions for "Models-plugins" folder in "MacOlama" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Browser.swift,
+				Calculations.swift,
+				Files.swift,
+				Personal.swift,
+				PlaceAndWeather.swift,
+				PluginCatalog.swift,
+				PluginSupport.swift,
+				ThisMac.swift,
+				TimeAndTasks.swift,
+				WebSearch.swift,
 			);
 			target = E100000000000000000000E1 /* MacOlama */;
 		};
@@ -168,6 +176,14 @@
 			path = System;
 			sourceTree = "<group>";
 		};
+		7FB000000000000000000015 /* Models-plugins */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7FE000000000000000000015 /* Exceptions for "Models-plugins" folder in "MacOlama" target */,
+			);
+			path = "Models-plugins";
+			sourceTree = "<group>";
+		};
 		C100000000000000000000C3 /* MacOlamaTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = MacOlamaTests;
@@ -206,6 +222,7 @@
 				7FB000000000000000000011 /* Chat */,
 				7FB000000000000000000012 /* Engine */,
 				7FB000000000000000000013 /* Models */,
+				7FB000000000000000000015 /* Models-plugins */,
 				7F426248305DD08200005A57 /* Resources */,
 				7FB000000000000000000014 /* System */,
 				7FAB000000000000000000B2 /* AppContainer.swift */,

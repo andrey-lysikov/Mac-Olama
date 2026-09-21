@@ -967,7 +967,15 @@ final class AppContainer {
     func setToolEnabled(_ tool: ExtraTool, _ enabled: Bool) {
         toggle(tool.rawValue, in: \.extraTools, on: enabled)
         // macOS asks for the permission now, while the user is in the settings, not when a model first needs it.
-        if tool == .location, enabled { LocationService.shared.requestPermission() }
+        if enabled {
+            switch tool {
+            case .location: LocationService.shared.requestPermission()
+            case .calendar: CalendarAccess.request()
+            case .contacts: ContactsAccess.request()
+            case .screen: ScreenAccess.request()
+            default: break
+            }
+        }
         updateTools()
     }
 
@@ -1105,6 +1113,16 @@ final class AppContainer {
                 providers.append(
                     SafariToolProvider(
                         configuration: .init(pageCharacters: settings.pageCharacters, confirmation: NotificationService.shared)))
+            case .calendar: providers.append(CalendarToolProvider(confirmation: NotificationService.shared))
+            case .timers: providers.append(TimerToolProvider())
+            case .screen: providers.append(ScreenToolProvider(confirmation: NotificationService.shared))
+            case .currency: providers.append(CurrencyToolProvider())
+            case .contacts: providers.append(ContactsToolProvider())
+            case .notes: providers.append(NotesToolProvider(confirmation: NotificationService.shared))
+            case .mail: providers.append(MailDraftToolProvider())
+            case .spotlight: providers.append(SpotlightToolProvider())
+            case .macControl: providers.append(MacControlToolProvider())
+            case .music: providers.append(MusicToolProvider())
             }
         }
         if settings.shortcutsToolEnabled {

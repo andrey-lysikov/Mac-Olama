@@ -185,6 +185,16 @@
         }
       }
     },
+    "Add “%@” to Calendar?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить «%@» в Календарь?"
+          }
+        }
+      }
+    },
     "Add Folder…" : {
       "localizations" : {
         "ru" : {
@@ -195,12 +205,42 @@
         }
       }
     },
+    "Add reminder “%@”?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить напоминание «%@»?"
+          }
+        }
+      }
+    },
     "Add this model: enter its server address below" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Добавить модель: ниже укажите адрес сервера"
+          }
+        }
+      }
+    },
+    "Adding a reminder…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавляю напоминание…"
+          }
+        }
+      }
+    },
+    "Adding an event to the calendar…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавляю событие в календарь…"
           }
         }
       }
@@ -385,6 +425,16 @@
         }
       }
     },
+    "Browser" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Браузер"
+          }
+        }
+      }
+    },
     "Browser access" : {
       "localizations" : {
         "ru" : {
@@ -405,12 +455,32 @@
         }
       }
     },
+    "Calculations" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Расчёты"
+          }
+        }
+      }
+    },
     "Calculator" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Калькулятор"
+          }
+        }
+      }
+    },
+    "Calendar and Reminders" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Календарь и напоминания"
           }
         }
       }
@@ -451,6 +521,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ограничивает скорость загрузки файлов моделей"
+          }
+        }
+      }
+    },
+    "Changing this Mac's settings…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Меняю настройки Mac…"
           }
         }
       }
@@ -541,6 +621,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Проверяем размер и архитектуру…"
+          }
+        }
+      }
+    },
+    "Checking the Bank of Russia rate…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Смотрю курс Банка России…"
+          }
+        }
+      }
+    },
+    "Checking the timers…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверяю таймеры…"
           }
         }
       }
@@ -636,6 +736,16 @@
         }
       }
     },
+    "Contacts" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Контакты"
+          }
+        }
+      }
+    },
     "Context" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -677,6 +787,16 @@
         }
       }
     },
+    "Controlling Music…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Управляю музыкой…"
+          }
+        }
+      }
+    },
     "Copy" : {
       "localizations" : {
         "ru" : {
@@ -713,6 +833,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Создать"
+          }
+        }
+      }
+    },
+    "Create the note “%@”?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создать заметку «%@»?"
+          }
+        }
+      }
+    },
+    "Creating a note…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создаю заметку…"
           }
         }
       }
@@ -948,6 +1088,16 @@
         }
       }
     },
+    "Exchange Rates" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Курсы валют"
+          }
+        }
+      }
+    },
     "Faster answers (MTP)" : {
       "localizations" : {
         "ru" : {
@@ -984,6 +1134,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Файл"
+          }
+        }
+      }
+    },
+    "Files" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файлы"
           }
         }
       }
@@ -1222,6 +1382,16 @@
         }
       }
     },
+    "Internet Search" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск в интернете"
+          }
+        }
+      }
+    },
     "k" : {
       "comment" : "thousands suffix of a token count",
       "localizations" : {
@@ -1293,6 +1463,36 @@
         }
       }
     },
+    "Looking at the calendar…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Смотрю календарь…"
+          }
+        }
+      }
+    },
+    "Looking at the notes…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Смотрю заметки…"
+          }
+        }
+      }
+    },
+    "Looking at the reminders…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Смотрю напоминания…"
+          }
+        }
+      }
+    },
     "Looking at your files…" : {
       "localizations" : {
         "ru" : {
@@ -1319,6 +1519,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ищем драфтер…"
+          }
+        }
+      }
+    },
+    "Looking in the contacts…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ищу в контактах…"
           }
         }
       }
@@ -1363,6 +1573,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Обновление Mac-Olama"
+          }
+        }
+      }
+    },
+    "Mail Drafts" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Черновики писем"
           }
         }
       }
@@ -1477,12 +1697,12 @@
         }
       }
     },
-    "Model permissions" : {
+    "Model Plugins" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Разрешения моделей"
+            "value" : "Плагины моделей"
           }
         }
       }
@@ -1523,6 +1743,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Модели"
+          }
+        }
+      }
+    },
+    "Move %@?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переместить %@?"
+          }
+        }
+      }
+    },
+    "Moving a file…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перемещаю файл…"
           }
         }
       }
@@ -1577,6 +1817,16 @@
         }
       }
     },
+    "Music" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Музыка"
+          }
+        }
+      }
+    },
     "Needed only for gated models. Create a token with the Read role and paste it here." : {
       "localizations" : {
         "ru" : {
@@ -1603,6 +1853,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Новый чат"
+          }
+        }
+      }
+    },
+    "No due date" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без срока"
           }
         }
       }
@@ -1734,6 +1994,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "не задано"
+          }
+        }
+      }
+    },
+    "Notes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заметки"
           }
         }
       }
@@ -1898,6 +2168,26 @@
         }
       }
     },
+    "Pack %@ into %@?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Упаковать %1$@ в %2$@?"
+          }
+        }
+      }
+    },
+    "Packing into an archive…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Упаковываю в архив…"
+          }
+        }
+      }
+    },
     "Pages read: %lld" : {
       "localizations" : {
         "ru" : {
@@ -1958,6 +2248,26 @@
         }
       }
     },
+    "Personal" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Личное"
+          }
+        }
+      }
+    },
+    "Place and Weather" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Место и погода"
+          }
+        }
+      }
+    },
     "Planning the route to %@…" : {
       "localizations" : {
         "ru" : {
@@ -2004,6 +2314,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Предпочитаемый язык"
+          }
+        }
+      }
+    },
+    "Preparing an email…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готовлю письмо…"
           }
         }
       }
@@ -2079,12 +2399,32 @@
         }
       }
     },
+    "Read the text on the screen?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прочитать текст на экране?"
+          }
+        }
+      }
+    },
     "Reading %@…" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Читаю %@…"
+          }
+        }
+      }
+    },
+    "Reading the screen…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Читаю экран…"
           }
         }
       }
@@ -2119,6 +2459,16 @@
         }
       }
     },
+    "Reminder" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Напоминание"
+          }
+        }
+      }
+    },
     "Remove Drafter" : {
       "localizations" : {
         "ru" : {
@@ -2145,6 +2495,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Убрать из списка"
+          }
+        }
+      }
+    },
+    "Rename %@ to %@?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переименовать %1$@ в %2$@?"
           }
         }
       }
@@ -2299,6 +2659,16 @@
         }
       }
     },
+    "Screen and Clipboard" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Экран и буфер обмена"
+          }
+        }
+      }
+    },
     "Scroll to the end" : {
       "localizations" : {
         "ru" : {
@@ -2369,6 +2739,26 @@
         }
       }
     },
+    "Searching this Mac for “%@”…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ищу на Mac «%@»…"
+          }
+        }
+      }
+    },
+    "Searching this Mac…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ищу на Mac…"
+          }
+        }
+      }
+    },
     "Select All" : {
       "localizations" : {
         "ru" : {
@@ -2395,6 +2785,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ошибка сервера %1$lld: %2$@"
+          }
+        }
+      }
+    },
+    "Setting a timer…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ставлю таймер…"
           }
         }
       }
@@ -2469,6 +2869,16 @@
         }
       }
     },
+    "Spotlight Search" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск Spotlight"
+          }
+        }
+      }
+    },
     "Starting…" : {
       "localizations" : {
         "ru" : {
@@ -2485,6 +2895,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Стоп"
+          }
+        }
+      }
+    },
+    "System Control" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Управление системой"
           }
         }
       }
@@ -2701,12 +3121,42 @@
         }
       }
     },
+    "The model may change the volume and the appearance and open apps" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может менять громкость и оформление и открывать приложения"
+          }
+        }
+      }
+    },
+    "The model may find files anywhere on this Mac by name and content; opening them still needs folder access" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может находить файлы по всему Mac по имени и содержимому; открывать их можно только из разрешённых папок"
+          }
+        }
+      }
+    },
     "The model may find out where this Mac is and use Apple Maps for routes, distances and places" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Модель может узнать, где находится этот Mac, и искать в Картах Apple маршруты, расстояния и места"
+          }
+        }
+      }
+    },
+    "The model may look up phone numbers, emails and addresses in your contacts" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может искать телефоны, почту и адреса в ваших контактах"
           }
         }
       }
@@ -2731,12 +3181,72 @@
         }
       }
     },
+    "The model may play, pause and switch tracks in Music" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может включать, ставить на паузу и переключать треки в Музыке"
+          }
+        }
+      }
+    },
+    "The model may prepare an email in Mail; you send it yourself" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может подготовить письмо в Почте; отправляете его вы сами"
+          }
+        }
+      }
+    },
+    "The model may read the clipboard and, with your approval each time, the text on the screen" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может читать буфер обмена и — каждый раз с вашего подтверждения — текст на экране"
+          }
+        }
+      }
+    },
+    "The model may read these folders; writing, moving and packing files you approve" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может читать эти папки; запись, перемещение и упаковку файлов вы подтверждаете"
+          }
+        }
+      }
+    },
     "The model may read this Mac's state: battery, disk space, memory, processes" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Модель может читать состояние этого Mac: батарея, место на диске, память, процессы"
+          }
+        }
+      }
+    },
+    "The model may read your events and reminders; you approve adding new ones" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может читать ваши события и напоминания; добавление новых вы подтверждаете"
+          }
+        }
+      }
+    },
+    "The model may remind you with a notification after a while or at a set time" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может напомнить уведомлением через заданное время или в назначенный момент"
           }
         }
       }
@@ -2768,6 +3278,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Модель может их запускать, спрашивая каждый раз"
+          }
+        }
+      }
+    },
+    "The model may search and read your notes; you approve new ones" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может искать и читать ваши заметки; новые вы подтверждаете"
+          }
+        }
+      }
+    },
+    "The model may take the official rates of the Bank of Russia (cbr.ru)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может брать официальные курсы Банка России (cbr.ru)"
           }
         }
       }
@@ -2922,6 +3452,16 @@
         }
       }
     },
+    "This Mac" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот Mac"
+          }
+        }
+      }
+    },
     "This Mac only" : {
       "localizations" : {
         "ru" : {
@@ -2968,6 +3508,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Думал %lld с"
+          }
+        }
+      }
+    },
+    "Time and Tasks" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Время и дела"
+          }
+        }
+      }
+    },
+    "Timers" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Таймеры"
           }
         }
       }
@@ -3162,6 +3722,16 @@
         }
       }
     },
+    "Using the clipboard…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Работаю с буфером обмена…"
+          }
+        }
+      }
+    },
     "Version %@ is available. You have %@." : {
       "localizations" : {
         "ru" : {
@@ -3228,6 +3798,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Веб-поиск"
+          }
+        }
+      }
+    },
+    "What a model may use while it answers. Each plugin is off until you turn it on." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чем модель может пользоваться, пока отвечает. Каждый плагин выключен, пока вы его не включите."
           }
         }
       }

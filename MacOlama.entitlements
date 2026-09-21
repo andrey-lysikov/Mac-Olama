@@ -10,5 +10,10 @@
 	<!-- Hardened runtime blocks Apple Events without it; used only by Safari Control (off by default). -->
 	<key>com.apple.security.automation.apple-events</key>
 	<true/>
+	<!-- Calendar and Reminders, and Contacts: each used only by its own plugin, off by default. -->
+	<key>com.apple.security.personal-information.calendars</key>
+	<true/>
+	<key>com.apple.security.personal-information.addressbook</key>
+	<true/>
 </dict>
 </plist>

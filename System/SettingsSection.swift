@@ -35,7 +35,7 @@ struct SettingsSectionView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 group(String(localized: "Replies")) { replies }
-                group(String(localized: "Model permissions")) { permissions }
+                group(String(localized: "Model Plugins")) { pluginGroups }
                 group(String(localized: "Web pages")) { web }
                 group(String(localized: "Unload the model automatically")) { unloading }
                 group(String(localized: "Panel behaviour")) { panel }
@@ -76,48 +76,78 @@ struct SettingsSectionView: View {
         }
     }
 
-    private var permissions: some View {
+    /// Everything a model may reach, in one block: a line on what the switches mean, then one sub-block per kind, each
+    /// under its own heading, so the groups read as parts of one set rather than as unrelated settings.
+    private var pluginGroups: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(String(localized: "What a model may use while it answers. Each plugin is off until you turn it on."))
+                .font(.callout).foregroundStyle(.secondary)
+            ForEach(PluginGroup.allCases, id: \.self) { kind in
+                Divider()
+                VStack(alignment: .leading, spacing: 10) {
+                    Label(Self.title(of: kind), systemImage: Self.symbol(of: kind))
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                    plugins(kind)
+                }
+            }
+        }
+    }
+
+    /// One group of plugins: its plain switches, with web search, folders and Shortcuts where they belong.
+    private func plugins(_ kind: PluginGroup) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            row(String(localized: "Web search")) {
-                HStack(spacing: 10) {
-                    if container.settings.toolsEnabled {
-                        picker(
-                            width: 160,
-                            get: { container.settings.searchProvider == "google" ? "google" : "duckduckgo" },
-                            set: { container.setSearchProvider($0) }
-                        ) {
-                            Text(verbatim: "DuckDuckGo").tag("duckduckgo")
-                            Text(verbatim: "Google").tag("google")
-                        }
-                    }
-                    smallSwitch(get: { container.settings.toolsEnabled }, set: { container.setToolsEnabled($0) })
-                }
-            }
-            switchRow(
-                String(localized: "Folder access"),
-                get: { container.settings.fileToolsEnabled }, set: { container.setFileToolsEnabled($0) })
-            ForEach(container.settings.allowedFolders, id: \.self) { path in
-                row(URL(filePath: path).lastPathComponent, help: path, indented: true) {
-                    Button(role: .destructive) {
-                        container.removeAllowedFolder(path)
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
-                    .help(String(localized: "Remove from the list"))
-                }
-            }
-            row(String(localized: "Folders the model may read"), indented: true) {
-                Button(String(localized: "Add Folder…"), action: addFolder)
-            }
-            switchRow(
-                String(localized: "Shortcuts"), help: String(localized: "The model may run yours, asking each time"),
-                get: { container.settings.shortcutsToolEnabled }, set: { container.setShortcutsToolEnabled($0) })
-            ForEach(ExtraTool.allCases, id: \.self) { tool in
+            if kind == .webSearch { webSearch }
+            if kind == .files { folders }
+            ForEach(kind.tools, id: \.self) { tool in
                 switchRow(
                     Self.title(of: tool), help: Self.help(of: tool),
                     get: { container.isToolEnabled(tool) }, set: { container.setToolEnabled(tool, $0) })
             }
+            if kind == .thisMac {
+                switchRow(
+                    String(localized: "Shortcuts"), help: String(localized: "The model may run yours, asking each time"),
+                    get: { container.settings.shortcutsToolEnabled }, set: { container.setShortcutsToolEnabled($0) })
+            }
+        }
+    }
+
+    private var webSearch: some View {
+        row(String(localized: "Web search")) {
+            HStack(spacing: 10) {
+                if container.settings.toolsEnabled {
+                    picker(
+                        width: 160,
+                        get: { container.settings.searchProvider == "google" ? "google" : "duckduckgo" },
+                        set: { container.setSearchProvider($0) }
+                    ) {
+                        Text(verbatim: "DuckDuckGo").tag("duckduckgo")
+                        Text(verbatim: "Google").tag("google")
+                    }
+                }
+                smallSwitch(get: { container.settings.toolsEnabled }, set: { container.setToolsEnabled($0) })
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var folders: some View {
+        switchRow(
+            String(localized: "Folder access"),
+            help: String(localized: "The model may read these folders; writing, moving and packing files you approve"),
+            get: { container.settings.fileToolsEnabled }, set: { container.setFileToolsEnabled($0) })
+        ForEach(container.settings.allowedFolders, id: \.self) { path in
+            row(URL(filePath: path).lastPathComponent, help: path, indented: true) {
+                Button(role: .destructive) {
+                    container.removeAllowedFolder(path)
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .help(String(localized: "Remove from the list"))
+            }
+        }
+        row(String(localized: "Folders the model may read"), indented: true) {
+            Button(String(localized: "Add Folder…"), action: addFolder)
         }
     }
 
@@ -360,6 +390,32 @@ struct SettingsSectionView: View {
         }
     }
 
+    private static func symbol(of kind: PluginGroup) -> String {
+        switch kind {
+        case .webSearch: "magnifyingglass"
+        case .browser: "safari"
+        case .files: "folder"
+        case .time: "calendar"
+        case .personal: "person.crop.circle"
+        case .thisMac: "desktopcomputer"
+        case .places: "map"
+        case .calculations: "function"
+        }
+    }
+
+    private static func title(of kind: PluginGroup) -> String {
+        switch kind {
+        case .webSearch: String(localized: "Internet Search")
+        case .browser: String(localized: "Browser")
+        case .files: String(localized: "Files")
+        case .time: String(localized: "Time and Tasks")
+        case .personal: String(localized: "Personal")
+        case .thisMac: String(localized: "This Mac")
+        case .places: String(localized: "Place and Weather")
+        case .calculations: String(localized: "Calculations")
+        }
+    }
+
     private static func title(of tool: ExtraTool) -> String {
         switch tool {
         case .calculator: String(localized: "Calculator")
@@ -368,6 +424,16 @@ struct SettingsSectionView: View {
         case .weather: String(localized: "Weather")
         case .location: String(localized: "Maps and Location")
         case .browser: String(localized: "Safari Control")
+        case .calendar: String(localized: "Calendar and Reminders")
+        case .timers: String(localized: "Timers")
+        case .screen: String(localized: "Screen and Clipboard")
+        case .currency: String(localized: "Exchange Rates")
+        case .contacts: String(localized: "Contacts")
+        case .notes: String(localized: "Notes")
+        case .mail: String(localized: "Mail Drafts")
+        case .spotlight: String(localized: "Spotlight Search")
+        case .macControl: String(localized: "System Control")
+        case .music: String(localized: "Music")
         }
     }
 
@@ -384,6 +450,17 @@ struct SettingsSectionView: View {
                 localized:
                     "The model may open, read and click pages in your Safari; you approve typing and sending forms. Needs Safari's Develop → Allow JavaScript from Apple Events"
             )
+        case .calendar: String(localized: "The model may read your events and reminders; you approve adding new ones")
+        case .timers: String(localized: "The model may remind you with a notification after a while or at a set time")
+        case .screen: String(localized: "The model may read the clipboard and, with your approval each time, the text on the screen")
+        case .currency: String(localized: "The model may take the official rates of the Bank of Russia (cbr.ru)")
+        case .contacts: String(localized: "The model may look up phone numbers, emails and addresses in your contacts")
+        case .notes: String(localized: "The model may search and read your notes; you approve new ones")
+        case .mail: String(localized: "The model may prepare an email in Mail; you send it yourself")
+        case .spotlight:
+            String(localized: "The model may find files anywhere on this Mac by name and content; opening them still needs folder access")
+        case .macControl: String(localized: "The model may change the volume and the appearance and open apps")
+        case .music: String(localized: "The model may play, pause and switch tracks in Music")
         }
     }
 }

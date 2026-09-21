@@ -216,9 +216,9 @@ public struct SafariToolProvider: ToolProvider {
         """
     }
 
-    /// Helpers every script gets, then `body` as a function; any failure comes back as `ERROR:<number>:<message>`.
+    /// Helpers every Safari script gets: the tab lookup, a new tab, waiting for a page to load, and the read script.
     private func run(_ body: String) async throws -> String {
-        let script = """
+        let prelude = """
             const s = Application('Safari');
             const READ = \(Self.literal(Self.readScript(limit: configuration.pageCharacters)));
             function browserWindows() {
@@ -248,15 +248,8 @@ public struct SafariToolProvider: ToolProvider {
                 delay(0.4);
               }
             }
-            function main() { \(body) }
-            let out;
-            try { out = String(main()); } catch (e) { out = 'ERROR:' + (e.errorNumber || '') + ':' + e.message; }
-            out
             """
-        let raw = try await ToolProcess.run(
-            URL(fileURLWithPath: "/usr/bin/osascript"), ["-l", "JavaScript", "-"], stdin: Data(script.utf8),
-            timeout: configuration.timeout)
-        let out = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let out = try await JXA.run(prelude: prelude, body, timeout: configuration.timeout)
         if out.hasPrefix("ERROR:") { throw SafariFailure(error: out) }
         return out
     }
@@ -360,10 +353,7 @@ public struct SafariToolProvider: ToolProvider {
         "const e = document.querySelector('[data-mo-id=\"\(id)\"]'); if (!e) return 'MISSING';\n"
     }
 
-    /// A value written into the script as a JavaScript literal: a JSON string is one, and `nil` becomes `null`.
-    private static func literal(_ value: String) -> String {
-        (try? String(data: JSONEncoder().encode(value), encoding: .utf8)) ?? "\"\""
-    }
+    private static func literal(_ value: String) -> String { JXA.literal(value) }
 
     private static func literal(_ value: Int?) -> String { value.map(String.init) ?? "null" }
 }

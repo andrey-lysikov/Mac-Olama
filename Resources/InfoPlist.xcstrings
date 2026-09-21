@@ -55,6 +55,60 @@
         }
       }
     },
+    "NSCalendarsFullAccessUsageDescription" : {
+      "comment" : "NSCalendarsFullAccess usage",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama reads your events for a model only when you turn on Calendar and Reminders; adding one waits for your approval."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama читает ваши события для модели, только когда включены «Календарь и напоминания»; добавление события ждёт вашего подтверждения."
+          }
+        }
+      }
+    },
+    "NSCalendarsUsageDescription" : {
+      "comment" : "NSCalendars usage",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama reads your events for a model only when you turn on Calendar and Reminders; adding one waits for your approval."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama читает ваши события для модели, только когда включены «Календарь и напоминания»; добавление события ждёт вашего подтверждения."
+          }
+        }
+      }
+    },
+    "NSContactsUsageDescription" : {
+      "comment" : "NSContacts usage",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama looks up your contacts for a model only when you turn on Contacts and ask about someone."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama ищет в ваших контактах для модели, только когда включены «Контакты» и вы спрашиваете о ком-то."
+          }
+        }
+      }
+    },
     "NSHumanReadableCopyright" : {
       "comment" : "Copyright (human-readable)",
       "extractionState" : "extracted_with_value",
@@ -118,6 +172,42 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mac-Olama сообщает модели, где находится этот Mac, только когда ответ на ваш вопрос от этого зависит, например о погоде."
+          }
+        }
+      }
+    },
+    "NSRemindersFullAccessUsageDescription" : {
+      "comment" : "NSRemindersFullAccess usage",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama reads your reminders for a model only when you turn on Calendar and Reminders; adding one waits for your approval."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama читает ваши напоминания для модели, только когда включены «Календарь и напоминания»; добавление ждёт вашего подтверждения."
+          }
+        }
+      }
+    },
+    "NSRemindersUsageDescription" : {
+      "comment" : "NSReminders usage",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama reads your reminders for a model only when you turn on Calendar and Reminders; adding one waits for your approval."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama читает ваши напоминания для модели, только когда включены «Календарь и напоминания»; добавление ждёт вашего подтверждения."
           }
         }
       }
