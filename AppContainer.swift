@@ -1100,7 +1100,7 @@ final class AppContainer {
                 var weather = WeatherToolProvider()
                 weather.usesCurrentPlace = isToolEnabled(.location)
                 providers.append(weather)
-            case .location: providers.append(LocationToolProvider())
+            case .location: providers += [LocationToolProvider(), MapsToolProvider()]
             }
         }
         if settings.shortcutsToolEnabled {

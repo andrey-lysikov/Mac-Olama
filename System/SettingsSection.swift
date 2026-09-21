@@ -366,7 +366,7 @@ struct SettingsSectionView: View {
         case .macInfo: String(localized: "About This Mac")
         case .network: String(localized: "Network Diagnostics")
         case .weather: String(localized: "Weather")
-        case .location: String(localized: "Location")
+        case .location: String(localized: "Maps and Location")
         }
     }
 
@@ -376,7 +376,8 @@ struct SettingsSectionView: View {
         case .macInfo: String(localized: "The model may read this Mac's state: battery, disk space, memory, processes")
         case .network: String(localized: "The model may run ping, traceroute, DNS and port checks from this Mac")
         case .weather: String(localized: "The model may look up the weather (Open-Meteo)")
-        case .location: String(localized: "The model may find out where this Mac is, for the weather and questions about the place")
+        case .location:
+            String(localized: "The model may find out where this Mac is and use Apple Maps for routes, distances and places")
         }
     }
 }

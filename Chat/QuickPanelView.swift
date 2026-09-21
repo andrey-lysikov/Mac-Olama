@@ -188,7 +188,9 @@ struct QuickPanelView: View {
     }
 
     private var transcript: some View {
-        ScrollView {
+        // From all the messages: the maps ride on the tool results, which the feed itself does not show.
+        let maps = TranscriptMaps.byAnswer(viewModel.messages)
+        return ScrollView {
             // Not lazy: in a viewport that starts one point tall a lazy stack renders only its bottom rows and guesses
             // the rest, so the question went missing and the measured height was wrong.
             VStack(alignment: .leading, spacing: 14) {
@@ -200,7 +202,7 @@ struct QuickPanelView: View {
                             isStreamedPlaceholder: isStreamedPlaceholder(message),
                             thoughtSeconds: viewModel.thoughtSeconds[message.id]
                         ) { message, summary in
-                            MessageView(message: message, summary: summary)
+                            MessageView(message: message, summary: summary, maps: maps[message.id] ?? [])
                         }
                     }
                 }
@@ -334,6 +336,8 @@ struct MessageView: View {
     let message: Message
     /// What the tools and the thinking did on the way to this answer, one line above it.
     var summary: String?
+    /// Routes and places the tools found on the way; lower than in the window, the panel grows with its text.
+    var maps: [TranscriptMap] = []
     @Environment(AppContainer.self) private var container
 
     /// Reasoning channels and tool syntax are the model talking to itself; only the answer is shown and copied.
@@ -359,6 +363,7 @@ struct MessageView: View {
                     // Same reading size as the chats window.
                     if message.toolCalls.isEmpty {
                         AnswerBody(message: message, answer: answer, fontSize: scaledText, noAnswerPadding: 10)
+                        ForEach(Array(maps.enumerated()), id: \.offset) { _, map in TranscriptMapView(map: map, height: 170) }
                     }
                 }
                 if message.role == .assistant, message.toolCalls.isEmpty, !message.isPartial,

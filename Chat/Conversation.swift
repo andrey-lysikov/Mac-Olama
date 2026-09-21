@@ -360,6 +360,11 @@ public actor ConversationService {
                 "When the answer depends on where the user is (weather, local time, what is nearby, local news) and they named no place, find it with get_location instead of asking."
             )
         }
+        if names.contains("get_route") {
+            lines.append(
+                "Distances and travel times come from get_route, places of a kind nearby from search_places, addresses and coordinates from geocode: report what they return, never estimate. Leave out the start or the search centre to mean where the user is."
+            )
+        }
         if names.contains("get_weather") {
             lines.append(
                 (names.contains("get_location")
@@ -406,6 +411,8 @@ public actor ConversationService {
         var tail: [EngineMessage] = []
         for (index, message) in history.enumerated().reversed() {
             var content = contentWithDocuments(message)
+            // The map a tool stored for the feed is not for the model: it would only eat the context.
+            if message.role == .tool { content = ToolMapNote.strip(content) }
             let inCurrentTurn = index >= turnStart
             // Earlier turns' reasoning is not sent back: templates drop it anyway, and it only eats the context. Inside the
             // current turn it stays, as the templates keep it: the prompt then continues what the engine has cached.
@@ -596,6 +603,18 @@ enum AnswerText {
                 symbol: "folder")
         case "get_location":
             return Activity(text: String(localized: "Finding where this Mac is…"), symbol: "location")
+        case "get_route":
+            return Activity(
+                text: argument(call, "to").map { String(localized: "Planning the route to \($0)…") }
+                    ?? String(localized: "Planning the route…"),
+                symbol: "map")
+        case "search_places":
+            return Activity(
+                text: argument(call, "query").map { String(localized: "Looking for “\($0)” on the map…") }
+                    ?? String(localized: "Looking on the map…"),
+                symbol: "mappin.and.ellipse")
+        case "geocode":
+            return Activity(text: String(localized: "Looking up the address…"), symbol: "mappin")
         case "run_shortcut":
             let name = argument(call, "name")
             return Activity(

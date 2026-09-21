@@ -8,6 +8,7 @@ import JavaScriptCore
 // Each is read-only, runs fixed programs without a shell and is switched on separately in the Features menu.
 
 /// Tools beyond web search, folders and Shortcuts, each with its own switch in the Features menu (off by default).
+/// `location` is the one switch for everything that knows places: where this Mac is, and the maps tools.
 public enum ExtraTool: String, CaseIterable, Sendable {
     case calculator, macInfo, network, weather, location
 }

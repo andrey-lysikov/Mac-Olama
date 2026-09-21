@@ -174,7 +174,9 @@ public struct LocationToolProvider: ToolProvider {
 
     public func execute(_ call: ToolCall) async throws -> String {
         do {
-            return ToolOutput.wrap(Self.format(try await LocationService.shared.current()), source: "get_location")
+            let place = try await LocationService.shared.current()
+            let map = TranscriptMap(kind: .places, points: [TranscriptMap.Point(lat: place.latitude, lon: place.longitude, here: true)])
+            return ToolMapNote.append(map, to: ToolOutput.wrap(Self.format(place), source: "get_location"))
         } catch let failure as LocationService.Failure {
             return failure.toolText
         }

@@ -1263,16 +1263,6 @@
         }
       }
     },
-    "Location" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Местоположение"
-          }
-        }
-      }
-    },
     "Looking at %@…" : {
       "localizations" : {
         "ru" : {
@@ -1293,12 +1283,42 @@
         }
       }
     },
+    "Looking for “%@” on the map…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ищу на карте «%@»…"
+          }
+        }
+      }
+    },
     "Looking for a drafter…" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ищем драфтер…"
+          }
+        }
+      }
+    },
+    "Looking on the map…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ищу на карте…"
+          }
+        }
+      }
+    },
+    "Looking up the address…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ищу адрес…"
           }
         }
       }
@@ -1323,6 +1343,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Обновление Mac-Olama"
+          }
+        }
+      }
+    },
+    "Maps" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Карты"
+          }
+        }
+      }
+    },
+    "Maps and Location" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Картография и местоположение"
           }
         }
       }
@@ -1758,6 +1798,16 @@
         }
       }
     },
+    "Open in Apple Maps" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть в Картах Apple"
+          }
+        }
+      }
+    },
     "Open in Chats" : {
       "localizations" : {
         "ru" : {
@@ -1774,6 +1824,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Открыть в панели"
+          }
+        }
+      }
+    },
+    "Open in Yandex Maps" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть в Яндекс Картах"
           }
         }
       }
@@ -1854,6 +1914,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Приостановлено"
+          }
+        }
+      }
+    },
+    "Planning the route to %@…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прокладываю маршрут до %@…"
+          }
+        }
+      }
+    },
+    "Planning the route…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прокладываю маршрут…"
           }
         }
       }
@@ -2551,12 +2631,12 @@
         }
       }
     },
-    "The model may find out where this Mac is, for the weather and questions about the place" : {
+    "The model may find out where this Mac is and use Apple Maps for routes, distances and places" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Модель может узнать, где находится этот Mac, — для погоды и вопросов о месте"
+            "value" : "Модель может узнать, где находится этот Mac, и искать в Картах Apple маршруты, расстояния и места"
           }
         }
       }
@@ -3058,12 +3138,32 @@
         }
       }
     },
+    "Yandex Maps" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Яндекс Карты"
+          }
+        }
+      }
+    },
     "Yesterday" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Вчера"
+          }
+        }
+      }
+    },
+    "You are here" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вы здесь"
           }
         }
       }

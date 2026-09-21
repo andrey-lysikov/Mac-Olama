@@ -628,6 +628,8 @@ private struct ChatsSplitView: View {
 
     private var transcript: some View {
         let visible = viewModel.messages.filter { $0.role == .user || $0.role == .assistant }
+        // From all the messages: the maps ride on the tool results, which the feed itself does not show.
+        let maps = TranscriptMaps.byAnswer(viewModel.messages)
         return ScrollView {
             // Not lazy: a lazy stack guessed the heights of rows it had not drawn yet, so the scroll jumped while an
             // answer streamed, rows stayed blank until another chat was opened and a reused row could draw flipped.
@@ -639,7 +641,7 @@ private struct ChatsSplitView: View {
                         thoughtSeconds: viewModel.thoughtSeconds[m.id]
                     ) { message, summary in
                         ChatMessageView(
-                            message: message, summary: summary,
+                            message: message, summary: summary, maps: maps[message.id] ?? [],
                             onRegenerate: message.id == visible.last?.id && message.role == .assistant && !viewModel.isGenerating
                                 ? { viewModel.regenerate() } : nil)
                     }
@@ -840,6 +842,8 @@ struct ChatMessageView: View {
     let message: Message
     /// What the tools and the thinking did on the way to this answer, one line above it.
     var summary: String?
+    /// Routes and places the tools found on the way, drawn under the answer.
+    var maps: [TranscriptMap] = []
     var onRegenerate: (() -> Void)?
     @State private var hovering = false
     @Environment(AppContainer.self) private var container
@@ -905,6 +909,7 @@ struct ChatMessageView: View {
                 // A reply that asked for tools has no answer of its own: its text is a preamble or echoed results.
                 if message.toolCalls.isEmpty {
                     AnswerBody(message: message, answer: answer, fontSize: scaledText)
+                    ForEach(Array(maps.enumerated()), id: \.offset) { _, map in TranscriptMapView(map: map, height: 240) }
                 }
                 if !message.isPartial, message.toolCalls.isEmpty {
                     HStack(spacing: 12) {
