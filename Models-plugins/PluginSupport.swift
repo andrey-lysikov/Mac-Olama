@@ -176,22 +176,36 @@ enum ToolProcess {
 }
 
 /// Shared output buffer: a reference type, so the pipe callbacks can hold it without copying the non-copyable Mutex.
+/// Reads happen under the lock: otherwise a chunk read by an in-flight readability callback could be appended after
+/// the termination drain has already returned the result, and silently go missing.
 private final class OutputBuffer: Sendable {
-    private let storage = Mutex(Data())
+    private let storage = Mutex((data: Data(), finished: false))
 
-    /// Appends a chunk and reports the total size collected so far.
-    func append(_ chunk: Data) -> Int {
-        storage.withLock { data in
-            data.append(chunk)
-            return data.count
+    /// Reads one chunk from a non-blocking descriptor. Returns the total collected so far, or nil once the pipe hit
+    /// EOF / an error or the buffer is finished — the caller then stops reading.
+    func read(from fd: Int32) -> Int? {
+        storage.withLock { s in
+            guard !s.finished else { return nil }
+            var buffer = [UInt8](repeating: 0, count: 64 << 10)
+            let n = Darwin.read(fd, &buffer, buffer.count)
+            if n < 0 && (errno == EAGAIN || errno == EINTR) { return s.data.count }
+            guard n > 0 else { return nil }
+            s.data.append(contentsOf: buffer[0..<n])
+            return s.data.count
         }
     }
 
-    /// Appends the final drain and returns everything collected.
-    func finish(with rest: Data) -> Data {
-        storage.withLock { data in
-            data.append(rest)
-            return data
+    /// Drains whatever is left in the (non-blocking) descriptor and returns everything collected.
+    func finish(draining fd: Int32) -> Data {
+        storage.withLock { s in
+            s.finished = true
+            var buffer = [UInt8](repeating: 0, count: 64 << 10)
+            while true {
+                let n = Darwin.read(fd, &buffer, buffer.count)
+                guard n > 0 else { break }
+                s.data.append(contentsOf: buffer[0..<n])
+            }
+            return s.data
         }
     }
 }
@@ -229,28 +243,20 @@ final class ProcessBox: @unchecked Sendable {
         // Raw read(2) instead of `availableData`: the drain in the termination handler may empty (or switch) this
         // descriptor while a queued handler call is still in flight, and `availableData` answers that with an
         // NSFileHandleOperationException Swift cannot catch.
+        // Non-blocking throughout: a read under the buffer lock must never wait, and a grandchild inheriting the write
+        // end would make a blocking drain wait forever.
+        _ = fcntl(output.fileHandleForReading.fileDescriptor, F_SETFL, O_NONBLOCK)
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            var buffer = [UInt8](repeating: 0, count: 64 << 10)
-            let n = read(handle.fileDescriptor, &buffer, buffer.count)
-            guard n > 0 else {
+            guard let total = collected.read(from: handle.fileDescriptor) else {
                 handle.readabilityHandler = nil
                 return
             }
-            if collected.append(Data(buffer[0..<n])) > Self.maxOutputBytes { self?.terminate() }
+            if total > Self.maxOutputBytes { self?.terminate() }
         }
         process.terminationHandler = { _ in
             let reader = output.fileHandleForReading
             reader.readabilityHandler = nil
-            // Non-blocking drain: a grandchild inheriting the write end would make readToEnd() wait forever.
-            _ = fcntl(reader.fileDescriptor, F_SETFL, O_NONBLOCK)
-            var rest = Data()
-            var buffer = [UInt8](repeating: 0, count: 64 << 10)
-            while true {
-                let n = read(reader.fileDescriptor, &buffer, buffer.count)
-                guard n > 0 else { break }
-                rest.append(contentsOf: buffer[0..<n])
-            }
-            let data = collected.finish(with: rest)
+            let data = collected.finish(draining: reader.fileDescriptor)
             var text = String(decoding: data.prefix(Self.maxOutputBytes), as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if data.count > Self.maxOutputBytes { text += "\n…[output truncated]" }
