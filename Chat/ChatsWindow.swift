@@ -204,12 +204,7 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
     /// Window the chat runs with: the context saved for its model, otherwise the model maximum.
     var contextLimit: Int? { activeModel.flatMap { container.contextTokens(for: $0) } }
 
-    /// Estimate: exact counts for generated replies, ~3 characters per token for everything else.
-    var contextUsed: Int {
-        let system = (selectedChat?.systemPrompt?.count ?? 0) / 3
-        let history = messages.reduce(0) { $0 + ($1.role == .assistant ? $1.completionTokens ?? $1.text.count / 3 : $1.text.count / 3) }
-        return system + history + (streamingText.count + input.count) / 3
-    }
+    var contextUsed: Int { stream.contextUsed(systemPrompt: selectedChat?.systemPrompt) }
 
     // Messages
 
@@ -814,13 +809,10 @@ private struct ChatsSplitView: View {
         if let limit = viewModel.contextLimit, limit > 0 {
             let used = min(viewModel.contextUsed, limit)
             // The same compact form as the pace line under a reply, so 33k reads the same everywhere.
-            Text(
-                verbatim: "≈\(ChatMessageView.compact(used)) / \(ChatMessageView.compact(limit)) · "
-                    + String(localized: "\(ChatMessageView.compact(limit - used)) free")
-            )
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(used > limit * 9 / 10 ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-            .help(String(localized: "Estimated context used by this chat, the context window, and what is left"))
+            Text(verbatim: ChatMessageView.contextLeft(limit - used))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(used > limit * 9 / 10 ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                .help(String(localized: "Context left for this chat, estimated"))
         }
     }
 
@@ -874,6 +866,10 @@ struct ChatMessageView: View {
         case (nil, nil): return nil
         }
     }
+
+    /// What is left of the context window: `≈31.8k (ctx)`, the window and the panel alike. No words, like the pace
+    /// line, so it reads the same in both languages; the tooltip says it is what is left.
+    nonisolated static func contextLeft(_ tokens: Int) -> String { "≈\(compact(tokens)) (ctx)" }
 
     /// Token counts are read at a glance, not added up: 1 234 → 1.2k, 32 768 → 33k, 1 200 000 → 1.2M.
     nonisolated static func compact(_ value: Int) -> String {

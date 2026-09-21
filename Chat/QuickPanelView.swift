@@ -117,6 +117,7 @@ struct QuickPanelView: View {
                 }
             HStack(spacing: 12) {
                 EngineActivityControl(state: viewModel.engineState, onStop: viewModel.stop)
+                contextUsage
                 Button {
                     container.openInChats(viewModel.chat?.id)
                 } label: {
@@ -131,11 +132,13 @@ struct QuickPanelView: View {
                     container.settings.panelClosesOnFocusLoss
                         ? String(localized: "Keep the panel open when you click outside it")
                         : String(localized: "Close the panel when you click outside it"))
+                // It starts a new chat and leaves the old one in the list, so it is drawn as the chats window's
+                // new-chat button, not as an eraser.
                 Button(action: viewModel.clear) {
-                    Image(systemName: "eraser.line.dashed")
+                    Image(systemName: "square.and.pencil")
                 }
                 .keyboardShortcut("k", modifiers: .command)
-                .help(String(localized: "Clear"))
+                .help(String(localized: "New Chat"))
                 .disabled(viewModel.messages.isEmpty && viewModel.streamingText.isEmpty && viewModel.input.isEmpty)
             }
             .buttonStyle(.plain)
@@ -144,6 +147,19 @@ struct QuickPanelView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
+    }
+
+    /// What is left of the context window, among the pictograms: smaller than they are, so the row keeps its height,
+    /// orange once nine tenths are taken.
+    @ViewBuilder
+    private var contextUsage: some View {
+        if let limit = viewModel.contextLimit, limit > 0 {
+            let used = min(viewModel.contextUsed, limit)
+            Text(verbatim: ChatMessageView.contextLeft(limit - used))
+                .font(.system(size: 12).monospacedDigit())
+                .foregroundStyle(used > limit * 9 / 10 ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                .help(String(localized: "Context left for this chat, estimated"))
+        }
     }
 
     private var attachmentsRow: some View {

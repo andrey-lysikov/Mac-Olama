@@ -360,6 +360,9 @@ final class QuickPanelViewModel: ConversationStreamDelegate, ConversationStreamH
 
     var activeModel: ModelDescriptor? { container.activeModel }
     var canAttachImages: Bool { activeModel?.kind == .vlm }
+    /// Window the panel's chat runs with: the context saved for the model, otherwise the model maximum.
+    var contextLimit: Int? { activeModel.flatMap { container.contextTokens(for: $0) } }
+    var contextUsed: Int { stream.contextUsed(systemPrompt: chat?.systemPrompt) }
     var engineState: EngineState { container.engineState }
 
     init(container: AppContainer) {

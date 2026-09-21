@@ -34,16 +34,6 @@
         }
       }
     },
-    "%@ free" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "свободно %@"
-          }
-        }
-      }
-    },
     "%@ has a newer revision on its hub." : {
       "localizations" : {
         "ru" : {
@@ -647,6 +637,16 @@
         }
       }
     },
+    "Context left for this chat, estimated" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Свободный контекст этого чата, оценка"
+          }
+        }
+      }
+    },
     "Context window for this model" : {
       "localizations" : {
         "ru" : {
@@ -924,16 +924,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Укажите адрес сервера, например http://localhost:11434."
-          }
-        }
-      }
-    },
-    "Estimated context used by this chat, the context window, and what is left" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Оценка занятого этим чатом контекста, размер окна контекста и остаток"
           }
         }
       }

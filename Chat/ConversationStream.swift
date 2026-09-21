@@ -94,6 +94,14 @@ final class ConversationStreamCoordinator {
     /// The streamed reply without the model's private channels; notes about tools are separate state.
     var visibleStreamingText: String { AnswerText.visible(streamingText) }
 
+    /// Context the chat takes, estimated: exact counts for generated replies, ~3 characters per token for everything
+    /// else. Shared so the window and the panel show the same number for the same chat.
+    func contextUsed(systemPrompt: String?) -> Int {
+        let system = (systemPrompt?.count ?? 0) / 3
+        let history = messages.reduce(0) { $0 + ($1.role == .assistant ? $1.completionTokens ?? $1.text.count / 3 : $1.text.count / 3) }
+        return system + history + (streamingText.count + input.count) / 3
+    }
+
     /// Cached so the answer-started check is not an O(n) rescan of the reply on every token.
     private var answerStarted = false
     /// Bumped on every new run and on reset; the tail of a cancelled task must not write stale state.
