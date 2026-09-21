@@ -26,10 +26,3 @@ a chat window. Nothing leaves the computer unless you turn web search on.
 Swift 6, SwiftUI + AppKit, SwiftData, Apple Silicon only, for MacOS 26 and newer. Also: 
 - [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm);
 - [swift-transformers](https://github.com/huggingface/swift-transformers).
-
-## Icon
-
-The app icon is `Resources/AppIcon.icon` (Icon Composer), with the rendered sizes in
-`Resources/Assets.xcassets/AppIcon.appiconset`; the drawing it was traced from is in `Design/`. The menu bar uses the
-`sparkles` system symbol — the same mark the answers carry in the transcript — so it follows light and dark menu bars
-on its own.

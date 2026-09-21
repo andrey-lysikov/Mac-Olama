@@ -285,6 +285,26 @@
         }
       }
     },
+    "Answering · %lld s" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отвечает · %lld с"
+          }
+        }
+      }
+    },
+    "Answering · %lld s · Tokens: %lld/s (%lld)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отвечает · %1$lld с · Токенов: %2$lld/с (%3$lld)"
+          }
+        }
+      }
+    },
     "API port in use" : {
       "localizations" : {
         "ru" : {
@@ -355,6 +375,16 @@
         }
       }
     },
+    "Automatic" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автоматически"
+          }
+        }
+      }
+    },
     "Autostart" : {
       "localizations" : {
         "ru" : {
@@ -366,7 +396,14 @@
       }
     },
     "Browser access" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступ из браузера"
+          }
+        }
+      }
     },
     "By Link" : {
       "localizations" : {
@@ -419,10 +456,24 @@
       }
     },
     "Caps how fast model files are downloaded" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ограничивает скорость загрузки файлов моделей"
+          }
+        }
+      }
     },
     "Chat history is unavailable (%@). New chats will not be saved. A backup of the database was made." : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "История чатов недоступна (%@). Новые чаты не будут сохраняться. Создана резервная копия базы данных."
+          }
+        }
+      }
     },
     "Chats" : {
       "localizations" : {
@@ -657,7 +708,14 @@
       }
     },
     "Custom list" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Свой список"
+          }
+        }
+      }
     },
     "Cut" : {
       "localizations" : {
@@ -880,6 +938,16 @@
         }
       }
     },
+    "Every model answers in this language unless a chat asks for another" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Все модели отвечают на этом языке, если в чате не попросить другой"
+          }
+        }
+      }
+    },
     "Faster answers (MTP)" : {
       "localizations" : {
         "ru" : {
@@ -1041,7 +1109,14 @@
       }
     },
     "How many files of one model are fetched at once" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сколько файлов одной модели загружается одновременно"
+          }
+        }
+      }
     },
     "How many searches and pages the model may take before it answers" : {
       "localizations" : {
@@ -1054,7 +1129,7 @@
       }
     },
     "https://example.com, …" : {
-
+      "shouldTranslate" : false
     },
     "Hub" : {
       "localizations" : {
@@ -1179,7 +1254,14 @@
       }
     },
     "Localhost only" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только localhost"
+          }
+        }
+      }
     },
     "Looking at %@…" : {
       "localizations" : {
@@ -1286,7 +1368,14 @@
       }
     },
     "Model downloads" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузка моделей"
+          }
+        }
+      }
     },
     "Model for this chat" : {
       "localizations" : {
@@ -1590,7 +1679,14 @@
       }
     },
     "Off" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выключено"
+          }
+        }
+      }
     },
     "Older" : {
       "localizations" : {
@@ -1713,7 +1809,14 @@
       }
     },
     "Parallel files" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Параллельные файлы"
+          }
+        }
+      }
     },
     "Paste" : {
       "localizations" : {
@@ -1761,6 +1864,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Головы предсказания публикуются отдельным небольшим репозиторием для этой сборки модели."
+          }
+        }
+      }
+    },
+    "Preferred language" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предпочитаемый язык"
           }
         }
       }
@@ -1922,6 +2035,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Заменить"
+          }
+        }
+      }
+    },
+    "Replies" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ответы"
           }
         }
       }
@@ -2137,7 +2260,14 @@
       }
     },
     "Show Backup in Finder" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать копию в Finder"
+          }
+        }
+      }
     },
     "Show how this model thinks" : {
       "localizations" : {
@@ -2170,7 +2300,14 @@
       }
     },
     "Speed limit" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ограничение скорости"
+          }
+        }
+      }
     },
     "Starting…" : {
       "localizations" : {
@@ -2295,7 +2432,14 @@
       }
     },
     "The chat database was damaged and has been reset (%@). The old one was backed up." : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "База данных чатов была повреждена и сброшена (%@). Старая версия сохранена в резервной копии."
+          }
+        }
+      }
     },
     "The chat shows how this model thinks" : {
       "localizations" : {
@@ -2459,7 +2603,14 @@
       }
     },
     "The repository lists an unsafe file path (%@) and cannot be installed." : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Репозиторий содержит небезопасный путь файла (%@) и не может быть установлен."
+          }
+        }
+      }
     },
     "The server did not answer in %lld s. Check the address and port." : {
       "localizations" : {
@@ -2682,7 +2833,14 @@
       }
     },
     "Unlimited" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без ограничений"
+          }
+        }
+      }
     },
     "Unload Now" : {
       "localizations" : {
@@ -2835,7 +2993,14 @@
       }
     },
     "Which web pages may call the API from a browser (CORS)" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Каким веб-страницам разрешено обращаться к API из браузера (CORS)"
+          }
+        }
+      }
     },
     "Won't fit: needs about %@, but %@ can give a model at most %@." : {
       "localizations" : {

@@ -1,5 +1,0 @@
-{
-    "extension_name": { "message": "Mac-Olama" },
-    "extension_description": { "message": "Ask the local model about the current page" },
-    "action_title": { "message": "Ask Mac-Olama about this page" }
-}

@@ -6,16 +6,12 @@ import Foundation
 // Models on another server: Ollama `/api/chat` or OpenAI-compatible `/v1/chat/completions`, streamed over HTTP.
 // Separate reasoning (`thinking`, `reasoning_content`) is wrapped in <think> tags, so it is hidden like a local model's.
 
-/// `LocalizedError` as well as `CustomStringConvertible`: without it the system prints "operation could not be
-/// completed (MacOlama.RemoteError, error 0)" wherever an error is shown or logged.
-enum RemoteError: Error, LocalizedError, CustomStringConvertible {
+enum RemoteError: DescribedError {
     case badAddress
     case unreachable(String)
     case modelNotFound(String, available: [String])
     case http(Int, String)
     case timedOut(Int)
-
-    var errorDescription: String? { description }
 
     var description: String {
         switch self {
@@ -28,6 +24,41 @@ enum RemoteError: Error, LocalizedError, CustomStringConvertible {
         case .http(let status, let message): String(localized: "Server error \(status): \(message)")
         case .timedOut(let seconds): String(localized: "The server did not answer in \(seconds) s. Check the address and port.")
         }
+    }
+}
+
+/// Wraps a server's separate reasoning stream in the canonical reasoning tags, so the transcript hides it the same
+/// way it hides a local model's.
+private struct ThinkingTagger {
+    /// The first pair in the table is the canonical `<think>`/`</think>` every reply is normalized to.
+    private static let tags = AnswerText.reasoningBlocks[0]
+    private var thinking = false
+
+    mutating func reasoning(_ text: String, into continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation) {
+        guard !text.isEmpty else { return }
+        if !thinking { continuation.yield(.token(Self.tags.open)) }
+        thinking = true
+        continuation.yield(.token(text))
+    }
+
+    mutating func content(_ text: String, into continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation) {
+        guard !text.isEmpty else { return }
+        close(into: continuation)
+        continuation.yield(.token(text))
+    }
+
+    /// Ends an open reasoning block (the answer begins, or the stream is done).
+    mutating func close(into continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation) {
+        if thinking { continuation.yield(.token(Self.tags.close)) }
+        thinking = false
+    }
+}
+
+extension JSON {
+    /// Tool arguments as a JSON string. Some servers send them pre-encoded as a string; that string passes through.
+    fileprivate var argumentsString: String {
+        if case .string(let s) = self { return s }
+        return jsonString()
     }
 }
 
@@ -45,7 +76,7 @@ actor RemoteEngine: InferenceEngine {
     private(set) var loadedModel: ModelDescriptor?
     private var endpoint: RemoteEndpoint?
     private var token: String?
-    private var current: Task<Void, Never>?
+    private let current = GenerationTaskBox()
 
     func load(_ model: ModelDescriptor, progress: @Sendable @escaping (Double) -> Void) async throws {
         let endpoint = try RemoteEndpoint.load(from: model.directory)
@@ -60,43 +91,25 @@ actor RemoteEngine: InferenceEngine {
     }
 
     func unload() async {
-        current?.cancel()
+        current.cancel()
         loadedModel = nil
         endpoint = nil
         token = nil
     }
 
     func cancelCurrent() async {
-        current?.cancel()
+        current.cancel()
     }
 
     func generate(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
-        let (stream, continuation) = AsyncThrowingStream.makeStream(of: GenerationEvent.self)
-        guard let endpoint else {
-            continuation.finish(throwing: EngineError.noModelLoaded)
-            return stream
-        }
+        guard let endpoint else { return .failed(EngineError.noModelLoaded) }
         let token = token
-        let task = Task {
-            do {
-                switch endpoint.api {
-                case .ollama: try await Self.streamOllama(endpoint, token: token, request: request, into: continuation)
-                case .openAI: try await Self.streamOpenAI(endpoint, token: token, request: request, into: continuation)
-                }
-                continuation.finish()
-            } catch is CancellationError {
-                continuation.yield(.finished(.cancelled))
-                continuation.finish()
-            } catch let error as URLError where error.code == .cancelled {
-                continuation.yield(.finished(.cancelled))
-                continuation.finish()
-            } catch {
-                continuation.finish(throwing: error)
+        return .engine(current: current) { continuation in
+            switch endpoint.api {
+            case .ollama: try await Self.streamOllama(endpoint, token: token, request: request, into: continuation)
+            case .openAI: try await Self.streamOpenAI(endpoint, token: token, request: request, into: continuation)
             }
         }
-        current = task
-        continuation.onTermination = { _ in task.cancel() }
-        return stream
     }
 
     // Probe
@@ -168,74 +181,51 @@ actor RemoteEngine: InferenceEngine {
         _ endpoint: RemoteEndpoint, token: String?, request: GenerationRequest,
         into continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation
     ) async throws {
-        var options: [String: Any] = [
-            "temperature": request.sampling.temperature, "top_p": request.sampling.topP, "num_predict": request.sampling.maxTokens,
-        ]
-        if let context = request.contextTokens { options["num_ctx"] = context }
-        if let penalty = request.sampling.repetitionPenalty { options["repeat_penalty"] = penalty }
-        if let seed = request.sampling.seed { options["seed"] = seed }
-        var body: [String: Any] = [
-            "model": endpoint.model, "stream": true, "options": options,
-            "messages": ollamaMessages(request.messages),
-        ]
-        if !request.tools.isEmpty { body["tools"] = toolsJSON(request.tools) }
+        var options = OllamaOptions()
+        options.temperature = request.sampling.temperature
+        options.top_p = request.sampling.topP
+        options.num_predict = request.sampling.maxTokens
+        options.num_ctx = request.contextTokens
+        options.repeat_penalty = request.sampling.repetitionPenalty
+        options.seed = request.sampling.seed.flatMap { Int(exactly: $0) }
+        let body = OllamaChatRequest(
+            model: endpoint.model, messages: ollamaMessages(request.messages), stream: true, tools: tools(request.tools),
+            options: options)
         let bytes = try await stream(endpoint.baseURL.appending(path: "api/chat"), token: token, body: body)
-        var thinking = false
+        var tagger = ThinkingTagger()
         var sawToolCall = false
         for try await line in bytes.lines {
             try Task.checkCancellation()
-            guard let object = parse(line) else { continue }
-            if let error = object["error"] as? String { throw RemoteError.http(500, error) }
-            if let message = object["message"] as? [String: Any] {
-                if let text = message["thinking"] as? String, !text.isEmpty {
-                    if !thinking { continuation.yield(.token("<think>")) }
-                    thinking = true
-                    continuation.yield(.token(text))
-                }
-                if let text = message["content"] as? String, !text.isEmpty {
-                    if thinking { continuation.yield(.token("</think>")) }
-                    thinking = false
-                    continuation.yield(.token(text))
-                }
-                for call in message["tool_calls"] as? [[String: Any]] ?? [] {
-                    guard let function = call["function"] as? [String: Any], let name = function["name"] as? String else { continue }
+            guard !line.isEmpty else { continue }
+            let data = Data(line.utf8)
+            if let failure = try? chunkDecoder.decode(APIErrorBody.self, from: data) { throw RemoteError.http(500, failure.error) }
+            guard let chunk = try? chunkDecoder.decode(OllamaChatChunk.self, from: data) else { continue }
+            if let message = chunk.message {
+                tagger.reasoning(message.thinking ?? "", into: continuation)
+                tagger.content(message.content ?? "", into: continuation)
+                for call in message.tool_calls ?? [] {
                     sawToolCall = true
                     continuation.yield(
                         .toolCall(
                             ToolCall(
-                                id: "call_\(UUID().uuidString.prefix(8))", name: name, argumentsJSON: jsonString(function["arguments"]))))
+                                id: "call_\(UUID().uuidString.prefix(8))", name: call.function.name,
+                                argumentsJSON: call.function.arguments.argumentsString)))
                 }
             }
-            if object["done"] as? Bool == true {
-                if thinking { continuation.yield(.token("</think>")) }
-                let evalCount = object["eval_count"] as? Int ?? 0
-                let evalSeconds = Double(object["eval_duration"] as? Int ?? 0) / 1e9
+            if chunk.done {
+                tagger.close(into: continuation)
+                let evalCount = chunk.eval_count ?? 0
+                let evalSeconds = Double(chunk.eval_duration ?? 0) / 1e9
                 continuation.yield(
                     .usage(
                         GenerationUsage(
-                            promptTokens: object["prompt_eval_count"] as? Int ?? 0, completionTokens: evalCount,
+                            promptTokens: chunk.prompt_eval_count ?? 0, completionTokens: evalCount,
                             tokensPerSecond: evalSeconds > 0 ? Double(evalCount) / evalSeconds : 0,
-                            promptSeconds: Double(object["prompt_eval_duration"] as? Int ?? 0) / 1e9, generationSeconds: evalSeconds)))
-                let reason: FinishReason = sawToolCall ? .toolCalls : (object["done_reason"] as? String == "length" ? .length : .stop)
+                            promptSeconds: Double(chunk.prompt_eval_duration ?? 0) / 1e9, generationSeconds: evalSeconds)))
+                let reason: FinishReason = sawToolCall ? .toolCalls : (chunk.done_reason == "length" ? .length : .stop)
                 continuation.yield(.finished(reason))
                 return
             }
-        }
-    }
-
-    private static func ollamaMessages(_ messages: [EngineMessage]) -> [[String: Any]] {
-        var names: [String: String] = [:]  // tool call id → tool name, for the results that answer them
-        return messages.map { message in
-            var out: [String: Any] = ["role": message.role.rawValue, "content": message.content]
-            if !message.images.isEmpty { out["images"] = message.images.map { $0.data.base64EncodedString() } }
-            if !message.toolCalls.isEmpty {
-                for call in message.toolCalls { names[call.id] = call.name }
-                out["tool_calls"] = message.toolCalls.map { call in
-                    ["function": ["name": call.name, "arguments": object(call.argumentsJSON)]]
-                }
-            }
-            if message.role == .tool, let id = message.toolCallID, let name = names[id] { out["tool_name"] = name }
-            return out
         }
     }
 
@@ -245,61 +235,51 @@ actor RemoteEngine: InferenceEngine {
         _ endpoint: RemoteEndpoint, token: String?, request: GenerationRequest,
         into continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation
     ) async throws {
-        var body: [String: Any] = [
-            "model": endpoint.model, "stream": true, "temperature": request.sampling.temperature, "top_p": request.sampling.topP,
-            "max_tokens": request.sampling.maxTokens, "stream_options": ["include_usage": true],
-            "messages": openAIMessages(request.messages),
-        ]
-        if let seed = request.sampling.seed { body["seed"] = seed }
-        if !request.tools.isEmpty { body["tools"] = toolsJSON(request.tools) }
+        let body = OpenAIChatRequest(
+            model: endpoint.model, messages: openAIMessages(request.messages), stream: true,
+            temperature: request.sampling.temperature, top_p: request.sampling.topP, max_tokens: request.sampling.maxTokens,
+            seed: request.sampling.seed.flatMap { Int(exactly: $0) }, tools: tools(request.tools),
+            stream_options: .init(include_usage: true))
         let bytes = try await stream(endpoint.baseURL.appending(path: "v1/chat/completions"), token: token, body: body)
-        var thinking = false
-        var calls: [Int: (id: String, name: String, arguments: String)] = [:]
+        var tagger = ThinkingTagger()
         var finish: FinishReason = .stop
         var usage: GenerationUsage?
+        // Tool calls arrive in pieces keyed by index: the name first, the arguments as a JSON string in fragments.
+        var calls: [Int: (id: String, name: String, arguments: String)] = [:]
         for try await line in bytes.lines {
             try Task.checkCancellation()
             guard line.hasPrefix("data:") else { continue }
             let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
             if payload == "[DONE]" { break }
-            guard let object = parse(payload) else { continue }
-            if let error = object["error"] as? [String: Any] { throw RemoteError.http(500, error["message"] as? String ?? "\(error)") }
-            if let u = object["usage"] as? [String: Any] {
-                let completion = u["completion_tokens"] as? Int ?? 0
-                let timings = object["timings"] as? [String: Any]
+            let data = Data(payload.utf8)
+            if let failure = try? chunkDecoder.decode(OpenAIErrorBody.self, from: data) {
+                throw RemoteError.http(500, failure.error.message ?? "unknown server error")
+            }
+            guard let chunk = try? chunkDecoder.decode(OpenAIChatChunk.self, from: data) else { continue }
+            if let u = chunk.usage {
                 usage = GenerationUsage(
-                    promptTokens: u["prompt_tokens"] as? Int ?? 0, completionTokens: completion,
-                    tokensPerSecond: timings?["predicted_per_second"] as? Double ?? 0)
+                    promptTokens: u.prompt_tokens ?? 0, completionTokens: u.completion_tokens ?? 0,
+                    tokensPerSecond: chunk.timings?.predicted_per_second ?? 0)
             }
-            guard let choice = (object["choices"] as? [[String: Any]])?.first else { continue }
-            let delta = choice["delta"] as? [String: Any] ?? [:]
-            if let text = delta["reasoning_content"] as? String, !text.isEmpty {
-                if !thinking { continuation.yield(.token("<think>")) }
-                thinking = true
-                continuation.yield(.token(text))
-            }
-            if let text = delta["content"] as? String, !text.isEmpty {
-                if thinking { continuation.yield(.token("</think>")) }
-                thinking = false
-                continuation.yield(.token(text))
-            }
-            // Tool calls arrive in pieces keyed by index: the name first, the arguments as a JSON string in fragments.
-            for part in delta["tool_calls"] as? [[String: Any]] ?? [] {
-                let index = part["index"] as? Int ?? 0
-                var call = calls[index] ?? (id: part["id"] as? String ?? "call_\(index)", name: "", arguments: "")
-                if let function = part["function"] as? [String: Any] {
-                    call.name += function["name"] as? String ?? ""
-                    call.arguments += function["arguments"] as? String ?? ""
+            guard let choice = chunk.choices?.first else { continue }
+            if let delta = choice.delta {
+                tagger.reasoning(delta.reasoning_content ?? "", into: continuation)
+                tagger.content(delta.content ?? "", into: continuation)
+                for part in delta.tool_calls ?? [] {
+                    let index = part.index ?? 0
+                    var call = calls[index] ?? (id: part.id ?? "call_\(index)", name: "", arguments: "")
+                    call.name += part.function?.name ?? ""
+                    call.arguments += part.function?.arguments ?? ""
+                    calls[index] = call
                 }
-                calls[index] = call
             }
-            switch choice["finish_reason"] as? String {
+            switch choice.finish_reason {
             case "length": finish = .length
             case "tool_calls": finish = .toolCalls
             default: break
             }
         }
-        if thinking { continuation.yield(.token("</think>")) }
+        tagger.close(into: continuation)
         for (_, call) in calls.sorted(by: { $0.key < $1.key }) where !call.name.isEmpty {
             continuation.yield(
                 .toolCall(ToolCall(id: call.id, name: call.name, argumentsJSON: call.arguments.isEmpty ? "{}" : call.arguments)))
@@ -309,53 +289,68 @@ actor RemoteEngine: InferenceEngine {
         continuation.yield(.finished(finish))
     }
 
-    private static func openAIMessages(_ messages: [EngineMessage]) -> [[String: Any]] {
-        messages.map { message in
-            var out: [String: Any] = ["role": message.role.rawValue]
-            if message.images.isEmpty {
-                out["content"] = message.content
-            } else {
-                out["content"] =
-                    [["type": "text", "text": message.content]]
-                    + message.images.map { image -> [String: Any] in
-                        ["type": "image_url", "image_url": ["url": "data:\(image.mimeType);base64,\(image.data.base64EncodedString())"]]
-                    }
-            }
-            if !message.toolCalls.isEmpty {
-                out["tool_calls"] = message.toolCalls.map { call in
-                    ["id": call.id, "type": "function", "function": ["name": call.name, "arguments": call.argumentsJSON]]
-                }
-            }
-            if let id = message.toolCallID { out["tool_call_id"] = id }
+    // Engine → wire conversion (the reverse of `APIServer.convert`)
+
+    private static func ollamaMessages(_ messages: [EngineMessage]) -> [OllamaMessage] {
+        var names: [String: String] = [:]  // tool call id → tool name, for the results that answer them
+        return messages.map { message in
+            var out = OllamaMessage(
+                role: message.role.rawValue, content: message.content,
+                images: message.images.isEmpty ? nil : message.images.map { $0.data.base64EncodedString() },
+                tool_calls: message.toolCalls.isEmpty
+                    ? nil
+                    : message.toolCalls.map { OllamaToolCall(function: .init(name: $0.name, arguments: JSON.parse($0.argumentsJSON))) })
+            for call in message.toolCalls { names[call.id] = call.name }
+            if message.role == .tool, let id = message.toolCallID { out.tool_name = names[id] }
             return out
         }
     }
 
+    private static func openAIMessages(_ messages: [EngineMessage]) -> [OpenAIMessage] {
+        messages.map { message in
+            let content: OpenAIContent =
+                message.images.isEmpty
+                ? .text(message.content)
+                : .parts(
+                    [OpenAIContent.Part(type: "text", text: message.content, image_url: nil)]
+                        + message.images.map { image in
+                            OpenAIContent.Part(
+                                type: "image_url", text: nil,
+                                image_url: .init(url: "data:\(image.mimeType);base64,\(image.data.base64EncodedString())"))
+                        })
+            return OpenAIMessage(
+                role: message.role.rawValue, content: content,
+                tool_calls: message.toolCalls.isEmpty
+                    ? nil
+                    : message.toolCalls.map { OpenAIToolCall(id: $0.id, function: .init(name: $0.name, arguments: $0.argumentsJSON)) },
+                tool_call_id: message.toolCallID)
+        }
+    }
+
+    private static func tools(_ specs: [ToolSpec]) -> [OllamaTool]? {
+        specs.isEmpty
+            ? nil
+            : specs.map {
+                OllamaTool(
+                    type: "function",
+                    function: .init(name: $0.name, description: $0.description, parameters: JSON.parse($0.parametersJSONSchema)))
+            }
+    }
+
     // HTTP and JSON
 
-    private static func toolsJSON(_ tools: [ToolSpec]) -> [[String: Any]] {
-        tools.map { tool in
-            [
-                "type": "function",
-                "function": ["name": tool.name, "description": tool.description, "parameters": object(tool.parametersJSONSchema)],
-            ]
-        }
-    }
-
-    private static func makeRequest(_ url: URL, token: String?, body: [String: Any]?, timeout: TimeInterval) throws -> URLRequest {
-        var request = URLRequest(url: url)
-        request.timeoutInterval = timeout
-        if let token, !token.isEmpty { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        if let body {
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        }
-        return request
-    }
+    /// Chunk decoding is lenient: timestamps are not read here, and a `created_at` format the strict ISO-8601
+    /// strategy rejects (Ollama sends nanosecond fractions) must not drop the chunk.
+    private static let chunkDecoder: JSONDecoder = {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .custom { _ in .distantPast }
+        return d
+    }()
 
     private static func json(_ url: URL, token: String?, body: [String: Any]? = nil) async throws -> [String: Any] {
-        let (data, response) = try await URLSession.shared.data(for: makeRequest(url, token: token, body: body, timeout: 15))
+        let encoded = try body.map { try JSONSerialization.data(withJSONObject: $0) }
+        let request = HTTPJSON.request(url, token: token, jsonBody: encoded, timeout: 15, accept: nil, userAgent: nil)
+        let (data, response) = try await URLSession.shared.data(for: request)
         try check(response, data: data)
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw RemoteError.unreachable(String(localized: "the answer is not JSON"))
@@ -364,8 +359,10 @@ actor RemoteEngine: InferenceEngine {
     }
 
     /// Long timeout: a big prompt may take the server a while before the first token.
-    private static func stream(_ url: URL, token: String?, body: [String: Any]) async throws -> URLSession.AsyncBytes {
-        let (bytes, response) = try await URLSession.shared.bytes(for: makeRequest(url, token: token, body: body, timeout: 600))
+    private static func stream(_ url: URL, token: String?, body: some Encodable) async throws -> URLSession.AsyncBytes {
+        let request = HTTPJSON.request(
+            url, token: token, jsonBody: try JSONCoding.plainEncoder.encode(body), timeout: 600, accept: nil, userAgent: nil)
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
             var data = Data()
             for try await byte in bytes.prefix(4096) { data.append(byte) }
@@ -381,22 +378,6 @@ actor RemoteEngine: InferenceEngine {
             (object?["error"] as? String) ?? ((object?["error"] as? [String: Any])?["message"] as? String)
             ?? String(decoding: data.prefix(300), as: UTF8.self)
         throw RemoteError.http(http.statusCode, message)
-    }
-
-    private static func parse(_ line: String) -> [String: Any]? {
-        guard !line.isEmpty, let data = line.data(using: .utf8) else { return nil }
-        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-    }
-
-    private static func object(_ json: String) -> Any {
-        (try? JSONSerialization.jsonObject(with: Data(json.utf8))) ?? [String: Any]()
-    }
-
-    private static func jsonString(_ value: Any?) -> String {
-        if let string = value as? String { return string }
-        guard let value, JSONSerialization.isValidJSONObject(value), let data = try? JSONSerialization.data(withJSONObject: value)
-        else { return "{}" }
-        return String(decoding: data, as: UTF8.self)
     }
 }
 
@@ -434,20 +415,9 @@ actor RoutingEngine: InferenceEngine {
     }
 
     func generate(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
-        let (stream, continuation) = AsyncThrowingStream.makeStream(of: GenerationEvent.self)
-        guard let engine = active else {
-            continuation.finish(throwing: EngineError.noModelLoaded)
-            return stream
+        guard let engine = active else { return .failed(EngineError.noModelLoaded) }
+        return .engine { continuation in
+            for try await event in await engine.generate(request) { continuation.yield(event) }
         }
-        let task = Task {
-            do {
-                for try await event in await engine.generate(request) { continuation.yield(event) }
-                continuation.finish()
-            } catch {
-                continuation.finish(throwing: error)
-            }
-        }
-        continuation.onTermination = { _ in task.cancel() }
-        return stream
     }
 }

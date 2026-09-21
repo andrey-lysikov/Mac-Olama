@@ -46,7 +46,8 @@ enum MTPDrafter {
     }
 
     static func modelType(inConfig config: Data) -> String? {
-        (try? JSONSerialization.jsonObject(with: config) as? [String: Any])?["model_type"] as? String
+        // The root only: a multimodal `text_config` may carry its own `model_type`, which is not the checkpoint's.
+        ModelConfig(data: config)?.root["model_type"] as? String
     }
 
     /// Whether a folder holds a drafter rather than a chat model.
@@ -125,10 +126,9 @@ enum MTPDrafter {
     /// then meets a vision target and stops the process from inside. So that whole section is taken from the model
     /// the drafter will serve — the real one, because the vision drafter decodes it.
     private static func aligned(_ config: Data, withTargetAt target: URL) -> (config: Data, seesImages: Bool) {
-        let targetConfig = (try? Data(contentsOf: target.appending(path: "config.json"))) ?? Data()
-        let targetRoot = (try? JSONSerialization.jsonObject(with: targetConfig)) as? [String: Any] ?? [:]
+        let targetRoot = ModelConfig(directory: target)?.root ?? [:]
         let vision = targetRoot["vision_config"] as? [String: Any] ?? [:]
-        guard var root = try? JSONSerialization.jsonObject(with: config) as? [String: Any] else { return (config, !vision.isEmpty) }
+        guard var root = ModelConfig(data: config)?.root else { return (config, !vision.isEmpty) }
         let own = root["vision_config"] as? [String: Any] ?? [:]
         guard own.isEmpty != vision.isEmpty else { return (config, !own.isEmpty) }
         root["vision_config"] = vision
@@ -182,8 +182,8 @@ enum MTPDrafter {
     /// True when the config announces prediction heads. The key is found by name (`mtp_num_hidden_layers`,
     /// `num_nextn_predict_layers`), nested sections included, so no model or architecture names are kept here.
     static func declaresHeads(_ configJSON: Data) -> Bool {
-        guard let root = try? JSONSerialization.jsonObject(with: configJSON) else { return false }
-        return declaresHeads(in: root)
+        guard let config = ModelConfig(data: configJSON) else { return false }
+        return declaresHeads(in: config.root)
     }
 
     private static func declaresHeads(in value: Any) -> Bool {

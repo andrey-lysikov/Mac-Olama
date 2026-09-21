@@ -6,17 +6,6 @@
 	<string>26.0</string>
 	<key>LSUIElement</key>
 	<true/>
-	<key>CFBundleURLTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleURLName</key>
-			<string>ru.lysnet.macolama</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>macolama</string>
-			</array>
-		</dict>
-	</array>
 	<key>LSRequiresNativeExecution</key>
 	<true/>
 	<key>NSLocalNetworkUsageDescription</key>

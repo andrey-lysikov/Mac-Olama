@@ -16,7 +16,7 @@ import os
 public actor MLXEngine: InferenceEngine {
     public private(set) var loadedModel: ModelDescriptor?
     private var container: ModelContainer?
-    private var currentTask: Task<Void, Never>?
+    private let current = GenerationTaskBox()
     /// The model's cache after the last generation, reused when the next prompt continues it (see `PromptSession`).
     private var session: PromptSession?
     /// Off switch for cache reuse. Symptom of a cache gone wrong: after tool rounds (not in the first round) the answer turns
@@ -73,8 +73,7 @@ public actor MLXEngine: InferenceEngine {
     }
 
     public func unload() async {
-        currentTask?.cancel()
-        currentTask = nil
+        current.cancel()
         container = nil
         loadedModel = nil
         session = nil
@@ -83,21 +82,19 @@ public actor MLXEngine: InferenceEngine {
     }
 
     public func cancelCurrent() async {
-        currentTask?.cancel()
+        current.cancel()
     }
 
     // Generate
 
+    // The task body mutates actor state (`session`, `drafterState`), so unlike the other engines it cannot move into
+    // the nonisolated `AsyncThrowingStream.engine` helper: the inline `Task` inherits this actor's isolation.
     public func generate(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
-        let (stream, continuation) = AsyncThrowingStream.makeStream(of: GenerationEvent.self)
-        guard let container, let model = loadedModel else {
-            continuation.finish(throwing: EngineError.noModelLoaded)
-            return stream
-        }
+        guard let container, let model = loadedModel else { return .failed(EngineError.noModelLoaded) }
         if model.kind == .llm, request.messages.contains(where: { !$0.images.isEmpty }) {
-            continuation.finish(throwing: EngineError.imagesNotSupported)
-            return stream
+            return .failed(EngineError.imagesNotSupported)
         }
+        let (stream, continuation) = AsyncThrowingStream.makeStream(of: GenerationEvent.self)
         let parameters = GenerateParameters(
             maxTokens: request.sampling.maxTokens,
             maxKVSize: request.contextTokens,  // rotating KV cache: memory stays bounded by the chosen context window
@@ -181,7 +178,7 @@ public actor MLXEngine: InferenceEngine {
                 continuation.finish(throwing: EngineError.generationFailed(String(describing: error)))
             }
         }
-        currentTask = task
+        current.install(task)
         continuation.onTermination = { t in if case .cancelled = t { task.cancel() } }
         return stream
     }
@@ -324,7 +321,7 @@ public actor MLXEngine: InferenceEngine {
             ? nil
             : request.tools.map { spec in
                 // ToolSpec is [String: any Sendable]; decode the schema through JSONValue and convert to plain Sendable values.
-                let decoded = try? JSONDecoder().decode(JSONValue.self, from: Data(spec.parametersJSONSchema.utf8))
+                let decoded = try? JSONCoding.plainDecoder.decode(JSONValue.self, from: Data(spec.parametersJSONSchema.utf8))
                 let params = decoded.map(Self.sendable) as? [String: any Sendable] ?? [:]
                 return [
                     "type": "function",
@@ -335,7 +332,10 @@ public actor MLXEngine: InferenceEngine {
                     ] as [String: any Sendable],
                 ] as [String: any Sendable]
             }
-        return UserInput(chat: chat, processing: .init(resize: resize), tools: tools)
+        // `enable_thinking` is what a template with optional reasoning reads; Gemma 4 writes no thought channel without
+        // it, and one that always reasons ignores the key.
+        return UserInput(
+            chat: chat, processing: .init(resize: resize), tools: tools, additionalContext: ["enable_thinking": request.thinks])
     }
 
     /// Plain Sendable representation of a JSONValue tree (String/Int/Double/Bool/arrays/dictionaries).
