@@ -3,5 +3,9 @@
 <plist version="1.0">
 <!-- No App Sandbox (ENABLE_APP_SANDBOX = NO): tools spawn CLI programs, SkyLight is used; hardened runtime stays on.
      The former network.client/server keys were sandbox-only and did nothing here. -->
-<dict/>
+<dict>
+	<!-- Hardened runtime keeps Location Services closed without it; used only by the Location tool (off by default). -->
+	<key>com.apple.security.personal-information.location</key>
+	<true/>
+</dict>
 </plist>

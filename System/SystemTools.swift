@@ -9,7 +9,7 @@ import JavaScriptCore
 
 /// Tools beyond web search, folders and Shortcuts, each with its own switch in the Features menu (off by default).
 public enum ExtraTool: String, CaseIterable, Sendable {
-    case calculator, macInfo, network, weather
+    case calculator, macInfo, network, weather, location
 }
 
 // JavaScript

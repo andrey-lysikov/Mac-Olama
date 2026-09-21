@@ -10,6 +10,10 @@
 	<true/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Mac-Olama needs this to reach a model served on your local network and to run network checks you ask for.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Mac-Olama tells a model where this Mac is only when you ask something that depends on it, such as the weather.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Mac-Olama tells a model where this Mac is only when you ask something that depends on it, such as the weather.</string>
 	<key>NSServices</key>
 	<array>
 		<dict>

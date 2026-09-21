@@ -966,6 +966,8 @@ final class AppContainer {
 
     func setToolEnabled(_ tool: ExtraTool, _ enabled: Bool) {
         toggle(tool.rawValue, in: \.extraTools, on: enabled)
+        // macOS asks for the permission now, while the user is in the settings, not when a model first needs it.
+        if tool == .location, enabled { LocationService.shared.requestPermission() }
         updateTools()
     }
 
@@ -1094,7 +1096,11 @@ final class AppContainer {
             case .calculator: providers.append(JavaScriptToolProvider())
             case .macInfo: providers.append(MacInfoToolProvider())
             case .network: providers.append(NetworkToolProvider(confirmation: NotificationService.shared))
-            case .weather: providers.append(WeatherToolProvider())
+            case .weather:
+                var weather = WeatherToolProvider()
+                weather.usesCurrentPlace = isToolEnabled(.location)
+                providers.append(weather)
+            case .location: providers.append(LocationToolProvider())
             }
         }
         if settings.shortcutsToolEnabled {

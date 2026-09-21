@@ -67,6 +67,42 @@
           }
         }
       }
+    },
+    "NSLocationUsageDescription" : {
+      "comment" : "Location usage",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama tells a model where this Mac is only when you ask something that depends on it, such as the weather."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama сообщает модели, где находится этот Mac, только когда ответ на ваш вопрос от этого зависит, например о погоде."
+          }
+        }
+      }
+    },
+    "NSLocationWhenInUseUsageDescription" : {
+      "comment" : "Location usage while in use",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama tells a model where this Mac is only when you ask something that depends on it, such as the weather."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac-Olama сообщает модели, где находится этот Mac, только когда ответ на ваш вопрос от этого зависит, например о погоде."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

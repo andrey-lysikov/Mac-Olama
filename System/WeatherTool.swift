@@ -10,33 +10,48 @@ import Foundation
 public struct WeatherToolProvider: ToolProvider {
     public var geocodingURL = URL(string: "https://geocoding-api.open-meteo.com/v1/search")!
     public var forecastURL = URL(string: "https://api.open-meteo.com/v1/forecast")!
+    /// The location switch is on too: a call without a place means where the user is, found by Location Services,
+    /// so a question about the weather "here" takes one round instead of asking the city first.
+    public var usesCurrentPlace = false
 
     public init() {}
 
     public var specs: [ToolSpec] {
-        [
+        let place =
+            usesCurrentPlace
+            ? #""location":{"type":"string","description":"City or place name, e.g. Moscow; add the country if ambiguous. Leave it out for where the user is now"}"#
+            : #""location":{"type":"string","description":"City or place name, e.g. Moscow; add the country if ambiguous"}"#
+        return [
             ToolSpec(
                 name: "get_weather",
                 description:
                     "Current weather and a daily forecast (up to 7 days) for a place: temperature, feels-like, conditions, precipitation and its probability, wind, humidity, pressure. Data from Open-Meteo.",
                 parametersJSONSchema:
-                    #"{"type":"object","properties":{"location":{"type":"string","description":"City or place name, e.g. Moscow; add the country if ambiguous"},"days":{"type":"integer","description":"Days of forecast, 1 to 7 (default 3)"}},"required":["location"]}"#
+                    #"{"type":"object","properties":{"# + place
+                    + #","days":{"type":"integer","description":"Days of forecast, 1 to 7 (default 3)"}}"#
+                    + (usesCurrentPlace ? "}" : #","required":["location"]}"#)
             )
         ]
     }
 
     public func execute(_ call: ToolCall) async throws -> String {
         let args = ToolArguments(call.argumentsJSON)
-        guard let location = args.string("location")?.trimmingCharacters(in: .whitespacesAndNewlines), !location.isEmpty else {
-            return "error: missing location; ask the user which city"
-        }
+        let location = args.string("location")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !location.isEmpty || usesCurrentPlace else { return "error: missing location; ask the user which city" }
         let days = min(max(args.int("days") ?? 3, 1), 7)
         do {
-            guard let place = try Self.parsePlace(try await get(geocodeQuery(location))) else {
+            let place: Place
+            if location.isEmpty {
+                place = try await Self.currentPlace()
+            } else if let found = try Self.parsePlace(try await get(geocodeQuery(location))) {
+                place = found
+            } else {
                 return "error: no place called \"\(location)\"; try another spelling or add the country"
             }
             let forecast = try await get(forecastQuery(place, days: days))
-            return ToolOutput.wrap(try Self.format(place: place, forecast: forecast), source: "get_weather: \(location)")
+            return ToolOutput.wrap(try Self.format(place: place, forecast: forecast), source: "get_weather: \(place.name)")
+        } catch let failure as LocationService.Failure {
+            return failure.toolText
         } catch {
             return "error: weather service unavailable (\(error.localizedDescription))"
         }

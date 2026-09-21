@@ -109,6 +109,7 @@
 				GlobalHotkey.swift,
 				HTMLDocument.swift,
 				LocalTools.swift,
+				LocationTool.swift,
 				Settings.swift,
 				SettingsSection.swift,
 				SystemServices.swift,

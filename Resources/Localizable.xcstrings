@@ -978,6 +978,16 @@
         }
       }
     },
+    "Finding where this Mac is…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Определяю местоположение…"
+          }
+        }
+      }
+    },
     "Fits %@: ~%lld tok/s, about %@ left for the system." : {
       "localizations" : {
         "ru" : {
@@ -1249,6 +1259,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Только localhost"
+          }
+        }
+      }
+    },
+    "Location" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Местоположение"
           }
         }
       }
@@ -2527,6 +2547,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Модель вызывала инструменты, не отвечая: достигнут предел раундов."
+          }
+        }
+      }
+    },
+    "The model may find out where this Mac is, for the weather and questions about the place" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может узнать, где находится этот Mac, — для погоды и вопросов о месте"
           }
         }
       }

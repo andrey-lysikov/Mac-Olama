@@ -6,7 +6,8 @@ import Foundation
 
 // ToolProvider
 
-/// Tool provider for tool calling: web search, files, Shortcuts, the calculator, this Mac, the network, the weather.
+/// Tool provider for tool calling: web search, files, Shortcuts, the calculator, this Mac, the network, the weather,
+/// where this Mac is.
 public protocol ToolProvider: Sendable {
     var specs: [ToolSpec] { get }
     /// Executes a call and returns the result text for the model.
@@ -354,9 +355,16 @@ public actor ConversationService {
                 "Measure the network with network_check (ping, traceroute, dns, http, port, speed) instead of estimating; report the numbers it returned and say they are measured from this Mac."
             )
         }
+        if names.contains("get_location") {
+            lines.append(
+                "When the answer depends on where the user is (weather, local time, what is nearby, local news) and they named no place, find it with get_location instead of asking."
+            )
+        }
         if names.contains("get_weather") {
             lines.append(
-                "For weather call get_weather with the place the user means; ask which city when it is not clear."
+                (names.contains("get_location")
+                    ? "For weather call get_weather with the place the user means, or without a place for where the user is now."
+                    : "For weather call get_weather with the place the user means; ask which city when it is not clear.")
                     + (names.contains("web_search")
                         ? " You may add local detail or check a warning with web_search afterwards, naming both sources." : ""))
         }
@@ -586,6 +594,8 @@ enum AnswerText {
             return Activity(
                 text: path.map { String(localized: "Looking at \($0)…") } ?? String(localized: "Looking at your files…"),
                 symbol: "folder")
+        case "get_location":
+            return Activity(text: String(localized: "Finding where this Mac is…"), symbol: "location")
         case "run_shortcut":
             let name = argument(call, "name")
             return Activity(
