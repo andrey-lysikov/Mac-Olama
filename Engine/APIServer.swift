@@ -525,6 +525,7 @@ public final class APIServer: Sendable {
                 }
             case .toolCall(let call): collected.toolCalls.append(call)
             case .usage(let usage): collected.usage = usage
+            case .generated: break
             case .finished(let finish): collected.finish = finish
             }
         }

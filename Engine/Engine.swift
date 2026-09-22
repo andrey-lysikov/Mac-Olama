@@ -191,6 +191,9 @@ public enum GenerationEvent: Sendable, Equatable {
     case token(String)
     case toolCall(ToolCall)
     case usage(GenerationUsage)
+    /// Tokens generated so far in this request, text or not: a tool call or a channel the library holds back until
+    /// it is complete counts too. Engines that cannot tell never send it.
+    case generated(Int)
     case finished(FinishReason)
 }
 

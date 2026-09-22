@@ -19,6 +19,8 @@ public protocol ToolProvider: Sendable {
 public enum ConversationEvent: Sendable, Equatable {
     case started(messageID: UUID)
     case token(String)
+    /// Tokens the engine has generated in the current round, including those it has not turned into text yet.
+    case generated(Int)
     case toolCallStarted(ToolCall)
     case toolCallFinished(ToolCall, resultPreview: String)
     /// What was streamed so far is dropped: an empty answer after tool rounds is being asked for once more.
@@ -242,6 +244,8 @@ public actor ConversationService {
                         pendingCalls.append(call)
                     case .usage(let u):
                         usage = u
+                    case .generated(let count):
+                        continuation.yield(.generated(count))
                     case .finished(let reason):
                         finish = reason
                     }

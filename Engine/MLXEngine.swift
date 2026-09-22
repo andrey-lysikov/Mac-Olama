@@ -184,6 +184,20 @@ public actor MLXEngine: InferenceEngine {
                         context: context, drafter: start.drafter?.model)
                 }
                 let generation = run.stream
+                // The count straight from the token loop, four times a second: the stream itself stays silent while
+                // the library holds back a tool call it is still assembling.
+                let reporter = Task {
+                    var reported = 0
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .milliseconds(250))
+                        let count = run.recorder.count
+                        if count != reported {
+                            reported = count
+                            continuation.yield(.generated(count))
+                        }
+                    }
+                }
+                defer { reporter.cancel() }
                 var finish: FinishReason = .stop
                 var sawToolCall = false
                 for await item in generation {
@@ -523,6 +537,7 @@ private final class TokenRecorder: @unchecked Sendable {
     private var storage: [Int] = []
     func append(_ token: Int) { lock.withLock { storage.append(token) } }
     var tokens: [Int] { lock.withLock { storage } }
+    var count: Int { lock.withLock { storage.count } }
 }
 
 /// A token iterator that also records every token it yields (each has been fed to the model by then).

@@ -311,6 +311,8 @@ final class ConversationStreamCoordinator {
                         unshownText += t
                         unshownTokens += 1
                         if lastShown.duration(to: .now) >= .milliseconds(33) { showUnshown() }
+                    case .generated(let count):
+                        progress?.generated(count)
                     case .toolCallStarted(let call):
                         showUnshown()
                         // The call stays out of the transcript; whatever preceded it was a preamble, not the answer.

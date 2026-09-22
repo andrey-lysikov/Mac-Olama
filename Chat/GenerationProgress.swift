@@ -27,10 +27,14 @@ struct GenerationProgress: Equatable {
     /// Hidden tokens of the whole reply: without them the model did not reason, and the summary does not claim it did.
     private(set) var hiddenTokens = 0
     private(set) var thoughtSeconds: TimeInterval = 0
-    /// Every token of the reply, hidden and visible: the live counter keeps one running total instead of restarting
-    /// when the answer begins, so the numbers do not vanish on a model that goes straight to answering.
+    /// Every token of the current round, hidden and visible: the live counter keeps one running total instead of
+    /// restarting when the answer begins, so the numbers do not vanish on a model that goes straight to answering.
+    /// A tool round starts it over: the model first reads the tool's result, and the old count read as "0/s".
+    /// The engine's own count wins when it is higher: a tool call being written reaches the stream only at its end.
     private(set) var tokens = 0
-    /// First token of the reply; the speed is measured from it, so prompt processing does not drag it down.
+    /// The engine's latest count for the round; nil for engines that do not report one.
+    private var generatedCount: Int?
+    /// First token of the round; the speed is measured from it, so prompt processing does not drag it down.
     private(set) var firstToken: Date?
     /// Start of the visible answer; nil while the model thinks or a tool runs.
     private(set) var answeringSince: Date?
@@ -46,13 +50,17 @@ struct GenerationProgress: Equatable {
         thinkingSince = .now
         thinkingTokens = 0
         firstThinkingToken = nil
+        tokens = 0
+        generatedCount = nil
+        firstToken = nil
         answeringSince = nil
     }
 
     /// `answerStarted`: the visible answer is no longer empty, so the thinking stretch is over.
     mutating func token(answerStarted: Bool) {
         if firstToken == nil { firstToken = .now }
-        tokens += 1
+        // A chunk the engine has already counted adds nothing; before its first count arrives, chunks are the count.
+        if generatedCount == nil { tokens += 1 }
         if answerStarted {
             endThinking()
             if answeringSince == nil { answeringSince = .now }
@@ -61,6 +69,14 @@ struct GenerationProgress: Equatable {
             thinkingTokens += 1
             hiddenTokens += 1
         }
+    }
+
+    /// The engine's count for the current round; the text stream lags behind it or says nothing for a while.
+    mutating func generated(_ count: Int) {
+        generatedCount = count
+        guard count > tokens else { return }
+        if firstToken == nil { firstToken = .now }
+        tokens = count
     }
 
     mutating func endThinking() {

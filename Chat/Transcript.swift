@@ -84,12 +84,15 @@ struct TranscriptFollow<Jump: Equatable>: ViewModifier {
     let jumpOn: Jump
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var following = true
+    /// The trackpad or the wheel is moving the transcript: only the user decides then, the view never scrolls itself.
+    @State private var userScrolling = false
 
-    /// Where the view stands. A growing transcript never moves the offset back, only the user scrolling up does,
-    /// so the two are told apart without scroll phases, which the scroller's knob does not report.
+    /// Where the view stands. The offset alone did not tell the user from the reply: text growing under the bottom
+    /// anchor hid a scroll up (and the view pulled back to the end), a reflow shrinking the text looked like one.
     private struct Place: Equatable {
         var offset: CGFloat
         var gap: CGFloat
+        var height: CGFloat
     }
 
     /// Closer than this to the end still counts as the end, so a nudge of the trackpad does not let go.
@@ -102,12 +105,21 @@ struct TranscriptFollow<Jump: Equatable>: ViewModifier {
             // While following, the anchor holds the end as text grows, without a scroll per token; while the user
             // reads, it is off, so the lines being read do not slide away under the new ones.
             .defaultScrollAnchor(following ? .bottom : nil, for: .sizeChanges)
+            .onScrollPhaseChange { _, phase, context in
+                let wasUser = userScrolling
+                userScrolling = phase == .interacting || phase == .decelerating
+                // Wherever the gesture left the view decides: at the end it follows, anywhere above it stays put.
+                // Only a gesture's end: the view's own scroll to the end starts far from it and must not let go.
+                if wasUser, !userScrolling { following = Self.gap(context.geometry) <= Self.slack }
+            }
             .onScrollGeometryChange(for: Place.self) { geometry in
-                Place(offset: geometry.contentOffset.y, gap: max(0, geometry.contentSize.height - geometry.visibleRect.maxY))
+                Place(offset: geometry.contentOffset.y, gap: Self.gap(geometry), height: geometry.contentSize.height)
             } action: { old, new in
                 if new.gap <= Self.slack {
                     following = true
-                } else if new.offset < old.offset - 1 {
+                } else if userScrolling || (new.offset < old.offset - 1 && new.height >= old.height - 1) {
+                    // A gesture, or the scroller's knob dragged up (it reports no phase): the text did not shrink,
+                    // so only the user can have moved the view back.
                     following = false
                 } else if following {
                     // What the anchor does not cover: the streamed tail swapped for the stored reply, a tool round.
@@ -130,6 +142,10 @@ struct TranscriptFollow<Jump: Equatable>: ViewModifier {
                 // Only the arrow fades: an animation on the scroll view itself fought the layout changing.
                 .animation(.easeOut(duration: 0.15), value: following)
             }
+    }
+
+    private static func gap(_ geometry: ScrollGeometry) -> CGFloat {
+        max(0, geometry.contentSize.height - geometry.visibleRect.maxY)
     }
 
     private func toEnd() {
