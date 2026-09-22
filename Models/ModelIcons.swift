@@ -23,20 +23,30 @@ final class ModelIcons {
     /// Bumped when an avatar arrives: views reading an icon redraw, menus pick it up the next time they are built.
     private(set) var revision = 0
     @ObservationIgnored var directory = AppPaths.standard().icons
-    @ObservationIgnored private var avatars: [String: NSImage] = [:]
+    /// Bounded: every search in the models window brings new accounts. An evicted avatar is read back from `icons/`.
+    @ObservationIgnored private let avatars: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 200
+        return cache
+    }()
     @ObservationIgnored private var unavailable: Set<String> = []
     @ObservationIgnored private var loading: Set<String> = []
-    @ObservationIgnored private var composed: [String: NSImage] = [:]
+    /// Drawn icons per owners and size; redrawn when evicted.
+    @ObservationIgnored private let composed: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 300
+        return cache
+    }()
     nonisolated private static let logger = Logger(subsystem: "ru.lysnet.macolama", category: "icons")
 
     /// The account's avatar in colour (the hub picker), or nil while it loads (or when the account has none).
     func avatar(_ owner: String) -> NSImage? {
         _ = revision
         let key = owner.lowercased()
-        if let image = avatars[key] { return image }
+        if let image = avatars.object(forKey: key as NSString) { return image }
         if unavailable.contains(key) { return nil }
         if let image = NSImage(contentsOf: file(for: key)) {
-            avatars[key] = image
+            avatars.setObject(image, forKey: key as NSString)
             return image
         }
         load(owner, key: key)
@@ -51,7 +61,7 @@ final class ModelIcons {
         guard let main = author ?? community else { return nil }
         let badge = author != nil ? community : nil
         let key = "\(owners.author ?? "")|\(owners.community ?? "")|\(size)|\(badge != nil)"
-        if let image = composed[key] { return image }
+        if let image = composed.object(forKey: key as NSString) { return image }
         let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
             let radius = rect.width * 0.22
             NSGraphicsContext.saveGraphicsState()
@@ -72,7 +82,7 @@ final class ModelIcons {
             }
             return true
         }
-        composed[key] = image
+        composed.setObject(image, forKey: key as NSString)
         return image
     }
 
@@ -102,8 +112,8 @@ final class ModelIcons {
             }
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try? png.write(to: file(for: key), options: .atomic)
-            avatars[key] = image
-            composed.removeAll()
+            avatars.setObject(image, forKey: key as NSString)
+            composed.removeAllObjects()
             revision += 1
         }
     }

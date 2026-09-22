@@ -101,7 +101,19 @@ enum ToolMapNote {
 /// The maps the tool rounds before each answer brought, keyed by that answer. A tool result is parsed once.
 @MainActor
 enum TranscriptMaps {
-    private static var parsed: [UUID: TranscriptMap?] = [:]
+    /// Bounded: it would otherwise keep an entry for every tool result ever shown, deleted chats included. An evicted one
+    /// is parsed again from the message.
+    private static let parsed: NSCache<NSUUID, Parsed> = {
+        let cache = NSCache<NSUUID, Parsed>()
+        cache.countLimit = 500
+        return cache
+    }()
+
+    /// `NSCache` holds objects; a message without a map is remembered too, so it is not scanned again.
+    private final class Parsed {
+        let map: TranscriptMap?
+        init(_ map: TranscriptMap?) { self.map = map }
+    }
 
     static func byAnswer(_ messages: [Message]) -> [UUID: [TranscriptMap]] {
         var result: [UUID: [TranscriptMap]] = [:]
@@ -123,9 +135,9 @@ enum TranscriptMaps {
     }
 
     private static func map(of message: Message) -> TranscriptMap? {
-        if let known = parsed[message.id] { return known }
+        if let known = parsed.object(forKey: message.id as NSUUID) { return known.map }
         let map = ToolMapNote.map(in: message.text)
-        parsed[message.id] = map
+        parsed.setObject(Parsed(map), forKey: message.id as NSUUID)
         return map
     }
 }

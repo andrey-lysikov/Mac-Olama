@@ -464,8 +464,9 @@ private final class PromptSession: @unchecked Sendable {
     let promptCount: Int
     /// Fingerprints of the images the prompt carried, in order: equal token ids do not mean equal pixels.
     let images: [String]
-    /// What the cache holds in memory, counted once the generation has ended.
-    private(set) lazy var bytes: Int = cache.reduce(0) { total, layer in total + layer.state.reduce(0) { $0 + $1.nbytes } }
+    /// What the cache holds in memory, counted once the generation has ended: the allocated buffers, not the `state`
+    /// slice. Trimming only moves the offset, so a cache cut down for reuse keeps its full-size buffers.
+    private(set) lazy var bytes: Int = cache.reduce(0) { total, layer in total + layer.innerState().reduce(0) { $0 + $1.nbytes } }
 
     init(cache: [KVCache], state: LMOutput.State?, tokens: [Int], promptCount: Int? = nil, images: [String]) {
         self.cache = cache
