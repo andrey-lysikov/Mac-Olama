@@ -187,6 +187,31 @@ public final class HTTPServer: Sendable {
 
     public var isRunning: Bool { running.withLock { $0 } }
 
+    /// Whether a server could take this address now: nothing accepts connections on it, and it can be bound. The
+    /// connect catches a program on 127.0.0.1 that a wildcard bind with `SO_REUSEADDR` would quietly share the port with.
+    public static func portIsFree(host: String, port: Int) -> Bool {
+        let local = host == "0.0.0.0" ? "127.0.0.1" : host
+        if withSocket(host: local, port: port, { fd, addr in connect(fd, addr, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0 }) {
+            return false
+        }
+        return withSocket(host: host, port: port) { fd, addr in
+            var yes: Int32 = 1
+            setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+            return bind(fd, addr, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0
+        }
+    }
+
+    private static func withSocket(host: String, port: Int, _ body: (Int32, UnsafePointer<sockaddr>) -> Bool) -> Bool {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = UInt16(port).bigEndian
+        addr.sin_addr.s_addr = inet_addr(host)
+        return withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { body(fd, $0) } }
+    }
+
     private func acceptLoop(_ fd: Int32) {
         while running.withLock({ $0 }) {
             var addr = sockaddr_in()

@@ -272,13 +272,19 @@ struct SettingsSectionView: View {
 
     private var api: some View {
         VStack(alignment: .leading, spacing: 12) {
+            // A busy port keeps the switch off; the port field stays open so another one can be typed.
             switchRow(
                 String(localized: "Answer other programs"),
-                help: String(localized: "Ollama and OpenAI-compatible clients reach the models through this app"),
-                get: { container.settings.apiServerEnabled }, set: { container.setAPIEnabled($0) })
-            interfaceRow.disabled(!container.settings.apiServerEnabled)
+                help: container.apiPortBusy
+                    ? AppContainer.portBusyText(container.settings.apiServerPort)
+                    : String(localized: "Ollama and OpenAI-compatible clients reach the models through this app"),
+                get: { container.settings.apiServerEnabled && !container.apiPortBusy }, set: { container.setAPIEnabled($0) }
+            )
+            .disabled(container.apiPortBusy)
+            interfaceRow.disabled(!container.settings.apiServerEnabled && !container.apiPortBusy)
             corsRow.disabled(!container.settings.apiServerEnabled)
         }
+        .onAppear { container.checkAPIPort() }
     }
 
     private var corsRow: some View {
@@ -313,15 +319,19 @@ struct SettingsSectionView: View {
                         Text(verbatim: "\(interface.name) · \(interface.address)").tag(interface.address)
                     }
                 }
-                // The port sits with the interface: together they are the address, and a busy one moves to the next free.
-                Text(String(localized: "Port")).foregroundStyle(.secondary)
+                // The port sits with the interface: together they are the address.
+                Text(String(localized: "Port")).foregroundStyle(container.apiPortBusy ? .red : .secondary)
                 TextField(
                     "",
                     value: Binding(get: { container.settings.apiServerPort }, set: { container.setAPIPort($0) }),
                     format: .number.grouping(.never)
                 )
                 .frame(width: 80).multilineTextAlignment(.trailing)
-                .help(String(localized: "A busy port moves the server to the next free one"))
+                .foregroundStyle(container.apiPortBusy ? .red : .primary)
+                .help(
+                    container.apiPortBusy
+                        ? AppContainer.portBusyText(container.settings.apiServerPort)
+                        : String(localized: "The port other programs connect to"))
             }
         }
     }

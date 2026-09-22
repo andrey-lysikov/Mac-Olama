@@ -105,16 +105,6 @@
         }
       }
     },
-    "A busy port moves the server to the next free one" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Если порт занят, сервер берёт следующий свободный"
-          }
-        }
-      }
-    },
     "A dictated question goes out by itself when you stop speaking" : {
       "localizations" : {
         "ru" : {
@@ -285,16 +275,6 @@
         }
       }
     },
-    "All candidate ports are busy." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Все допустимые порты заняты."
-          }
-        }
-      }
-    },
     "Allow" : {
       "localizations" : {
         "ru" : {
@@ -351,16 +331,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Порт API занят"
-          }
-        }
-      }
-    },
-    "API server not started" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "API-сервер не запущен"
           }
         }
       }
@@ -2098,16 +2068,6 @@
         }
       }
     },
-    "Ollama %@ is listening on %lld; Mac-Olama API will use the next free port." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ollama %1$@ занимает порт %2$lld; API Mac-Olama займёт следующий свободный порт."
-          }
-        }
-      }
-    },
     "Ollama and OpenAI-compatible clients reach the models through this app" : {
       "localizations" : {
         "ru" : {
@@ -2354,6 +2314,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Порт"
+          }
+        }
+      }
+    },
+    "Port %lld is taken by another program: choose a free one to turn the API on." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Порт %lld занят другой программой: выберите свободный, чтобы включить API."
           }
         }
       }
@@ -2855,6 +2825,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ошибка сервера %1$lld: %2$@"
+          }
+        }
+      }
+    },
+    "Set by the server" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Задаёт сервер"
           }
         }
       }
@@ -3398,6 +3378,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Модель проверяет каждый предсказанный токен: ответ тот же, но перестаёт меняться от запуска к запуску."
+          }
+        }
+      }
+    },
+    "The port other programs connect to" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Порт, к которому подключаются другие программы"
           }
         }
       }

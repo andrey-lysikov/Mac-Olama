@@ -81,6 +81,11 @@ final class ConversationStreamCoordinator {
     var errorMessage: String?
     private(set) var messages: [Message] = []
     private(set) var streamingText = ""
+    /// Tokens not on screen yet. The views re-read the whole reply (markup, reasoning, Markdown) on every change, so it
+    /// changes about 30 times a second rather than per token: per token that work grows with the square of the reply.
+    private var unshownText = ""
+    private var unshownTokens = 0
+    private var lastShown = ContinuousClock.now
     /// Steps and thinking of the running reply, shown above it; nil when nothing runs here.
     private(set) var progress: GenerationProgress?
     /// Questions sent while the model was busy; they go out one by one after the current reply.
@@ -203,6 +208,7 @@ final class ConversationStreamCoordinator {
         input = ""
         messages = []
         streamingText = ""
+        dropUnshown()
         progress = nil
         queuedQuestions = []
         errorMessage = nil
@@ -279,6 +285,7 @@ final class ConversationStreamCoordinator {
         isGenerating = true
         errorMessage = nil
         streamingText = ""
+        dropUnshown()
         answerStarted = false
         progress = GenerationProgress()
         streamTask = Task {
@@ -301,10 +308,11 @@ final class ConversationStreamCoordinator {
                     case .started:
                         await reloadIfDisplayed(chatID, generation: gen)
                     case .token(let t):
-                        streamingText += t
-                        if !answerStarted { answerStarted = !AnswerText.visible(streamingText).isEmpty }
-                        progress?.token(answerStarted: answerStarted)
+                        unshownText += t
+                        unshownTokens += 1
+                        if lastShown.duration(to: .now) >= .milliseconds(33) { showUnshown() }
                     case .toolCallStarted(let call):
+                        showUnshown()
                         // The call stays out of the transcript; whatever preceded it was a preamble, not the answer.
                         progress?.toolStarted(AnswerText.activity(for: call, searchProvider: container.settings.searchProvider))
                         streamingText = ""
@@ -312,11 +320,14 @@ final class ConversationStreamCoordinator {
                     case .toolCallFinished:
                         progress?.toolFinished()
                     case .retrying:
+                        dropUnshown()
                         streamingText = ""
                         answerStarted = false
                     case .failed(let message):
+                        showUnshown()
                         errorMessage = message
                     case .finished(let message):
+                        showUnshown()
                         progress?.endThinking()
                         thoughtSeconds[message.id] = progress?.reportedThoughtSeconds
                         container.answerFinished(message)
@@ -330,6 +341,7 @@ final class ConversationStreamCoordinator {
             guard generation == gen else { return }
             isGenerating = false
             streamingText = ""
+            dropUnshown()
             progress = nil
             answerStarted = false
             streamingChatID = nil
@@ -340,6 +352,21 @@ final class ConversationStreamCoordinator {
             // The next waiting question goes out; after a failure the queue waits, the user sees the error first.
             if errorMessage == nil, !queuedQuestions.isEmpty { ask(queuedQuestions.removeFirst()) }
         }
+    }
+
+    /// Puts the tokens received since the last update on screen, and counts them in the progress line.
+    private func showUnshown() {
+        guard unshownTokens > 0 else { return }
+        streamingText += unshownText
+        if !answerStarted { answerStarted = !AnswerText.visible(streamingText).isEmpty }
+        for _ in 0..<unshownTokens { progress?.token(answerStarted: answerStarted) }
+        dropUnshown()
+    }
+
+    private func dropUnshown() {
+        unshownText = ""
+        unshownTokens = 0
+        lastShown = .now
     }
 
     private func reloadIfDisplayed(_ chatID: UUID, generation gen: Int) async {

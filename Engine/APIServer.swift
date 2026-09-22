@@ -4,13 +4,6 @@
 import Foundation
 import Synchronization
 
-/// Result of probing the configured port before binding.
-public enum PortStatus: Sendable, Equatable {
-    case free
-    case ollama(version: String)
-    case occupied
-}
-
 /// What the app runs a model with when a client does not say: the context window, the checkpoint's sampling with the
 /// temperature chosen in the app, reasoning and MTP, so an API client gets the same model as the chat.
 public struct APIModelDefaults: Sendable, Equatable {
@@ -71,24 +64,6 @@ public final class APIServer: Sendable {
     }
 
     // Lifecycle
-
-    /// Checks whether something (Ollama?) already listens on the port. Cheap GET with a short timeout.
-    public static func probe(host: String = "127.0.0.1", port: Int) async -> PortStatus {
-        guard let url = URL(string: "http://\(host):\(port)/api/version") else { return .free }
-        let request = HTTPJSON.request(url, timeout: 1.5, accept: nil, userAgent: nil)
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else { return .occupied }
-            if http.statusCode == 200, let v = try? JSONCoding.plainDecoder.decode(OllamaVersionResponse.self, from: data),
-                !v.version.contains("macolama")
-            {
-                return .ollama(version: v.version)
-            }
-            return .occupied
-        } catch {
-            return .free
-        }
-    }
 
     /// Binds the socket and serves on background threads; throws if the port is taken.
     public func start() throws {

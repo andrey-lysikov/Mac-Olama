@@ -111,8 +111,6 @@ final class APIFixture {
         let api = try await APIFixture()
         let (status, json) = try await api.object("GET", "/api/version")
         #expect(status == 200 && json["version"] as? String == "9.9-macolama")
-        // The startup probe must not mistake this app for Ollama and step aside from its own port.
-        #expect(await APIServer.probe(port: api.port) == .occupied)
     }
 
     @Test func tagsListModelsTheWayOllamaNamesThem() async throws {

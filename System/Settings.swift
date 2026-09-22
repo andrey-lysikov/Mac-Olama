@@ -46,7 +46,7 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case activeChatID = "activeChatID"
     case idleUnloadSeconds = "idleUnloadSeconds"  // Double, default 300
     case launchAtLogin = "launchAtLogin"  // Bool, default false
-    case apiServerPort = "apiServerPort"  // Int, default 11434; auto-advanced when the port is taken
+    case apiServerPort = "apiServerPort"  // Int, default 11434; a busy one blocks the API until another is chosen
     case toolsEnabled = "toolsEnabled"  // Bool, default false
     case searchProvider = "searchProvider"  // String: "duckduckgo" (default) or "google"
     case panelClosesOnFocusLoss = "panelClosesOnFocusLoss"  // Bool, default true

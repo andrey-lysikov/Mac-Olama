@@ -106,7 +106,9 @@ final class AppContainer {
     private var apiRestartTask: Task<Void, Never>?
     private var apiGeneration = 0
     /// The port actually bound; may differ from the setting when the chosen one was busy. Never written back.
-    private(set) var apiActivePort: Int?
+    /// The chosen port is held by another program: the settings draw it red and keep the API switch off until a
+    /// free one is chosen.
+    private(set) var apiPortBusy = false
     private var stateTask: Task<Void, Never>?
     private var watcher: DirectoryWatcher?
     private var downloadTasks: [String: Task<Void, Never>] = [:]
@@ -1032,13 +1034,13 @@ final class AppContainer {
         restartAPI()
     }
 
-    /// The port the local API listens on. Changing it restarts the server; a busy port still moves to the next free one.
     /// Whether other programs may reach the models through this app at all.
     func setAPIEnabled(_ enabled: Bool) { updateAPISetting(\.apiServerEnabled, to: enabled) }
 
     /// The interface the API answers on. "127.0.0.1" keeps it on this Mac; "0.0.0.0" opens it to the network.
     func setAPIBindHost(_ host: String) { updateAPISetting(\.apiBindHost, to: host) }
 
+    /// The port the local API listens on. Changing it restarts the server, or clears a busy port's block.
     func setAPIPort(_ port: Int) { updateAPISetting(\.apiServerPort, to: min(max(port, 1024), 65535)) }
 
     func setDownloadSpeedLimit(_ mbps: Int) {
@@ -1149,64 +1151,64 @@ final class AppContainer {
         Task { await conversation.setTools(tools) }
     }
 
-    // API server (always on: localhost only, no token; falls back to the next port if 11434 is taken)
+    // API server: only on the port the user chose. A busy port is shown in the settings and blocks the switch; the
+    // server never moves to another port by itself, since clients are configured with this one.
 
-    /// The chosen port first, then the three after it: a busy 11434 (Ollama) must not leave the app without an API.
-    var apiPortCandidates: [Int] { (0..<4).map { settings.apiServerPort + $0 } }
     /// What to type into another program: the chosen address, or this Mac's own when the server listens everywhere.
     var apiURL: URL {
         let host = settings.apiBindHost == "0.0.0.0" ? (NetworkInterfaces.addresses().first?.address ?? "127.0.0.1") : settings.apiBindHost
-        return URL(string: "http://\(host):\(apiActivePort ?? settings.apiServerPort)")!
+        return URL(string: "http://\(host):\(settings.apiServerPort)")!
     }
 
     func startAPI() async {
         stopAPI()
+        let port = settings.apiServerPort
+        apiPortBusy = !HTTPServer.portIsFree(host: settings.apiBindHost, port: port)
         // Switched off in the settings: nothing listens, and no port is taken from anyone else.
-        guard settings.apiServerEnabled else {
-            apiStatus = .disabled
+        guard settings.apiServerEnabled else { return }
+        guard !apiPortBusy else {
+            apiStatus = .portBusy(port: port)
+            NotificationService.shared.send(title: String(localized: "API port in use"), body: Self.portBusyText(port))
             return
         }
         apiStatus = .starting
-        for port in apiPortCandidates {
-            switch await APIServer.probe(port: port) {
-            case .ollama(let version):
-                if port == settings.apiServerPort {
-                    NotificationService.shared.send(
-                        title: String(localized: "API port in use"),
-                        body: String(localized: "Ollama \(version) is listening on \(port); Mac-Olama API will use the next free port."))
-                }
-                continue
-            case .occupied:
-                continue
-            case .free:
-                let server = APIServer(
-                    configuration: .init(
-                        host: settings.apiBindHost, port: port,
-                        version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1"),
-                    catalog: catalog, engine: engineManager
-                ) { [weak self] model in await self?.apiDefaults(for: model) ?? APIModelDefaults(contextTokens: model.contextLength) }
-                server.setCORSPolicy(corsPolicy)
-                do {
-                    try server.start()
-                } catch {
-                    logger.error("API bind on \(port) failed: \(error)")
-                    continue  // taken between probe and bind: try the next candidate
-                }
-                apiServer = server
-                apiActivePort = port
-                apiStatus = .running(port: port)
-                return
-            }
+        let server = APIServer(
+            configuration: .init(
+                host: settings.apiBindHost, port: port,
+                version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1"),
+            catalog: catalog, engine: engineManager
+        ) { [weak self] model in await self?.apiDefaults(for: model) ?? APIModelDefaults(contextTokens: model.contextLength) }
+        server.setCORSPolicy(corsPolicy)
+        do {
+            try server.start()
+        } catch {
+            // Taken between the check and the bind.
+            logger.error("API bind on \(port) failed: \(error)")
+            apiPortBusy = true
+            apiStatus = .portBusy(port: port)
+            return
         }
-        apiStatus = .portBusy(port: settings.apiServerPort)
-        NotificationService.shared.send(
-            title: String(localized: "API server not started"), body: String(localized: "All candidate ports are busy."))
+        apiServer = server
+        apiStatus = .running(port: port)
+    }
+
+    /// Looks at the chosen port again when the settings show it: the program holding it may have quit. A port that
+    /// has come free starts the API if it is switched on.
+    func checkAPIPort() {
+        guard apiServer == nil else { return }
+        let busy = !HTTPServer.portIsFree(host: settings.apiBindHost, port: settings.apiServerPort)
+        guard busy != apiPortBusy else { return }
+        apiPortBusy = busy
+        if !busy, settings.apiServerEnabled { restartAPI() }
+    }
+
+    static func portBusyText(_ port: Int) -> String {
+        String(localized: "Port \(port) is taken by another program: choose a free one to turn the API on.")
     }
 
     func stopAPI() {
         apiServer?.stop()
         apiServer = nil
-        apiActivePort = nil
         apiStatus = .disabled
     }
 }
