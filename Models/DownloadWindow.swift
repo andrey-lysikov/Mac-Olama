@@ -127,6 +127,12 @@ final class DownloadViewModel {
         search()
     }
 
+    /// The cross in the search field: empties it and, for the hubs that search, drops the results with it.
+    func clearQuery() {
+        query = ""
+        if hub != .api { search() }
+    }
+
     func search() {
         if hub == .api { return addRemoteDraft() }
         searchTask?.cancel()
@@ -379,26 +385,49 @@ struct ModelLibraryHeader: View {
     @Bindable var viewModel: DownloadViewModel
     @Environment(AppContainer.self) private var container
     @State private var showsToken = false
+    @FocusState private var searchFocused: Bool
+
+    /// "By link" and "Connect by API" take an exact name instead of searching.
+    private var confirmsName: Bool { viewModel.hub == .api || viewModel.hub == .link }
 
     var body: some View {
         HStack(spacing: 10) {
-            Picker(String(localized: "Hub"), selection: $viewModel.hub) {
-                ForEach(DownloadViewModel.Hub.allCases) { hub in
-                    Label {
-                        Text(verbatim: hub.title)
-                    } icon: {
-                        hub.icon
+            // A glass capsule like the search field and the key beside it; the menu inside keeps the system check marks.
+            Menu {
+                Picker(String(localized: "Hub"), selection: $viewModel.hub) {
+                    ForEach(DownloadViewModel.Hub.allCases) { hub in
+                        Label {
+                            Text(verbatim: hub.title)
+                        } icon: {
+                            hub.icon
+                        }
+                        .labelStyle(.titleAndIcon)
+                        .tag(hub)
                     }
-                    .labelStyle(.titleAndIcon)
-                    .tag(hub)
                 }
+                .pickerStyle(.inline).labelsHidden()
+            } label: {
+                HStack(spacing: 6) {
+                    viewModel.hub.icon
+                    Text(verbatim: viewModel.hub.title)
+                    Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                }
+                .frame(height: 30)
             }
-            .labelsHidden().fixedSize()
-            // The search capsule holds the field and, inside it on the right, the magnifier that runs the search.
+            .menuStyle(.button).menuIndicator(.hidden)
+            .buttonStyle(.glass).buttonBorderShape(.capsule)
+            .fixedSize()
+            .help(String(localized: "Hub"))
+            .accessibilityLabel(String(localized: "Hub"))
+            // The search capsule: the magnifier on the left, as in the system search field, and the cross on the right.
+            // "By link" and "Connect by API" confirm an exact name instead, so their check mark sits on the right, apart
+            // from the cross.
             HStack(spacing: 6) {
+                if !confirmsName { actionButton }
                 // VERIFY(macOS26): suggestions are expected to drop down as soon as the empty field gets focus.
                 TextField(viewModel.hub.prompt, text: $viewModel.query)
-                    .textFieldStyle(.plain).frame(minWidth: 120, idealWidth: 240, maxWidth: 280)
+                    .textFieldStyle(.plain).frame(minWidth: 120, maxWidth: .infinity)
+                    .focused($searchFocused)
                     .accessibilityLabel(String(localized: "Search"))
                     .textInputSuggestions {
                         if viewModel.query.isEmpty {
@@ -409,24 +438,20 @@ struct ModelLibraryHeader: View {
                     }
                     .onChange(of: viewModel.query) { _, _ in viewModel.queryChanged() }
                     .onSubmit { viewModel.search() }
-                // "By link" and "Connect by API" take an exact name instead of searching: a check mark, not a magnifier.
-                Button {
-                    viewModel.search()
-                } label: {
-                    Image(systemName: viewModel.hub == .api || viewModel.hub == .link ? "checkmark.circle" : "magnifyingglass")
-                        .font(.system(size: 16))
+                    .onExitCommand { clearQuery() }
+                if !viewModel.query.isEmpty {
+                    Button {
+                        clearQuery()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 14))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.tertiary)
+                    .help(String(localized: "Clear"))
+                    .accessibilityLabel(String(localized: "Clear"))
                 }
-                .buttonStyle(.plain).foregroundStyle(.secondary)
-                .help(
-                    viewModel.hub == .api
-                        ? String(localized: "Add this model: enter its server address below")
-                        : viewModel.hub == .link
-                            ? String(localized: "Check that the model exists and show its size") : String(localized: "Search")
-                )
-                .accessibilityLabel(viewModel.hub == .api ? String(localized: "Add") : String(localized: "Search"))
+                if confirmsName { actionButton.padding(.leading, 4) }
             }
             .searchCapsule()
-            Spacer(minLength: 8)
             Button {
                 showsToken.toggle()
             } label: {
@@ -446,6 +471,29 @@ struct ModelLibraryHeader: View {
             showsToken = true
             container.tokenPromptRequested = false
         }
+    }
+
+    /// Runs the search, or confirms the name for "By link" and "Connect by API": a check mark, not a magnifier.
+    private var actionButton: some View {
+        Button {
+            viewModel.search()
+        } label: {
+            Image(systemName: confirmsName ? "checkmark.circle" : "magnifyingglass").font(.system(size: 16))
+        }
+        .buttonStyle(.plain).foregroundStyle(.secondary)
+        .help(
+            viewModel.hub == .api
+                ? String(localized: "Add this model: enter its server address below")
+                : viewModel.hub == .link
+                    ? String(localized: "Check that the model exists and show its size") : String(localized: "Search")
+        )
+        .accessibilityLabel(viewModel.hub == .api ? String(localized: "Add") : String(localized: "Search"))
+    }
+
+    /// The cross and Esc: empty the field and keep typing in it, as the system search field does.
+    private func clearQuery() {
+        viewModel.clearQuery()
+        searchFocused = true
     }
 }
 

@@ -210,9 +210,10 @@ extension View {
         glassEffect(.regular, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
     }
 
-    /// The glass capsule around a search field, as the stock apps draw it.
+    /// The glass capsule around a search field, as the stock apps draw it: interactive, so it answers the pointer the
+    /// way the glass buttons beside it do.
     func searchCapsule() -> some View {
-        padding(.horizontal, 10).frame(height: 30).glassEffect(.regular, in: Capsule())
+        padding(.horizontal, 10).frame(height: 30).glassEffect(.regular.interactive(), in: Capsule())
     }
 }
 

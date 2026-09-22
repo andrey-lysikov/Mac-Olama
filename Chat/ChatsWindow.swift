@@ -532,40 +532,35 @@ private struct ChatsSplitView: View {
     }
 
     /// Pinned at the very bottom of the sidebar (a safe-area inset, so the list stays the sidebar column itself):
-    /// the two permanent sections of the window, settings above the model library.
+    /// the two permanent sections of the window, settings above the model library, as Liquid Glass capsules that the
+    /// list scrolls under.
     private var modelsEntry: some View {
-        VStack(spacing: 0) {
-            Divider()
-            sectionEntry(.settings, title: String(localized: "Settings"), symbol: "gearshape")
-            sectionEntry(.models, title: String(localized: "Models"), symbol: "square.stack.3d.up")
+        GlassEffectContainer(spacing: 6) {
+            VStack(spacing: 6) {
+                sectionEntry(.settings, title: String(localized: "Settings"), symbol: "gearshape")
+                sectionEntry(.models, title: String(localized: "Models"), symbol: "square.stack.3d.up")
+            }
         }
-        // Its own height and background: the list scrolls under this strip without showing through it, and a small
-        // window shrinks the list, never the strip.
-        .frame(minHeight: 40)
-        // The same material as the sidebar: it is translucent in the same way and the rows do not show through it.
-        .background(SidebarBackground())
+        .padding(.horizontal, 12).padding(.vertical, 10)
     }
 
     private func sectionEntry(_ section: AppContainer.Section, title: String, symbol: String) -> some View {
-        Button {
+        let isChosen = container.section == section
+        return Button {
             container.section = section
             viewModel.selectedChatID = nil
         } label: {
             Label(title, systemImage: symbol)
                 // Heavier than a chat row: these are the sidebar's permanent sections, not items of the list.
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 14, weight: .semibold))
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10).padding(.vertical, 7)
-                // Selected like a sidebar row: accent fill, not the grey `.selection` material.
-                .foregroundStyle(container.section == section ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-                .background(
-                    container.section == section ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear),
-                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                )
-                .contentShape(Rectangle())
+                .padding(.horizontal, 12).frame(height: 34)
+                .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 8).padding(.vertical, 4)
+        // The chosen section is glass tinted with the accent colour, the other one plain glass.
+        .glassEffect(isChosen ? .regular.tint(.accentColor).interactive() : .regular.interactive(), in: Capsule())
     }
 
     private var groupedChats: [(String, [Chat])] {
