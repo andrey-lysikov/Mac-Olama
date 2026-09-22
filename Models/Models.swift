@@ -306,6 +306,46 @@ public struct ModelManifest: Codable, Sendable, Equatable {
     }
 
     /// Read from the model's own `config.json` on every refresh, so models downloaded by older builds get it too.
+    /// Text or vision as the model's files say now, not as the manifest recorded it. The config alone is not enough:
+    /// text-only conversions keep `vision_start_token_id`, or even the whole `vision_config` of the original
+    /// (`mlx_lm.convert` drops the image tower's weights but copies the config), and the VLM factory refuses them.
+    static func kind(in directory: URL) -> ModelKind? {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent("config.json")) else { return nil }
+        let kind = HubModelClassification.classify(configJSON: data).kind
+        if kind == .vlm, let names = weightNames(in: directory), !names.contains(where: isVisionWeight) { return .llm }
+        return kind
+    }
+
+    /// The image tower and its projector: `vision_tower.…`, `embed_vision.…` (Gemma), `visual.…` (Qwen).
+    static func isVisionWeight(_ name: String) -> Bool {
+        let name = name.lowercased()
+        return name.contains("vision") || name.contains("visual")
+    }
+
+    /// Every tensor name of the checkpoint: from the shard index, or else from the JSON header each `.safetensors` file
+    /// starts with (8 bytes of little-endian length, then the header). nil when there is nothing to read.
+    static func weightNames(in directory: URL) -> [String]? {
+        let index = directory.appendingPathComponent("model.safetensors.index.json")
+        if let data = try? Data(contentsOf: index),
+            let map = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["weight_map"] as? [String: Any]
+        {
+            return Array(map.keys)
+        }
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        var names: [String] = []
+        for file in files where file.pathExtension == "safetensors" {
+            guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+            defer { try? handle.close() }
+            guard let size = try? handle.read(upToCount: 8), size.count == 8 else { return nil }
+            let length = size.withUnsafeBytes { UInt64(littleEndian: $0.loadUnaligned(as: UInt64.self)) }
+            guard length < 100_000_000, let header = try? handle.read(upToCount: Int(length)),
+                let json = try? JSONSerialization.jsonObject(with: header) as? [String: Any]
+            else { return nil }
+            names += json.keys.filter { $0 != "__metadata__" }
+        }
+        return names.isEmpty ? nil : names
+    }
+
     static func kvCache(in directory: URL) -> KVCacheProfile? {
         guard let data = try? Data(contentsOf: directory.appendingPathComponent("config.json")) else { return nil }
         return KVCacheProfile.read(configJSON: data)
@@ -320,15 +360,16 @@ public struct ModelManifest: Codable, Sendable, Equatable {
         }
     }
 
-    // `supportsTools` is re-read from the template on every catalog refresh, so manifests written by older builds stay correct.
+    // `supportsTools` and `kind` are re-read from the model's files on every catalog refresh, so manifests written by older
+    // builds stay correct.
     // A remote model has no template here: the server reported its capabilities when it was connected.
     public func descriptor(directory: URL) -> ModelDescriptor {
         let remote = source == .remote
         return ModelDescriptor(
             id: remote ? directory.lastPathComponent : ModelDescriptor.directoryName(forRepo: repoID),
             name: ModelDescriptor.shortName(forRepo: repoID),
-            repoID: repoID, source: source ?? .huggingFace, kind: kind, directory: directory,
-            sizeBytes: totalSizeBytes, contextLength: contextLength, quantization: quantization,
+            repoID: repoID, source: source ?? .huggingFace, kind: remote ? kind : Self.kind(in: directory) ?? kind,
+            directory: directory, sizeBytes: totalSizeBytes, contextLength: contextLength, quantization: quantization,
             supportsTools: remote ? supportsTools : Self.templateSupportsTools(in: directory), downloadedAt: downloadedAt,
             kvCache: remote ? nil : Self.kvCache(in: directory), baseModel: baseModel
         )

@@ -198,6 +198,8 @@ public enum EngineError: DescribedError, Equatable, Sendable {
     case noModelLoaded
     case imagesNotSupported
     case loadFailed(String)
+    /// The config's `model_type` is in neither MLX factory: no conversion of this architecture loads in this build.
+    case unsupportedArchitecture(String)
     case generationFailed(String)
     case busy
     case promptTooLong(tokens: Int, limit: Int)
@@ -213,6 +215,11 @@ extension EngineError {
         case .promptTooLong(let tokens, let limit):
             String(localized: "The prompt is \(tokens) tokens long, but the context window holds \(limit).")
         case .generationFailed(let detail): String(localized: "Generation failed: \(detail)")
+        case .unsupportedArchitecture(let type):
+            String(
+                localized:
+                    "The MLX engine in this version of the app does not support this model's architecture (\(type)). Another conversion of it will not load either; choose a different model or wait for an app update."
+            )
         case .loadFailed(let detail):
             // MLX reports a checkpoint/architecture mismatch as keyNotFound(path: [...]) for the first missing weight.
             detail.contains("keyNotFound")

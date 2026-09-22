@@ -3121,6 +3121,16 @@
         }
       }
     },
+    "The MLX engine in this version of the app does not support this model's architecture (%@). Another conversion of it will not load either; choose a different model or wait for an app update." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Движок MLX в этой версии приложения не поддерживает архитектуру этой модели (%@). Другая конвертация тоже не загрузится: выберите другую модель или дождитесь обновления приложения."
+          }
+        }
+      }
+    },
     "The model asked for an unknown tool: %@" : {
       "localizations" : {
         "ru" : {

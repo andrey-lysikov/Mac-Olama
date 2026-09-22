@@ -97,8 +97,9 @@ public struct HubModelClassification: Sendable, Equatable {
         let modelType = obj["model_type"] as? String
         let architectures = obj["architectures"] as? [String] ?? []
         // A vision model declares its image tower in the config (`vision_config`, `vision_tower`, `mm_vision_tower`, …).
-        // That is a fact about the checkpoint; guessing from architecture class names ("…VL…") is not.
-        let hasVision = obj.keys.contains { $0.lowercased().contains("vision") }
+        // That is a fact about the checkpoint; guessing from architecture class names ("…VL…") is not. Numbers such as
+        // `vision_start_token_id` only name prompt markers: a text-only conversion keeps them without any tower.
+        let hasVision = obj.contains { key, value in key.lowercased().contains("vision") && !(value is NSNumber) }
         let kind: ModelKind = hasVision ? .vlm : .llm
         let context = config.int("max_position_embeddings")
         var quant: String?

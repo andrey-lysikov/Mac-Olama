@@ -76,6 +76,7 @@ public actor MLXEngine: InferenceEngine {
         try Task.checkCancellation()
         progress(0)
         let tokenizerLoader = LocalTokenizerLoader()
+        let model = try await Self.loadable(model)
         do {
             // Local weights only: no Downloader involved, hence no fine-grained progress.
             let loaded: ModelContainer =
@@ -95,6 +96,21 @@ public actor MLXEngine: InferenceEngine {
         } catch {
             throw EngineError.loadFailed(String(describing: error))
         }
+    }
+
+    /// Picks the factory that knows the checkpoint's `model_type`. A vision model whose architecture only the text
+    /// factory knows still loads, as text; one that neither knows fails here with a plain reason instead of a decoding
+    /// error from deep inside MLX.
+    private static func loadable(_ model: ModelDescriptor) async throws -> ModelDescriptor {
+        guard let config = try? Data(contentsOf: model.directory.appendingPathComponent("config.json")),
+            let type = MTPDrafter.modelType(inConfig: config)
+        else { return model }
+        let llm = await LLMModelFactory.shared.typeRegistry.contains(type)
+        let vlm = await VLMModelFactory.shared.typeRegistry.contains(type)
+        guard llm || vlm else { throw EngineError.unsupportedArchitecture(type) }
+        var model = model
+        if model.kind == .vlm, !vlm { model.kind = .llm }
+        return model
     }
 
     public func unload() async {
