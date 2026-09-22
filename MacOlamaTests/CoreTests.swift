@@ -10,11 +10,9 @@ import Testing
 // Estimates, prompts and scraping: logic whose mistakes are silent (a wrong verdict, a model that never searches).
 
 @Suite struct HardwareTests {
-    private func mac(memoryGB: UInt64, family: Int? = 4) -> HardwareProfile {
+    private func mac(memoryGB: UInt64) -> HardwareProfile {
         let bytes = memoryGB * 1024 * 1024 * 1024
-        return HardwareProfile(
-            chipName: "Apple M4", family: family, tier: .base, gpuCores: 10, memoryBytes: bytes,
-            wiredLimitBytes: UInt64(Double(bytes) * 0.67), bandwidthGBs: HardwareProfile.bandwidth(family: family, tier: .base))
+        return HardwareProfile(chipName: "Apple M4", gpuCores: 10, memoryBytes: bytes, wiredLimitBytes: UInt64(Double(bytes) * 0.67))
     }
 
     // Regression: a 0.5 MB/token KV estimate once marked every model above ~5 GB as "will not fit" on a 16 GB Mac.
@@ -31,14 +29,7 @@ import Testing
 
     @Test func smallModelIsComfortable() {
         let report = ModelFitReport.evaluate(modelBytes: 2_000_000_000, contextLength: 8192, hardware: mac(memoryGB: 32))
-        #expect(report.fit == .comfortable)
-        #expect(report.estimatedTokensPerSecond > 10)
-    }
-
-    @Test func unknownNewChipIsNotSlowerThanTheNewestKnown() {
-        let newestKnown = HardwareProfile.bandwidth(family: 5, tier: .max)
-        #expect(HardwareProfile.bandwidth(family: 9, tier: .max) == newestKnown)
-        #expect(HardwareProfile.bandwidth(family: nil, tier: .unknown) == 100)
+        #expect(report.fit == .comfortable && report.stars == 3)
     }
 }
 

@@ -347,7 +347,6 @@ final class DownloadViewModel {
             return .unknown(
                 String(localized: "Not an MLX build: it may be large and may fail to load. Prefer an MLX conversion of this model."))
         }
-        let speed = Int(fit.estimatedTokensPerSecond)
         if fit.warnings.contains("memory-busy") {
             let free = Int64(HardwareProfile.availableMemoryBytes()).memorySizeText
             return .unknown(
@@ -358,10 +357,10 @@ final class DownloadViewModel {
         }
         if fit.fit == .tight {
             return .unknown(
-                String(localized: "Fits, but tightly: needs about \(needed) of \(limit); expect ~\(speed) tok/s and little memory left."))
+                String(localized: "Fits, but tightly: needs about \(needed) of \(limit); little memory will be left."))
         }
         let left = max(0, fit.memoryAfterLoadBytes).memorySizeText
-        return .fits(String(localized: "Fits \(machine): ~\(speed) tok/s, about \(left) left for the system."))
+        return .fits(String(localized: "Fits \(machine): about \(left) left for the system."))
     }
 
     func destination(for repoID: String) -> String {

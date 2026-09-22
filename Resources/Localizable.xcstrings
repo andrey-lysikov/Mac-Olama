@@ -1158,22 +1158,22 @@
         }
       }
     },
-    "Fits %@: ~%lld tok/s, about %@ left for the system." : {
+    "Fits %@: about %@ left for the system." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Подходит для %@: ~%lld ток/с, системе останется около %@."
+            "value" : "Подходит для %@: системе останется около %@."
           }
         }
       }
     },
-    "Fits, but tightly: needs about %@ of %@; expect ~%lld tok/s and little memory left." : {
+    "Fits, but tightly: needs about %@ of %@; little memory will be left." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Помещается, но впритык: нужно около %@ из %@; ожидается ~%lld ток/с, свободной памяти почти не останется."
+            "value" : "Помещается, но впритык: нужно около %@ из %@; свободной памяти почти не останется."
           }
         }
       }

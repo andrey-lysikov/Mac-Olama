@@ -7,16 +7,10 @@ import IOKit
 
 /// Machine profile: chip, memory, GPU. Read once at startup.
 public struct HardwareProfile: Sendable, Equatable {
-    public enum Tier: String, Sendable { case base, pro, max, ultra, unknown }
-
     public var chipName: String  // "Apple M4 Pro"
-    public var family: Int?  // 1...5
-    public var tier: Tier
     public var gpuCores: Int?
     public var memoryBytes: UInt64
     public var wiredLimitBytes: UInt64  // how much unified memory the GPU may take (estimate)
-    /// Memory bandwidth in GB/s (table lookup by family/tier).
-    public var bandwidthGBs: Double
 
     public var memoryGB: Int { Int(memoryBytes / (1024 * 1024 * 1024)) }
 
@@ -24,13 +18,11 @@ public struct HardwareProfile: Sendable, Equatable {
     public static func current(recommendedWorkingSetBytes: Int? = nil) -> HardwareProfile {
         let chip = sysctlString("machdep.cpu.brand_string") ?? "Apple Silicon"
         let mem = sysctlUInt64("hw.memsize") ?? UInt64(ProcessInfo.processInfo.physicalMemory)
-        let (family, tier) = parse(chip: chip)
         let wiredMB = sysctlUInt64("iogpu.wired_limit_mb") ?? 0
         let fallback = UInt64(Double(mem) * (mem > 36 * 1024 * 1024 * 1024 ? 0.75 : 0.67))
         let wired = recommendedWorkingSetBytes.map(UInt64.init) ?? (wiredMB > 0 ? wiredMB * 1024 * 1024 : fallback)
         return HardwareProfile(
-            chipName: chip, family: family, tier: tier, gpuCores: gpuCoreCount(),
-            memoryBytes: mem, wiredLimitBytes: wired, bandwidthGBs: bandwidth(family: family, tier: tier)
+            chipName: chip, gpuCores: gpuCoreCount(), memoryBytes: mem, wiredLimitBytes: wired
         )
     }
 
@@ -49,35 +41,6 @@ public struct HardwareProfile: Sendable, Equatable {
         var pageSize = vm_size_t()
         guard host_page_size(mach_host_self(), &pageSize) == KERN_SUCCESS else { return 0 }
         return pages * UInt64(pageSize)
-    }
-
-    static func parse(chip: String) -> (Int?, Tier) {
-        let lower = chip.lowercased()
-        var family: Int?
-        if let r = lower.range(of: #"m(\d)"#, options: .regularExpression) {
-            family = Int(lower[r].dropFirst())
-        }
-        let tier: Tier =
-            lower.contains("ultra")
-            ? .ultra : lower.contains("max") ? .max : lower.contains("pro") ? .pro : family != nil ? .base : .unknown
-        return (family, tier)
-    }
-
-    /// Unified memory bandwidth table (GB/s) from Apple specs; M5 values need VERIFY.
-    static func bandwidth(family: Int?, tier: Tier) -> Double {
-        let table: [Int: [Tier: Double]] = [
-            1: [.base: 68, .pro: 200, .max: 400, .ultra: 800],
-            2: [.base: 100, .pro: 200, .max: 400, .ultra: 800],
-            3: [.base: 100, .pro: 150, .max: 400, .ultra: 800],
-            4: [.base: 120, .pro: 273, .max: 546, .ultra: 819],
-            5: [.base: 153, .pro: 300, .max: 600, .ultra: 1200],
-        ]
-        // Physical constants, not something an API reports. A chip newer than the table borrows the newest known row
-        // instead of dropping to a pessimistic default, so an unknown generation never looks slower than the last known one.
-        guard let family, let newest = table.keys.max(), let row = table[family] ?? (family > newest ? table[newest] : nil) else {
-            return 100
-        }
-        return row[tier] ?? row[.base] ?? 100
     }
 
     static func gpuCoreCount() -> Int? {
@@ -118,12 +81,13 @@ extension String {
     }
 }
 
-/// Estimate of how well a model will run on this machine.
+/// Estimate of whether a model fits this machine's memory. Speed is not guessed: the system reports no memory
+/// bandwidth, and a table of chips would go stale with every new one.
 public struct ModelFitReport: Sendable, Equatable {
     public enum Fit: Sendable { case comfortable, tight, no }
     public var fit: Fit
-    public var stars: Int  // 1...5
-    public var estimatedTokensPerSecond: Double
+    /// 3 comfortable, 2 tight, 1 will not fit.
+    public var stars: Int
     public var memoryAfterLoadBytes: Int64
     /// Split of `needed`, for the tooltip: weights, attention cache at the context used for the estimate, fixed headroom.
     public var weightsBytes: Int64 = 0
@@ -160,7 +124,6 @@ public struct ModelFitReport: Sendable, Equatable {
         // What is free right now can be the tighter of the two: other apps hold memory the model would need.
         let free = availableBytes > 0 ? min(limit, Int64(availableBytes)) : limit
         let remaining = Int64(hardware.memoryBytes) - needed
-        let tps = hardware.bandwidthGBs * 1e9 / Double(max(modelBytes, 1)) * 0.7
         var warnings: [String] = []
         let fit: Fit
         if needed > limit {
@@ -175,17 +138,14 @@ public struct ModelFitReport: Sendable, Equatable {
         } else {
             fit = .comfortable
         }
-        let stars: Int
-        switch (fit, tps) {
-        case (.no, _): stars = 1
-        case (.tight, _): stars = 2
-        case (_, let t) where t >= 25: stars = 5
-        case (_, let t) where t >= 15: stars = 4
-        case (_, let t) where t >= 8: stars = 3
-        default: stars = 2
-        }
+        let stars =
+            switch fit {
+            case .no: 1
+            case .tight: 2
+            case .comfortable: 3
+            }
         return ModelFitReport(
-            fit: fit, stars: stars, estimatedTokensPerSecond: tps, memoryAfterLoadBytes: remaining, weightsBytes: modelBytes,
+            fit: fit, stars: stars, memoryAfterLoadBytes: remaining, weightsBytes: modelBytes,
             kvBytes: kv, contextTokens: context, warnings: warnings)
     }
 }
