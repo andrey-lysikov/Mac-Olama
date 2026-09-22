@@ -65,6 +65,8 @@ public actor ConversationService {
         public var contextTokensByModel: [String: Int] = [:]
         /// Temperature chosen per model in the models section; a request that brings its own sampling wins.
         public var temperatureByModel: [String: Double] = [:]
+        /// What each checkpoint asks to be sampled with (`ModelDefaults.sampling`); unset fields fall to the engine.
+        public var checkpointSamplingByModel: [String: SamplingParams] = [:]
         /// Models answering with multi-token prediction.
         public var speculativeModelIDs: Set<String> = []
         /// Of those, the ones whose drafter only works without sampling: the library drops speculation at any other
@@ -75,12 +77,10 @@ public actor ConversationService {
         public var reasoningModelIDs: Set<String> = []
         /// English name of the language every reply comes in ("Russian"); empty = the model follows the user.
         public var preferredLanguage = ""
-        public var defaultSampling: SamplingParams
         /// Web research reformulates queries and reads several pages, each a tool round.
-        public init(maxToolIterations: Int = 10, reservedTokensForReply: Int = 1024, defaultSampling: SamplingParams = .init()) {
+        public init(maxToolIterations: Int = 10, reservedTokensForReply: Int = 1024) {
             self.maxToolIterations = maxToolIterations
             self.reservedTokensForReply = reservedTokensForReply
-            self.defaultSampling = defaultSampling
         }
     }
 
@@ -174,7 +174,7 @@ public actor ConversationService {
         }
 
         let (stream, continuation) = AsyncStream.makeStream(of: ConversationEvent.self, bufferingPolicy: .unbounded)
-        var resolvedSampling = sampling ?? configuration.defaultSampling
+        var resolvedSampling = sampling ?? configuration.checkpointSamplingByModel[model.id] ?? SamplingParams()
         if sampling == nil {
             if let chosen = configuration.temperatureByModel[model.id] { resolvedSampling.temperature = chosen }
             resolvedSampling.maxTokens = replyBudget(for: model)
@@ -285,7 +285,7 @@ public actor ConversationService {
             continuation.yield(.finished(assistant))
             // A reply cut off at the token limit looks like no reply at all when it was all reasoning: say so.
             if finish == .length {
-                continuation.yield(.failed(String(localized: "The answer stopped at the limit of \(sampling.maxTokens) tokens.")))
+                continuation.yield(.failed(String(localized: "The answer stopped at the limit of \(sampling.maxTokens ?? 0) tokens.")))
             }
         } catch {
             assistant.isPartial = true
@@ -449,8 +449,8 @@ public actor ConversationService {
         let turnStart = history.lastIndex { $0.role == .user } ?? history.startIndex
         let turnToolResults = history[turnStart...].filter { $0.role == .tool }.count
         let toolShareCharacters = max(1500, budgetTokens * 4 / (turnToolResults + 2))
-        var tail: [EngineMessage] = []
-        for (index, message) in history.enumerated().reversed() {
+        var items: [(message: Message, content: String, cost: Int)] = []
+        for (index, message) in history.enumerated() {
             var content = contentWithDocuments(message)
             // The map a tool stored for the feed is not for the model: it would only eat the context.
             if message.role == .tool { content = ToolMapNote.strip(content) }
@@ -464,19 +464,45 @@ public actor ConversationService {
                 content = String(content.prefix(toolShareCharacters)) + "\n…[truncated to fit the context]\n" + closing
             }
             let cost = Self.estimateTokens(content) + message.attachments.filter { $0.kind == .image }.count * 512
-            if used + cost > budgetTokens, !tail.isEmpty, !inCurrentTurn { break }
-            used += cost
-            tail.append(
+            items.append((message, content, cost))
+        }
+        // The current turn always goes in whole; earlier turns fill what is left.
+        let turnCost = items[turnStart...].reduce(0) { $0 + $1.cost }
+        let first = Self.firstKeptMessage(
+            costs: items[..<turnStart].map(\.cost), isQuestion: history[..<turnStart].map { $0.role == .user },
+            room: budgetTokens - used - turnCost, step: max(1, budgetTokens / 4))
+        var kept: [EngineMessage] = []
+        for item in items[first...] {
+            kept.append(
                 EngineMessage(
-                    role: message.role, content: content,
-                    images: try message.attachments.filter { $0.kind == .image }.map { try loadImage($0) },
-                    toolCalls: message.toolCalls, toolCallID: message.toolCallID
+                    role: item.message.role, content: item.content,
+                    images: try item.message.attachments.filter { $0.kind == .image }.map { try loadImage($0) },
+                    toolCalls: item.message.toolCalls, toolCallID: item.message.toolCallID
                 ))
         }
         // never start history with an orphan tool result
-        while let first = tail.last, first.role == .tool { tail.removeLast() }
-        result.append(contentsOf: tail.reversed())
+        while let head = kept.first, head.role == .tool { kept.removeFirst() }
+        result.append(contentsOf: kept)
         return result
+    }
+
+    /// Where the history sent to the model starts. When it does not fit, the start moves forward in steps of about a
+    /// quarter of the window, always to a question: step boundaries are fixed points of the history, so the prompt
+    /// keeps the same beginning for several turns and the engine continues its cache instead of prefilling the whole
+    /// history every turn, as dropping one message at a time would make it.
+    static func firstKeptMessage(costs: [Int], isQuestion: [Bool], room: Int, step: Int) -> Int {
+        let total = costs.reduce(0, +)
+        if total <= room { return 0 }
+        var dropped = 0
+        var boundary = step
+        for index in costs.indices {
+            if isQuestion[index], dropped >= boundary {
+                if total - dropped <= room { return index }
+                boundary = (dropped / step + 1) * step
+            }
+            dropped += costs[index]
+        }
+        return costs.count
     }
 
     /// Smaller of the user setting and the model's max_position_embeddings (8192 when the model does not say).

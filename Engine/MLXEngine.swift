@@ -39,11 +39,28 @@ public actor MLXEngine: InferenceEngine {
     /// What is known about the loaded model's MTP drafter. `greedyOnly` remembers a drafter that was let go because
     /// the request sampled: it is loaded again if a later request is greedy, rather than sitting in memory unused.
     private var drafterState: DrafterState = .unknown
-    /// Metal buffer cache limit after generation (bytes); nil keeps the MLX default.
+    /// Metal buffer cache kept between generations (bytes); nil keeps the MLX default.
     private let cacheLimitBytes: Int?
+    /// MLX's own limit, read before this engine changes it. A generation runs with it: a small cache makes MLX free
+    /// and reallocate the prefill's large temporary buffers on every step.
+    private let generationCacheLimit: Int
 
     public init(cacheLimitBytes: Int? = 512 * 1024 * 1024) {
         self.cacheLimitBytes = cacheLimitBytes
+        self.generationCacheLimit = Memory.cacheLimit
+    }
+
+    /// The buffer cache is large only while a generation runs; after it the surplus goes back to the system.
+    private func setGenerating(_ generating: Bool) {
+        guard let idle = cacheLimitBytes else { return }
+        Memory.cacheLimit = generating ? generationCacheLimit : idle
+        if !generating, Memory.cacheMemory > idle { Memory.clearCache() }
+    }
+
+    /// What MLX samples with when neither the request nor the checkpoint says: shown in the models list as the default.
+    public nonisolated static var librarySampling: SamplingParams {
+        let p = GenerateParameters()
+        return SamplingParams(temperature: Double(p.temperature), topP: Double(p.topP), topK: p.topK, minP: Double(p.minP))
     }
 
     /// Bytes the GPU may reasonably wire; feeds `HardwareProfile.wiredLimitBytes`.
@@ -104,19 +121,23 @@ public actor MLXEngine: InferenceEngine {
             return .failed(EngineError.imagesNotSupported)
         }
         let (stream, continuation) = AsyncThrowingStream.makeStream(of: GenerationEvent.self)
-        let parameters = GenerateParameters(
-            maxTokens: request.sampling.maxTokens,
-            maxKVSize: request.contextTokens,  // rotating KV cache: memory stays bounded by the chosen context window
-            temperature: Float(request.sampling.temperature),
-            topP: Float(request.sampling.topP),
-            topK: request.sampling.topK,
-            minP: Float(request.sampling.minP),
-            repetitionPenalty: request.sampling.repetitionPenalty.map(Float.init),
-            presencePenalty: request.sampling.presencePenalty.map(Float.init),
-            frequencyPenalty: request.sampling.frequencyPenalty.map(Float.init),
-            seed: request.sampling.seed
-        )
+        // Only what was asked for is set; the rest stays at mlx-swift-lm's defaults.
+        let s = request.sampling
+        // Rotating KV cache: memory stays bounded by the chosen context window.
+        var parameters = GenerateParameters(maxTokens: s.maxTokens, maxKVSize: request.contextTokens)
+        if let v = s.temperature { parameters.temperature = Float(v) }
+        if let v = s.topP { parameters.topP = Float(v) }
+        if let v = s.topK { parameters.topK = v }
+        if let v = s.minP { parameters.minP = Float(v) }
+        parameters.repetitionPenalty = s.repetitionPenalty.map(Float.init)
+        parameters.presencePenalty = s.presencePenalty.map(Float.init)
+        parameters.frequencyPenalty = s.frequencyPenalty.map(Float.init)
+        parameters.seed = s.seed
+        let temperature = Double(parameters.temperature)
+        let generateParameters = parameters
         let task = Task {
+            self.setGenerating(true)
+            defer { self.setGenerating(false) }
             do {
                 let userInput = try Self.makeUserInput(request)
                 let input = try await container.prepare(input: userInput)
@@ -140,10 +161,10 @@ public actor MLXEngine: InferenceEngine {
                 let images = PromptSession.imageKeys(request)
                 let reusable = Self.reusesPromptCache && input.video == nil && input.audio == nil
                 let previous = reusable ? self.takeSession(for: promptTokens, images: images) : nil
-                let drafter = request.speculates ? await self.drafter(temperature: request.sampling.temperature) : nil
+                let drafter = request.speculates ? await self.drafter(temperature: temperature) : nil
                 let run = try await container.perform(nonSendable: StartInput(input: input, drafter: drafter)) { context, start in
                     try Self.start(
-                        input: start.input, promptTokens: promptTokens, images: images, previous: previous, parameters: parameters,
+                        input: start.input, promptTokens: promptTokens, images: images, previous: previous, parameters: generateParameters,
                         context: context, drafter: start.drafter?.model)
                 }
                 let generation = run.stream

@@ -210,14 +210,32 @@ public struct KVCacheProfile: Codable, Sendable, Equatable, Hashable {
 /// What the checkpoint itself asks to be sampled with: `generation_config.json`, the file Hugging Face ships for
 /// exactly this, and failing that `config.json`. Read from disk when needed — old manifests do not carry it.
 public enum ModelDefaults {
-    public static func temperature(in directory: URL) -> Double? {
+    /// Read as `transformers` reads the file. `do_sample: false` is greedy decoding whatever else it says; with
+    /// `do_sample: true` a field left out means the library's documented default, which is spelled out here, since
+    /// that is what the checkpoint's authors tested with. A file that does not mention sampling sets nothing, and the
+    /// engine's own defaults apply.
+    public static func sampling(in directory: URL) -> SamplingParams {
         for name in ["generation_config.json", "config.json"] {
-            guard let data = try? Data(contentsOf: directory.appending(path: name)), let config = ModelConfig(data: data) else {
-                continue
+            guard let data = try? Data(contentsOf: directory.appending(path: name)),
+                let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            else { continue }
+            let number = { (key: String) in (root[key] as? NSNumber).map(\.doubleValue) }
+            var s = SamplingParams(
+                temperature: number("temperature").flatMap { $0 >= 0 ? $0 : nil }, topP: number("top_p"),
+                repetitionPenalty: number("repetition_penalty"), topK: number("top_k").map(Int.init), minP: number("min_p"),
+                presencePenalty: number("presence_penalty"), frequencyPenalty: number("frequency_penalty"))
+            switch root["do_sample"] as? Bool {
+            case false?:
+                return SamplingParams(temperature: 0, repetitionPenalty: s.repetitionPenalty)
+            case true?:
+                // GenerationConfig: temperature 1.0, top_p 1.0, top_k 50.
+                s = s.over(SamplingParams(temperature: 1, topP: 1, topK: 50))
+            case nil:
+                break
             }
-            if let value = config.double("temperature"), value >= 0 { return value }
+            if s != SamplingParams() { return s }
         }
-        return nil
+        return SamplingParams()
     }
 }
 

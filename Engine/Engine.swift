@@ -41,24 +41,25 @@ public enum EngineState: Sendable, Equatable {
     }
 }
 
+/// Every field is optional: nil means nobody asked, and the layer below decides — the checkpoint's
+/// `generation_config.json` (`ModelDefaults.sampling`), then the engine's own defaults. The app sets no values of its own.
 public struct SamplingParams: Sendable, Equatable, Codable {
-    public var temperature: Double
-    public var topP: Double
-    public var maxTokens: Int
+    public var temperature: Double?
+    public var topP: Double?
+    /// nil = until the context window is full.
+    public var maxTokens: Int?
     public var repetitionPenalty: Double?
     public var seed: UInt64?
     /// 0 turns it off.
-    public var topK: Int = 0
+    public var topK: Int?
     /// 0 turns it off.
-    public var minP: Double = 0
+    public var minP: Double?
     public var presencePenalty: Double?
     public var frequencyPenalty: Double?
 
-    /// 8192 by default: a reasoning model spends thousands of tokens before the visible answer, and a lower limit
-    /// cuts the reply off while it is still thinking — which reads as no answer at all.
     public init(
-        temperature: Double = 0.7, topP: Double = 0.9, maxTokens: Int = 8192, repetitionPenalty: Double? = nil, seed: UInt64? = nil,
-        topK: Int = 0, minP: Double = 0, presencePenalty: Double? = nil, frequencyPenalty: Double? = nil
+        temperature: Double? = nil, topP: Double? = nil, maxTokens: Int? = nil, repetitionPenalty: Double? = nil, seed: UInt64? = nil,
+        topK: Int? = nil, minP: Double? = nil, presencePenalty: Double? = nil, frequencyPenalty: Double? = nil
     ) {
         self.temperature = temperature
         self.topP = topP
@@ -69,6 +70,15 @@ public struct SamplingParams: Sendable, Equatable, Codable {
         self.minP = minP
         self.presencePenalty = presencePenalty
         self.frequencyPenalty = frequencyPenalty
+    }
+
+    /// These values, with `base` filling in what is not set here.
+    public func over(_ base: SamplingParams) -> SamplingParams {
+        SamplingParams(
+            temperature: temperature ?? base.temperature, topP: topP ?? base.topP, maxTokens: maxTokens ?? base.maxTokens,
+            repetitionPenalty: repetitionPenalty ?? base.repetitionPenalty, seed: seed ?? base.seed, topK: topK ?? base.topK,
+            minP: minP ?? base.minP, presencePenalty: presencePenalty ?? base.presencePenalty,
+            frequencyPenalty: frequencyPenalty ?? base.frequencyPenalty)
     }
 }
 

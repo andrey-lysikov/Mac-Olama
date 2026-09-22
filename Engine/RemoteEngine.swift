@@ -168,7 +168,9 @@ actor RemoteEngine: InferenceEngine {
             model: endpoint.model, messages: openAIMessages(request.messages), stream: true,
             temperature: request.sampling.temperature, top_p: request.sampling.topP, max_tokens: request.sampling.maxTokens,
             seed: request.sampling.seed.flatMap { Int(exactly: $0) }, tools: tools(request.tools),
-            stream_options: .init(include_usage: true))
+            stream_options: .init(include_usage: true), presence_penalty: request.sampling.presencePenalty,
+            frequency_penalty: request.sampling.frequencyPenalty, top_k: request.sampling.topK, min_p: request.sampling.minP,
+            repetition_penalty: request.sampling.repetitionPenalty)
         let bytes = try await stream(endpoint.baseURL.appending(path: "v1/chat/completions"), token: token, body: body)
         var tagger = ThinkingTagger()
         var finish: FinishReason = .stop

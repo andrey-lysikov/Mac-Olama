@@ -11,17 +11,17 @@ public enum PortStatus: Sendable, Equatable {
     case occupied
 }
 
-/// What the app runs a model with when a client does not say: the context window, temperature, reasoning and MTP
-/// chosen for it in the app, so an API client gets the same model as the chat.
+/// What the app runs a model with when a client does not say: the context window, the checkpoint's sampling with the
+/// temperature chosen in the app, reasoning and MTP, so an API client gets the same model as the chat.
 public struct APIModelDefaults: Sendable, Equatable {
     public var contextTokens: Int?
-    public var temperature: Double?
+    public var sampling: SamplingParams
     public var thinks: Bool
     public var speculates: Bool
 
-    public init(contextTokens: Int?, temperature: Double? = nil, thinks: Bool = false, speculates: Bool = false) {
+    public init(contextTokens: Int?, sampling: SamplingParams = .init(), thinks: Bool = false, speculates: Bool = false) {
         self.contextTokens = contextTokens
-        self.temperature = temperature
+        self.sampling = sampling
         self.thinks = thinks
         self.speculates = speculates
     }
@@ -35,19 +35,17 @@ public final class APIServer: Sendable {
         public var host: String
         public var port: Int
         public var version: String
-        public var defaultSampling: SamplingParams
         /// Requests wait in EngineManager's queue; beyond this many pending, reply 503.
         public var maxQueued: Int
         public var log: (@Sendable (String) -> Void)?
 
         public init(
-            host: String = "127.0.0.1", port: Int = 11434, version: String = "0.1", defaultSampling: SamplingParams = .init(),
+            host: String = "127.0.0.1", port: Int = 11434, version: String = "0.1",
             maxQueued: Int = 8, log: (@Sendable (String) -> Void)? = nil
         ) {
             self.host = host
             self.port = port
             self.version = version
-            self.defaultSampling = defaultSampling
             self.maxQueued = maxQueued
             self.log = log
         }
@@ -226,12 +224,10 @@ public final class APIServer: Sendable {
         jsonFormat: JSON?
     ) async -> GenerationRequest {
         let chosen = await defaults(model)
-        var base = configuration.defaultSampling
-        if let temperature = chosen.temperature { base.temperature = temperature }
         let modelMax = model.contextLength ?? chosen.contextTokens ?? Self.fallbackContext
         return GenerationRequest(
             messages: jsonFormat.map { Self.withJSONInstruction(messages, schema: $0) } ?? messages, tools: tools,
-            sampling: sampling(base), keepAlive: keepAlive,
+            sampling: sampling(chosen.sampling), keepAlive: keepAlive,
             contextTokens: min(contextTokens ?? chosen.contextTokens ?? modelMax, modelMax),
             speculates: chosen.speculates, thinks: thinks ?? chosen.thinks, rejectsLongPrompt: true)
     }

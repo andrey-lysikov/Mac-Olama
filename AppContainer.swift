@@ -204,10 +204,12 @@ final class AppContainer {
         strayDrafters = strays
         list = list.filter { model in !strays.contains { $0.id == model.id } }
         models = list
-        modelTemperatures = Dictionary(
+        checkpointSampling = Dictionary(
             uniqueKeysWithValues: list.compactMap { model in
-                ModelDefaults.temperature(in: model.directory).map { (model.id, $0) }
+                let sampling = ModelDefaults.sampling(in: model.directory)
+                return sampling == SamplingParams() ? nil : (model.id, sampling)
             })
+        applyConversationConfiguration()
         fillInBaseModels(list)
         brokenModels = await catalog.brokenModels
         if settings.activeModelID == nil || !list.contains(where: { $0.id == settings.activeModelID }) {
@@ -392,11 +394,12 @@ final class AppContainer {
         applyConversationConfiguration()
     }
 
-    /// What the checkpoint asks for, when it says anything; otherwise the app's own default. The second value says
-    /// which of the two it is, because a model served elsewhere has no checkpoint here to ask.
-    func defaultTemperature(for model: ModelDescriptor) -> (value: Double, fromModel: Bool) {
-        if let value = modelTemperatures[model.id] { return (value, true) }
-        return (SamplingParams().temperature, false)
+    /// What the checkpoint asks for, when it says anything; otherwise MLX's own default. The second value says which
+    /// of the two it is. nil for a model served elsewhere: its server decides, and nothing here knows its choice.
+    func defaultTemperature(for model: ModelDescriptor) -> (value: Double, fromModel: Bool)? {
+        if model.source == .remote { return nil }
+        if let value = checkpointSampling[model.id]?.temperature { return (value, true) }
+        return MLXEngine.librarySampling.temperature.map { ($0, false) }
     }
 
     /// The temperature chosen for this model, or nil while it follows the checkpoint.
@@ -418,17 +421,20 @@ final class AppContainer {
     /// What an API client gets for a model it does not configure: the chat's window, temperature, reasoning and MTP.
     func apiDefaults(for model: ModelDescriptor) -> APIModelDefaults {
         let speculates = settings.speculativeModels.contains(model.id)
+        var sampling = checkpointSampling[model.id] ?? SamplingParams()
+        if let chosen = settings.modelTemperatures[model.id] { sampling.temperature = chosen }
         // As in the chat: a drafter that verifies only greedy decoding sets the temperature, or speculation switches off.
-        let greedy = speculates && settings.greedyDrafters.contains(model.id)
+        if speculates, settings.greedyDrafters.contains(model.id) { sampling.temperature = 0 }
         return APIModelDefaults(
-            contextTokens: contextTokens(for: model), temperature: greedy ? 0 : settings.modelTemperatures[model.id],
-            thinks: settings.reasoningShown.contains(model.id), speculates: speculates)
+            contextTokens: contextTokens(for: model), sampling: sampling, thinks: settings.reasoningShown.contains(model.id),
+            speculates: speculates)
     }
 
     private func applyConversationConfiguration() {
         var config = ConversationService.Configuration(maxToolIterations: settings.toolIterations)
         config.contextTokensByModel = settings.modelContextTokens
         config.temperatureByModel = settings.modelTemperatures
+        config.checkpointSamplingByModel = checkpointSampling
         config.speculativeModelIDs = Set(settings.speculativeModels)
         config.greedyModelIDs = Set(settings.greedyDrafters)
         config.reasoningModelIDs = Set(settings.reasoningShown)
@@ -610,9 +616,8 @@ final class AppContainer {
 
     // Multi-token prediction: a drafter installed next to a model lets it answer several tokens per round.
 
-    /// The temperature each checkpoint ships with, read once per catalog refresh; the fallback for models that say
-    /// nothing is the app's own default.
-    private var modelTemperatures: [String: Double] = [:]
+    /// What each checkpoint asks to be sampled with, read once per catalog refresh; models that say nothing are absent.
+    private var checkpointSampling: [String: SamplingParams] = [:]
 
     /// Drafter repositories installed as if they were models: they cannot answer anything, so they are shown apart and
     /// wait for their model. Attaching happens by itself once that model is installed.

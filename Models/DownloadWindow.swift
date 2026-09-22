@@ -812,14 +812,14 @@ struct ModelLibraryView: View {
     }
 
     /// Sampling temperature saved for this model. Until one is picked the model answers with the temperature its own
-    /// `generation_config.json` asks for. Drawn like the context menu, so the row stays short.
+    /// `generation_config.json` asks for, or MLX's default; a model served elsewhere, with its server's. Drawn like the
+    /// context menu, so the row stays short.
     private func temperaturePicker(_ model: ModelDescriptor) -> some View {
         let standard = container.defaultTemperature(for: model)
         let chosen = container.temperature(for: model)
         // Only a drafter that cannot verify sampled tokens fixes the temperature at zero; others leave it alone.
         let greedy = container.isSpeculative(model) && container.drafterNeedsGreedy(model)
-        let shown = greedy ? 0 : (chosen ?? standard.value)
-        let standardText = Self.temperatureText(standard.value)
+        let shown = greedy ? 0 : (chosen ?? standard?.value)
         let choices: [Double?] = [nil] + Self.temperatures.map { Optional($0) }
         return CheckedMenu(
             items: choices,
@@ -829,11 +829,13 @@ struct ModelLibraryView: View {
                 // A model served elsewhere keeps no config here, so there is nothing of its own to follow.
                 value.map { Text(verbatim: Self.temperatureText($0)) }
                     ?? Text(
-                        standard.fromModel
-                            ? String(localized: "From the model (\(standardText))") : String(localized: "Default (\(standardText))"))
+                        standard.map {
+                            let text = Self.temperatureText($0.value)
+                            return $0.fromModel ? String(localized: "From the model (\(text))") : String(localized: "Default (\(text))")
+                        } ?? String(localized: "Set by the server"))
             }
         ) {
-            Text(verbatim: Self.temperatureText(shown) + "t").font(.callout)
+            Text(verbatim: (shown.map(Self.temperatureText) ?? "–") + "t").font(.callout)
         }
         .fixedSize()
         .disabled(greedy)
