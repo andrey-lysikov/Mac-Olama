@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5
+
+- Model search lists only MLX builds for Apple Silicon
+- Connect by API speaks only the OpenAI-compatible API
+
 ## 0.4
 
 - Enable arrow for chat scroll position.

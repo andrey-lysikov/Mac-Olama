@@ -69,7 +69,7 @@ public enum ModelKind: String, Codable, Sendable, CaseIterable {
 public enum ModelSource: String, Codable, Sendable, CaseIterable {
     case huggingFace = "huggingface"
     case modelScope = "modelscope"
-    /// A model served by another program over the Ollama or OpenAI-compatible (llama.cpp) API; nothing is downloaded.
+    /// A model served by another program over the OpenAI-compatible API (llama.cpp and others); nothing is downloaded.
     case remote = "remote"
 
     public var displayName: String {
@@ -347,25 +347,16 @@ public struct ModelOwners: Sendable, Hashable {
 
 // RemoteEndpoint
 
-/// `remote.json` next to the manifest of a remote model: where the server is and which API it speaks.
-/// The optional token lives in the settings (`RemoteTokens`), never in this file.
+/// `remote.json` next to the manifest of a remote model: where the OpenAI-compatible server is and the model's name.
+/// The optional token lives in the settings (`RemoteTokens`), never in this file. An older file's `api` key is ignored.
 public struct RemoteEndpoint: Codable, Sendable, Equatable {
-    public enum API: String, Codable, Sendable {
-        /// Ollama's own API (`/api/chat`).
-        case ollama
-        /// OpenAI-compatible (`/v1/chat/completions`): llama.cpp's llama-server and others.
-        case openAI = "openai"
-    }
-
     public static let fileName = "remote.json"
     public var baseURL: URL
     public var model: String
-    public var api: API
 
-    public init(baseURL: URL, model: String, api: API) {
+    public init(baseURL: URL, model: String) {
         self.baseURL = baseURL
         self.model = model
-        self.api = api
     }
 
     public static func load(from directory: URL) throws -> RemoteEndpoint {

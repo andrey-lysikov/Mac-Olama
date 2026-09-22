@@ -584,7 +584,7 @@ private struct ChatsSplitView: View {
         return buckets
     }
 
-    // Detail: centered column, user bubbles on the right, plain assistant text, rounded composer (the familiar Ollama layout)
+    // Detail: centered column, user bubbles on the right, plain assistant text, rounded composer
 
     private var detail: some View {
         // The chat's title is the window's title (`windowTitle`), not a line of its own above the transcript.

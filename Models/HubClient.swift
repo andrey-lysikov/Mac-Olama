@@ -213,9 +213,9 @@ public struct HubClient: Sendable {
         return c.url!
     }
 
-    public func searchURL(query: String, author: String? = nil, limit: Int = 30, mlxOnly: Bool = true) -> URL {
-        var trailing: [URLQueryItem] = []
-        if mlxOnly { trailing.append(URLQueryItem(name: "filter", value: "mlx")) }
+    /// Only MLX builds: the app runs nothing else.
+    public func searchURL(query: String, author: String? = nil, limit: Int = 30) -> URL {
+        var trailing = [URLQueryItem(name: "filter", value: "mlx")]
         if let author { trailing.append(URLQueryItem(name: "author", value: author)) }
         return modelsURL([URLQueryItem(name: "search", value: query)], trailing: trailing, limit: limit)
     }
@@ -278,9 +278,8 @@ public struct HubClient: Sendable {
         return data
     }
 
-    public func search(query: String, author: String? = nil, limit: Int = 30, mlxOnly: Bool = true) async throws -> [HubModelSummary] {
-        try Self.decoder.decode(
-            [HubModelSummary].self, from: try await get(searchURL(query: query, author: author, limit: limit, mlxOnly: mlxOnly)))
+    public func search(query: String, author: String? = nil, limit: Int = 30) async throws -> [HubModelSummary] {
+        try Self.decoder.decode([HubModelSummary].self, from: try await get(searchURL(query: query, author: author, limit: limit)))
     }
 
     public func drafters(baseModel: String, limit: Int = 10) async throws -> [HubModelSummary] {

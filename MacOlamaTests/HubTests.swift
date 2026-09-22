@@ -43,10 +43,8 @@ import Testing
         #expect(HubClient.parseRepoID("just-a-name") == nil)
     }
 
-    @Test func mlxFilterIsOptional() {
-        let client = HubClient()
-        #expect(client.searchURL(query: "qwen", mlxOnly: true).absoluteString.contains("filter=mlx"))
-        #expect(!client.searchURL(query: "qwen", mlxOnly: false).absoluteString.contains("filter=mlx"))
+    @Test func searchAsksForMLXOnly() {
+        #expect(HubClient().searchURL(query: "qwen").absoluteString.contains("filter=mlx"))
     }
 
     @Test func classificationReadsFactsFromConfig() {
@@ -201,11 +199,11 @@ final class RemoteStub: URLProtocol {
 
     init() { URLProtocol.registerClass(RemoteStub.self) }
 
-    private func run(api: RemoteEndpoint.API) async throws -> [GenerationEvent] {
+    private func run() async throws -> [GenerationEvent] {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        try RemoteEndpoint(baseURL: base, model: "qwen3:8b", api: api).save(to: directory)
+        try RemoteEndpoint(baseURL: base, model: "qwen3:8b").save(to: directory)
         let model = ModelDescriptor(
             id: "remote--stub", name: "qwen3:8b", repoID: "stub.test:11434/qwen3:8b", source: .remote, kind: .llm, directory: directory,
             sizeBytes: 0)
@@ -216,31 +214,6 @@ final class RemoteStub: URLProtocol {
             events.append(event)
         }
         return events
-    }
-
-    @Test func ollamaProbeAndStream() async throws {
-        RemoteStub.responses = [
-            "/api/tags": (200, #"{"models":[{"name":"qwen3:8b"}]}"#),
-            "/api/show": (200, #"{"capabilities":["completion","tools"],"model_info":{"qwen3.context_length":40960}}"#),
-            "/api/chat": (
-                200,
-                """
-                {"message":{"role":"assistant","content":"","thinking":"plan"},"done":false}
-                {"message":{"role":"assistant","content":"Hi"},"done":false}
-                {"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"web_search","arguments":{"query":"x"}}}]},"done":false}
-                {"done":true,"done_reason":"stop","eval_count":10,"eval_duration":1000000000,"prompt_eval_count":5}
-                """
-            ),
-        ]
-        let probe = try await RemoteEngine.probe(baseURL: base, model: "qwen3:8b", token: nil)
-        #expect(probe.api == .ollama && probe.supportsTools && !probe.supportsVision && probe.contextLength == 40960)
-        let events = try await run(api: .ollama)
-        let tokens = events.compactMap { if case .token(let t) = $0 { t } else { nil } }
-        #expect(tokens == ["<think>", "plan", "</think>", "Hi"])
-        #expect(
-            events.contains { if case .toolCall(let c) = $0 { c.name == "web_search" && c.argumentsJSON.contains("\"x\"") } else { false } }
-        )
-        #expect(events.last == .finished(.toolCalls))
     }
 
     @Test func llamaServerProbeAndStream() async throws {
@@ -263,15 +236,15 @@ final class RemoteStub: URLProtocol {
             ),
         ]
         let probe = try await RemoteEngine.probe(baseURL: base, model: "anything", token: nil)
-        #expect(probe.api == .openAI && probe.model == "model.gguf" && probe.supportsTools && probe.supportsVision)
-        let events = try await run(api: .openAI)
+        #expect(probe.model == "model.gguf" && probe.supportsTools && probe.supportsVision)
+        let events = try await run()
         let tokens = events.compactMap { if case .token(let t) = $0 { t } else { nil } }
         #expect(tokens == ["<think>", "plan", "</think>", "Hello"])
         #expect(events.last == .finished(.stop))
     }
 
     @Test func missingModelIsReported() async throws {
-        RemoteStub.responses = ["/api/tags": (200, #"{"models":[{"name":"llama3:8b"}]}"#)]
+        RemoteStub.responses = ["/v1/models": (200, #"{"data":[{"id":"llama3:8b"},{"id":"qwen2:7b"}]}"#)]
         await #expect(throws: RemoteError.self) { try await RemoteEngine.probe(baseURL: base, model: "qwen3:8b", token: nil) }
     }
 }

@@ -12,7 +12,8 @@ a chat window. Nothing leaves the computer unless you turn web search on.
 ## Features
 
 - Quick panel (left click on the menu bar icon or ⌥Space, which you can change in the settings) and a chat window.
-- Search Hugging Face or ModelScope (MLX builds first) for models, or connect it by API.
+- Search MLX models on Hugging Face or ModelScope, or connect a model served by another program over an
+  OpenAI-compatible API.
 - Drop images (vision models), PDF and text files into a question.
 - Multiple plugins in system for models (like search, maps, task, safari control etc)
 - API: Ollama-compatible and OpenAI-compatible server on `localhost:11434`; the port, the interface and whether it
@@ -21,8 +22,22 @@ a chat window. Nothing leaves the computer unless you turn web search on.
 - English and Russian interface.
 - Liquid Glass support.
 
+## Model hubs
+
+- [Hugging Face](https://huggingface.co/models?library=mlx): search, links and downloads, gated repositories with an
+  access token; community MLX builds such as [mlx-community](https://huggingface.co/mlx-community).
+- [ModelScope](https://modelscope.cn/models): search, links and downloads; in the API a model is `modelscope:org/repo`.
+
+Only MLX builds are listed: the app runs nothing else.
+
 ## Tech
 
-Swift 6, SwiftUI + AppKit, SwiftData, Apple Silicon only, for MacOS 26 and newer. Also: 
-- [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm);
-- [swift-transformers](https://github.com/huggingface/swift-transformers).
+Swift 6, SwiftUI + AppKit, SwiftData, Apple Silicon only, for macOS 26 and newer.
+
+## Based on
+
+- [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm)
+- [swift-transformers](https://github.com/huggingface/swift-transformers)
+- [swift-markdown](https://github.com/swiftlang/swift-markdown)
+- [SwiftSoup](https://github.com/scinfu/SwiftSoup)
+- [SwiftMath](https://github.com/mgriebling/SwiftMath)

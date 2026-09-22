@@ -133,7 +133,8 @@ public struct ModelScopeClient: Sendable {
         baseURL.appendingPathComponent("models/\(repoID)/resolve/master/\(path)")
     }
 
-    public func search(query: String, limit: Int = 40, mlxOnly: Bool = true) async throws -> [ModelScopeModel] {
+    /// Only MLX builds: the app runs nothing else.
+    public func search(query: String, limit: Int = 40) async throws -> [ModelScopeModel] {
         let body: [String: Any] = [
             "PageSize": limit, "PageNumber": 1, "SortBy": "Default", "Target": "", "SingleCriterion": [], "Criterion": [],
             "Name": query,
@@ -143,7 +144,7 @@ public struct ModelScopeClient: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let found = try Self.parseSearch(try await Self.data(for: request))
-        return mlxOnly ? found.filter(\.isMLX) : found
+        return found.filter(\.isMLX)
     }
 
     public func info(repoID: String) async throws -> ModelScopeModel {

@@ -96,7 +96,7 @@ final class DownloadViewModel {
     struct RemoteDraft: Identifiable {
         let id = UUID()
         var name: String
-        var address = "http://localhost:11434"
+        var address = "http://localhost:8080"
         var token = ""
         var isSaving = false
         var error: String?
@@ -106,8 +106,6 @@ final class DownloadViewModel {
     var hub: Hub = .huggingFace
     var remoteDrafts: [RemoteDraft] = []
     var query = ""
-    /// On by default: only MLX builds are listed. Off widens the search to every repository (MLX builds still come first).
-    var mlxOnly = true { didSet { if mlxOnly != oldValue, hasSearched { search() } } }
     private(set) var rows: [Row] = []
     private(set) var isSearching = false
     private(set) var searchError: String?
@@ -210,10 +208,10 @@ final class DownloadViewModel {
         let parts = q.split(separator: "/", maxSplits: 1).map(String.init)
         let found =
             parts.count == 2
-            ? try await container.hubClient.search(query: parts[1], author: parts[0], limit: 40, mlxOnly: mlxOnly)
-            : try await container.hubClient.search(query: q, limit: 40, mlxOnly: mlxOnly)
+            ? try await container.hubClient.search(query: parts[1], author: parts[0], limit: 40)
+            : try await container.hubClient.search(query: q, limit: 40)
         try Task.checkCancellation()
-        rows = found.filter { !mlxOnly || $0.isMLX }.map {
+        rows = found.filter(\.isMLX).map {
             Row(
                 repoID: $0.id, source: .huggingFace,
                 owners: ModelOwners(repoID: $0.id, baseModel: ModelOwners.baseModel(fromTags: $0.tags ?? [])),
@@ -225,7 +223,7 @@ final class DownloadViewModel {
 
     // ModelScope's search already carries the size and the base model; the config is read per row for kind and context.
     private func searchModelScope(_ q: String) async throws {
-        let found = try await container.modelScopeClient.search(query: q, limit: 40, mlxOnly: mlxOnly)
+        let found = try await container.modelScopeClient.search(query: q, limit: 40)
         try Task.checkCancellation()
         rows = found.map { Self.row(modelScope: $0) }
         for row in rows { loadDetails(for: row.repoID) }
@@ -307,7 +305,7 @@ final class DownloadViewModel {
         row.detailsLoaded = true
     }
 
-    // Order: MLX builds first, then models that fit, the uncertain ones, those that will not run; newest first inside each group.
+    // Order: models that fit, the uncertain ones, those that will not run; newest first inside each group.
 
     var sortedRows: [Row] {
         func rank(_ row: Row) -> Int {
@@ -318,7 +316,6 @@ final class DownloadViewModel {
             }
         }
         return rows.enumerated().sorted { a, b in
-            if a.element.isMLX != b.element.isMLX { return a.element.isMLX }
             let (ra, rb) = (rank(a.element), rank(b.element))
             if ra != rb { return ra < rb }
             let (da, db) = (a.element.lastModified ?? .distantPast, b.element.lastModified ?? .distantPast)
@@ -430,12 +427,6 @@ struct ModelLibraryHeader: View {
                 .accessibilityLabel(viewModel.hub == .api ? String(localized: "Add") : String(localized: "Search"))
             }
             .searchCapsule()
-            // A switch, like every other on/off in this app; tick boxes are left to the menus, where they mark a choice.
-            Toggle(String(localized: "MLX models only"), isOn: $viewModel.mlxOnly)
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .disabled(viewModel.hub == .link || viewModel.hub == .api)
-                .help(String(localized: "Show only models built for MLX. Turn off to search every repository; MLX builds stay on top."))
             Spacer(minLength: 8)
             Button {
                 showsToken.toggle()
@@ -1149,7 +1140,7 @@ private struct RemoteDraftRow: View {
                 TextField(String(localized: "Model name"), text: $draft.name)
                     .textFieldStyle(.roundedBorder).font(.title3)
                 HStack(spacing: 8) {
-                    TextField(String(localized: "Address and port, e.g. http://localhost:11434"), text: $draft.address)
+                    TextField(String(localized: "Address and port, e.g. http://localhost:8080"), text: $draft.address)
                         .textFieldStyle(.roundedBorder)
                     SecureField(String(localized: "Token (optional)"), text: $draft.token)
                         .textFieldStyle(.roundedBorder).frame(maxWidth: 220)

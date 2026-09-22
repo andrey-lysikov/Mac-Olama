@@ -3,8 +3,8 @@
 
 import Foundation
 
-// Models on another server: Ollama `/api/chat` or OpenAI-compatible `/v1/chat/completions`, streamed over HTTP.
-// Separate reasoning (`thinking`, `reasoning_content`) is wrapped in <think> tags, so it is hidden like a local model's.
+// Models on another server over the OpenAI-compatible `/v1/chat/completions`, streamed over HTTP.
+// Separate reasoning (`reasoning_content`) is wrapped in <think> tags, so it is hidden like a local model's.
 
 enum RemoteError: DescribedError {
     case badAddress
@@ -15,8 +15,8 @@ enum RemoteError: DescribedError {
 
     var description: String {
         switch self {
-        case .badAddress: String(localized: "Enter the server address, e.g. http://localhost:11434.")
-        case .unreachable(let detail): String(localized: "The server does not answer as an Ollama or OpenAI-compatible API: \(detail)")
+        case .badAddress: String(localized: "Enter the server address, e.g. http://localhost:8080.")
+        case .unreachable(let detail): String(localized: "The server does not answer as an OpenAI-compatible API: \(detail)")
         case .modelNotFound(let name, let available):
             available.isEmpty
                 ? String(localized: "The server has no model “\(name)”.")
@@ -65,7 +65,6 @@ extension JSON {
 actor RemoteEngine: InferenceEngine {
     /// What the server reported when the model was connected.
     struct Probe: Sendable {
-        var api: RemoteEndpoint.API
         /// The name as the server spells it (`qwen3` may be listed as `qwen3:latest`).
         var model: String
         var supportsTools: Bool
@@ -105,10 +104,7 @@ actor RemoteEngine: InferenceEngine {
         guard let endpoint else { return .failed(EngineError.noModelLoaded) }
         let token = token
         return .engine(current: current) { continuation in
-            switch endpoint.api {
-            case .ollama: try await Self.streamOllama(endpoint, token: token, request: request, into: continuation)
-            case .openAI: try await Self.streamOpenAI(endpoint, token: token, request: request, into: continuation)
-            }
+            try await Self.streamOpenAI(endpoint, token: token, request: request, into: continuation)
         }
     }
 
@@ -117,7 +113,7 @@ actor RemoteEngine: InferenceEngine {
     /// A mistyped address or port must not keep the user waiting: the whole check, all its requests together, ends here.
     static let probeTimeout = 10
 
-    /// Checks the address and the model: Ollama first (`/api/tags`, `/api/show`), then OpenAI-compatible (`/v1/models`, `/props`).
+    /// Checks the address and the model: `/v1/models`, then llama-server's `/props` for tools, vision and context.
     static func probe(baseURL: URL, model: String, token: String?) async throws -> Probe {
         try await withThrowingTaskGroup(of: Probe?.self) { group in
             group.addTask { try await probeServer(baseURL: baseURL, model: model, token: token) }
@@ -132,19 +128,6 @@ actor RemoteEngine: InferenceEngine {
     }
 
     private static func probeServer(baseURL: URL, model: String, token: String?) async throws -> Probe {
-        if let tags = try? await json(baseURL.appending(path: "api/tags"), token: token),
-            let list = tags["models"] as? [[String: Any]]
-        {
-            let names = list.compactMap { $0["name"] as? String ?? $0["model"] as? String }
-            guard let name = match(model, in: names) else { throw RemoteError.modelNotFound(model, available: names) }
-            let show = try? await json(baseURL.appending(path: "api/show"), token: token, body: ["model": name])
-            let capabilities = show?["capabilities"] as? [String] ?? []
-            let info = show?["model_info"] as? [String: Any] ?? [:]
-            let context = info.first { $0.key.hasSuffix(".context_length") }?.value as? Int
-            return Probe(
-                api: .ollama, model: name, supportsTools: capabilities.contains("tools"), supportsVision: capabilities.contains("vision"),
-                contextLength: context)
-        }
         let models: [String: Any]
         do {
             models = try await json(baseURL.appending(path: "v1/models"), token: token)
@@ -163,7 +146,7 @@ actor RemoteEngine: InferenceEngine {
         let modalities = props?["modalities"] as? [String: Any]
         let settings = props?["default_generation_settings"] as? [String: Any]
         return Probe(
-            api: .openAI, model: name, supportsTools: template.contains("tools"), supportsVision: modalities?["vision"] as? Bool ?? false,
+            model: name, supportsTools: template.contains("tools"), supportsVision: modalities?["vision"] as? Bool ?? false,
             contextLength: settings?["n_ctx"] as? Int)
     }
 
@@ -173,60 +156,6 @@ actor RemoteEngine: InferenceEngine {
         if let exact = names.first(where: { $0 == w }) { return exact }
         if let latest = names.first(where: { $0 == w + ":latest" }) { return latest }
         return names.first { $0.lowercased() == w.lowercased() || ($0 as NSString).lastPathComponent.lowercased() == w.lowercased() }
-    }
-
-    // Ollama
-
-    private static func streamOllama(
-        _ endpoint: RemoteEndpoint, token: String?, request: GenerationRequest,
-        into continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation
-    ) async throws {
-        var options = OllamaOptions()
-        options.temperature = request.sampling.temperature
-        options.top_p = request.sampling.topP
-        options.num_predict = request.sampling.maxTokens
-        options.num_ctx = request.contextTokens
-        options.repeat_penalty = request.sampling.repetitionPenalty
-        options.seed = request.sampling.seed.flatMap { Int(exactly: $0) }
-        let body = OllamaChatRequest(
-            model: endpoint.model, messages: ollamaMessages(request.messages), stream: true, tools: tools(request.tools),
-            options: options)
-        let bytes = try await stream(endpoint.baseURL.appending(path: "api/chat"), token: token, body: body)
-        var tagger = ThinkingTagger()
-        var sawToolCall = false
-        for try await line in bytes.lines {
-            try Task.checkCancellation()
-            guard !line.isEmpty else { continue }
-            let data = Data(line.utf8)
-            if let failure = try? chunkDecoder.decode(APIErrorBody.self, from: data) { throw RemoteError.http(500, failure.error) }
-            guard let chunk = try? chunkDecoder.decode(OllamaChatChunk.self, from: data) else { continue }
-            if let message = chunk.message {
-                tagger.reasoning(message.thinking ?? "", into: continuation)
-                tagger.content(message.content ?? "", into: continuation)
-                for call in message.tool_calls ?? [] {
-                    sawToolCall = true
-                    continuation.yield(
-                        .toolCall(
-                            ToolCall(
-                                id: "call_\(UUID().uuidString.prefix(8))", name: call.function.name,
-                                argumentsJSON: call.function.arguments.argumentsString)))
-                }
-            }
-            if chunk.done {
-                tagger.close(into: continuation)
-                let evalCount = chunk.eval_count ?? 0
-                let evalSeconds = Double(chunk.eval_duration ?? 0) / 1e9
-                continuation.yield(
-                    .usage(
-                        GenerationUsage(
-                            promptTokens: chunk.prompt_eval_count ?? 0, completionTokens: evalCount,
-                            tokensPerSecond: evalSeconds > 0 ? Double(evalCount) / evalSeconds : 0,
-                            promptSeconds: Double(chunk.prompt_eval_duration ?? 0) / 1e9, generationSeconds: evalSeconds)))
-                let reason: FinishReason = sawToolCall ? .toolCalls : (chunk.done_reason == "length" ? .length : .stop)
-                continuation.yield(.finished(reason))
-                return
-            }
-        }
     }
 
     // OpenAI-compatible
@@ -291,21 +220,6 @@ actor RemoteEngine: InferenceEngine {
 
     // Engine → wire conversion (the reverse of `APIServer.convert`)
 
-    private static func ollamaMessages(_ messages: [EngineMessage]) -> [OllamaMessage] {
-        var names: [String: String] = [:]  // tool call id → tool name, for the results that answer them
-        return messages.map { message in
-            var out = OllamaMessage(
-                role: message.role.rawValue, content: message.content,
-                images: message.images.isEmpty ? nil : message.images.map { $0.data.base64EncodedString() },
-                tool_calls: message.toolCalls.isEmpty
-                    ? nil
-                    : message.toolCalls.map { OllamaToolCall(function: .init(name: $0.name, arguments: JSON.parse($0.argumentsJSON))) })
-            for call in message.toolCalls { names[call.id] = call.name }
-            if message.role == .tool, let id = message.toolCallID { out.tool_name = names[id] }
-            return out
-        }
-    }
-
     private static func openAIMessages(_ messages: [EngineMessage]) -> [OpenAIMessage] {
         messages.map { message in
             let content: OpenAIContent =
@@ -327,11 +241,11 @@ actor RemoteEngine: InferenceEngine {
         }
     }
 
-    private static func tools(_ specs: [ToolSpec]) -> [OllamaTool]? {
+    private static func tools(_ specs: [ToolSpec]) -> [OpenAITool]? {
         specs.isEmpty
             ? nil
             : specs.map {
-                OllamaTool(
+                OpenAITool(
                     type: "function",
                     function: .init(name: $0.name, description: $0.description, parameters: JSON.parse($0.parametersJSONSchema)))
             }
@@ -339,8 +253,8 @@ actor RemoteEngine: InferenceEngine {
 
     // HTTP and JSON
 
-    /// Chunk decoding is lenient: timestamps are not read here, and a `created_at` format the strict ISO-8601
-    /// strategy rejects (Ollama sends nanosecond fractions) must not drop the chunk.
+    /// Chunk decoding is lenient: timestamps are not read here, and a date format the strict ISO-8601 strategy
+    /// rejects must not drop the chunk.
     private static let chunkDecoder: JSONDecoder = {
         let d = JSONDecoder()
         d.dateDecodingStrategy = .custom { _ in .distantPast }

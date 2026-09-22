@@ -336,7 +336,7 @@ final class AppContainer {
     }
 
     /// "Connect by API": checks that the server answers and has the model, then adds it to the library like a downloaded one.
-    /// `address` may omit the scheme (`localhost:11434`); the optional token is saved with the settings.
+    /// `address` may omit the scheme (`localhost:8080`); the optional token is saved with the settings.
     func connectRemote(model: String, address: String, token: String) async throws {
         let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let base = URL(string: trimmed.contains("://") ? trimmed : "http://" + trimmed), base.host() != nil else {
@@ -345,7 +345,7 @@ final class AppContainer {
         let token = token.trimmingCharacters(in: .whitespacesAndNewlines)
         let probe = try await RemoteEngine.probe(
             baseURL: base, model: model.trimmingCharacters(in: .whitespacesAndNewlines), token: token.isEmpty ? nil : token)
-        let endpoint = RemoteEndpoint(baseURL: base, model: probe.model, api: probe.api)
+        let endpoint = RemoteEndpoint(baseURL: base, model: probe.model)
         let directory = paths.models.appendingPathComponent(endpoint.directoryName)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try endpoint.save(to: directory)

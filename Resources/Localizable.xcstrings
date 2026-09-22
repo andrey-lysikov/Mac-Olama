@@ -255,12 +255,12 @@
         }
       }
     },
-    "Address and port, e.g. http://localhost:11434" : {
+    "Address and port, e.g. http://localhost:8080" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Адрес и порт, например http://localhost:11434"
+            "value" : "Адрес и порт, например http://localhost:8080"
           }
         }
       }
@@ -1098,12 +1098,12 @@
         }
       }
     },
-    "Enter the server address, e.g. http://localhost:11434." : {
+    "Enter the server address, e.g. http://localhost:8080." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Укажите адрес сервера, например http://localhost:11434."
+            "value" : "Укажите адрес сервера, например http://localhost:8080."
           }
         }
       }
@@ -1693,16 +1693,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Кнопка микрофона"
-          }
-        }
-      }
-    },
-    "MLX models only" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Только MLX-модели"
           }
         }
       }
@@ -2919,16 +2909,6 @@
         }
       }
     },
-    "Show only models built for MLX. Turn off to search every repository; MLX builds stay on top." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Показывать только модели для MLX. Если выключить, поиск идёт по всем репозиториям, а MLX-сборки остаются вверху."
-          }
-        }
-      }
-    },
     "Show the chat list" : {
       "localizations" : {
         "ru" : {
@@ -3452,12 +3432,12 @@
         }
       }
     },
-    "The server does not answer as an Ollama or OpenAI-compatible API: %@" : {
+    "The server does not answer as an OpenAI-compatible API: %@" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Сервер не отвечает как API Ollama или OpenAI-совместимый API: %@"
+            "value" : "Сервер не отвечает как OpenAI-совместимый API: %@"
           }
         }
       }

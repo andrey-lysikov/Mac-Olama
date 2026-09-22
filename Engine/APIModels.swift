@@ -111,8 +111,6 @@ public struct OllamaMessage: Codable, Sendable {
     public var role: String
     /// Optional so that a streamed chunk (or a request) without it still decodes; always set on responses.
     public var content: String?
-    /// A remote Ollama server streams separate reasoning here; never written by this server.
-    public var thinking: String?
     public var images: [String]?  // base64
     public var tool_calls: [OllamaToolCall]?
     public var tool_name: String?
@@ -239,9 +237,8 @@ public struct OllamaTimings: Sendable {
     }
 }
 
-// The chunk envelopes are optional-heavy because they are decoded as well as encoded: `RemoteEngine` reads another
-// server's stream through the same types, and a final Ollama chunk carries no `message` at all. The server always
-// fills the fields it writes, so responses are unchanged.
+// The chunk envelopes are optional-heavy: a final chunk carries no `message` at all. The server always fills the
+// fields it writes.
 public struct OllamaChatChunk: Codable, Sendable {
     public var model: String?
     public var created_at: Date?
@@ -406,8 +403,8 @@ public struct OpenAIUsage: Codable, Sendable {
     public var total_tokens: Int?
 }
 
-// Optional-heavy for the same reason as the Ollama chunks: `RemoteEngine` decodes other servers' streams (whose
-// chunks may omit any envelope field) through this type. The server always fills what it writes.
+// Optional-heavy because `RemoteEngine` decodes other servers' streams (whose chunks may omit any envelope field)
+// through this type. The server always fills what it writes.
 public struct OpenAIChatChunk: Codable, Sendable {
     public struct Choice: Codable, Sendable {
         public struct Delta: Codable, Sendable {
