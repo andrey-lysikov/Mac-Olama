@@ -177,14 +177,18 @@ import Testing
     }
 }
 
-// Remote models: the network is replaced by a URLProtocol that answers per path, so parsing is tested without a server.
+// Remote models and hub searches: the network is replaced by a URLProtocol that answers per path, so parsing is tested
+// without a server. The responses are shared state, so every suite that sets them runs inside `StubbedNetworkTests`;
+// each nested suite registers the stub itself, since the parent's init does not run for them.
 
 final class RemoteStub: URLProtocol {
     nonisolated(unsafe) static var responses: [String: (status: Int, body: String)] = [:]
+    nonisolated(unsafe) static var requests: [URLRequest] = []
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host() == "stub.test" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         guard let url = request.url else { return }
+        Self.requests.append(request)
         let (status, body) = Self.responses[url.path()] ?? (404, #"{"error":"not found"}"#)
         let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil)
         if let response { client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed) }
@@ -192,59 +196,172 @@ final class RemoteStub: URLProtocol {
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
+
+    static func reset(_ responses: [String: (status: Int, body: String)]) {
+        self.responses = responses
+        requests = []
+    }
 }
 
-@Suite(.serialized) struct RemoteEngineTests {
-    private let base = URL(string: "http://stub.test:11434")!
+@Suite(.serialized) struct StubbedNetworkTests {
+    @Suite struct RemoteEngineTests {
+        init() { URLProtocol.registerClass(RemoteStub.self) }
 
-    init() { URLProtocol.registerClass(RemoteStub.self) }
+        private let base = URL(string: "http://stub.test:8080")!
 
-    private func run() async throws -> [GenerationEvent] {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        try RemoteEndpoint(baseURL: base, model: "qwen3:8b").save(to: directory)
-        let model = ModelDescriptor(
-            id: "remote--stub", name: "qwen3:8b", repoID: "stub.test:11434/qwen3:8b", source: .remote, kind: .llm, directory: directory,
-            sizeBytes: 0)
-        let engine = RemoteEngine()
-        try await engine.load(model) { _ in }
-        var events: [GenerationEvent] = []
-        for try await event in await engine.generate(GenerationRequest(messages: [EngineMessage(role: .user, content: "hi")])) {
-            events.append(event)
+        private func run() async throws -> [GenerationEvent] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            try RemoteEndpoint(baseURL: base, model: "qwen3:8b").save(to: directory)
+            let model = ModelDescriptor(
+                id: "remote--stub", name: "qwen3:8b", repoID: "stub.test:8080/qwen3:8b", source: .remote, kind: .llm, directory: directory,
+                sizeBytes: 0)
+            let engine = RemoteEngine()
+            try await engine.load(model) { _ in }
+            var events: [GenerationEvent] = []
+            for try await event in await engine.generate(GenerationRequest(messages: [EngineMessage(role: .user, content: "hi")])) {
+                events.append(event)
+            }
+            return events
         }
-        return events
+
+        private static let oneModel = (200, #"{"data":[{"id":"qwen3:8b"}]}"#)
+
+        @Test func llamaServerProbeAndStream() async throws {
+            RemoteStub.reset([
+                "/v1/models": (200, #"{"data":[{"id":"model.gguf"}]}"#),
+                "/props": (
+                    200, #"{"chat_template":"{% if tools %}","modalities":{"vision":true},"default_generation_settings":{"n_ctx":8192}}"#
+                ),
+                "/v1/chat/completions": (
+                    200,
+                    """
+                    data: {"choices":[{"delta":{"reasoning_content":"plan"}}]}
+
+                    data: {"choices":[{"delta":{"content":"Hello"}}]}
+
+                    data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}
+
+                    data: [DONE]
+                    """
+                ),
+            ])
+            let probe = try await RemoteEngine.probe(baseURL: base, model: "anything", token: nil)
+            #expect(probe.model == "model.gguf" && probe.supportsTools && probe.supportsVision && probe.contextLength == 8192)
+            let events = try await run()
+            let tokens = events.compactMap { if case .token(let t) = $0 { t } else { nil } }
+            #expect(tokens == ["<think>", "plan", "</think>", "Hello"])
+            #expect(events.contains(.usage(GenerationUsage(promptTokens: 3, completionTokens: 2, tokensPerSecond: 0))))
+            #expect(events.last == .finished(.stop))
+        }
+
+        @Test func missingModelIsReported() async throws {
+            RemoteStub.reset(["/v1/models": (200, #"{"data":[{"id":"llama3:8b"},{"id":"qwen2:7b"}]}"#)])
+            await #expect(throws: RemoteError.self) { try await RemoteEngine.probe(baseURL: base, model: "qwen3:8b", token: nil) }
+        }
+
+        @Test(arguments: [("qwen3", "qwen3:latest"), ("QWEN3:LATEST", "qwen3:latest"), ("model.gguf", "/models/model.gguf")])
+        func namesAreMatchedLoosely(wanted: String, listed: String) async throws {
+            RemoteStub.reset(["/v1/models": (200, #"{"data":[{"id":"\#(listed)"},{"id":"other"}]}"#)])
+            #expect(try await RemoteEngine.probe(baseURL: base, model: wanted, token: nil).model == listed)
+        }
+
+        /// Ollama's own `/v1` has no `/props`: the model connects, only its extras stay unknown.
+        @Test func serverWithoutPropsStillConnects() async throws {
+            RemoteStub.reset(["/v1/models": Self.oneModel])
+            let probe = try await RemoteEngine.probe(baseURL: base, model: "qwen3:8b", token: nil)
+            #expect(probe.model == "qwen3:8b" && !probe.supportsTools && !probe.supportsVision && probe.contextLength == nil)
+        }
+
+        @Test func unreachableServerSaysSo() async throws {
+            RemoteStub.reset(["/v1/models": (200, "<html>not an API</html>")])
+            await #expect(throws: RemoteError.self) { try await RemoteEngine.probe(baseURL: base, model: "x", token: nil) }
+        }
+
+        @Test func toolCallFragmentsAreJoined() async throws {
+            RemoteStub.reset([
+                "/v1/models": Self.oneModel,
+                "/v1/chat/completions": (
+                    200,
+                    """
+                    data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","function":{"name":"web_","arguments":"{\\"q\\":"}}]}}]}
+
+                    data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"search","arguments":"\\"x\\"}"}}]}}]}
+
+                    data: {"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"name":"get_time"}}]}}]}
+
+                    data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}
+
+                    data: [DONE]
+                    """
+                ),
+            ])
+            let calls = try await run().compactMap { if case .toolCall(let c) = $0 { c } else { nil } }
+            #expect(calls.map(\.name) == ["web_search", "get_time"])
+            #expect(calls[0].id == "call_a" && calls[0].argumentsJSON == #"{"q":"x"}"#)
+            #expect(calls[1].argumentsJSON == "{}")
+        }
+
+        @Test func lengthLimitIsReported() async throws {
+            RemoteStub.reset([
+                "/v1/models": Self.oneModel,
+                "/v1/chat/completions": (
+                    200, #"data: {"choices":[{"delta":{"content":"a"},"finish_reason":"length"}]}"# + "\n\ndata: [DONE]\n"
+                ),
+            ])
+            #expect(try await run().last == .finished(.length))
+        }
+
+        @Test func serverErrorBecomesRemoteError() async throws {
+            RemoteStub.reset([
+                "/v1/models": Self.oneModel,
+                "/v1/chat/completions": (500, #"{"error":{"message":"out of memory"}}"#),
+            ])
+            do {
+                _ = try await run()
+                Issue.record("expected an error")
+            } catch let error as RemoteError {
+                #expect(error.description.contains("out of memory"))
+            }
+        }
+
+        @Test func tokenIsSentAsBearer() async throws {
+            RemoteStub.reset(["/v1/models": Self.oneModel, "/props": (200, "{}")])
+            _ = try await RemoteEngine.probe(baseURL: base, model: "qwen3:8b", token: "secret")
+            #expect(!RemoteStub.requests.isEmpty)
+            #expect(RemoteStub.requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer secret" })
+        }
     }
 
-    @Test func llamaServerProbeAndStream() async throws {
-        RemoteStub.responses = [
-            "/v1/models": (200, #"{"data":[{"id":"model.gguf"}]}"#),
-            "/props": (
-                200, #"{"chat_template":"{% if tools %}","modalities":{"vision":true},"default_generation_settings":{"n_ctx":8192}}"#
-            ),
-            "/v1/chat/completions": (
-                200,
-                """
-                data: {"choices":[{"delta":{"reasoning_content":"plan"}}]}
+    @Suite struct HubSearchTests {
+        init() { URLProtocol.registerClass(RemoteStub.self) }
 
-                data: {"choices":[{"delta":{"content":"Hello"}}]}
+        @Test func modelScopeSearchDropsNonMLXBuilds() async throws {
+            RemoteStub.reset([
+                "/api/v1/dolphin/models": (
+                    200,
+                    """
+                    {"Code": 200, "Data": {"Model": {"TotalCount": 3, "Models": [
+                      {"Name": "Qwen3-8B-MLX-4bit", "Path": "mlx-community", "Tags": ["mlx"]},
+                      {"Name": "Qwen3-8B-GGUF", "Path": "unsloth", "Tags": ["gguf"], "Libraries": ["gguf"]},
+                      {"Name": "Qwen3-8B-4bit", "Path": "lmstudio-community", "Libraries": ["mlx"]}
+                    ]}}}
+                    """
+                )
+            ])
+            let found = try await ModelScopeClient(baseURL: URL(string: "http://stub.test")!).search(query: "qwen3")
+            #expect(found.map(\.id) == ["mlx-community/Qwen3-8B-MLX-4bit", "lmstudio-community/Qwen3-8B-4bit"])
+        }
 
-                data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}
-
-                data: [DONE]
-                """
-            ),
-        ]
-        let probe = try await RemoteEngine.probe(baseURL: base, model: "anything", token: nil)
-        #expect(probe.model == "model.gguf" && probe.supportsTools && probe.supportsVision)
-        let events = try await run()
-        let tokens = events.compactMap { if case .token(let t) = $0 { t } else { nil } }
-        #expect(tokens == ["<think>", "plan", "</think>", "Hello"])
-        #expect(events.last == .finished(.stop))
-    }
-
-    @Test func missingModelIsReported() async throws {
-        RemoteStub.responses = ["/v1/models": (200, #"{"data":[{"id":"llama3:8b"},{"id":"qwen2:7b"}]}"#)]
-        await #expect(throws: RemoteError.self) { try await RemoteEngine.probe(baseURL: base, model: "qwen3:8b", token: nil) }
+        @Test func huggingFaceSearchAsksForMLXAndDecodes() async throws {
+            RemoteStub.reset([
+                "/api/models": (200, #"[{"id":"mlx-community/Qwen3-8B-4bit","tags":["mlx"],"gated":false,"downloads":10}]"#)
+            ])
+            let found = try await HubClient(baseURL: URL(string: "http://stub.test")!).search(query: "qwen3", author: "mlx-community")
+            #expect(found.map(\.id) == ["mlx-community/Qwen3-8B-4bit"] && found[0].isMLX)
+            let url = try #require(RemoteStub.requests.last?.url?.absoluteString)
+            #expect(url.contains("filter=mlx") && url.contains("author=mlx-community") && url.contains("search=qwen3"))
+        }
     }
 }
