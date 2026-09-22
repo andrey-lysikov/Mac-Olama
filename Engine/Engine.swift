@@ -47,16 +47,28 @@ public struct SamplingParams: Sendable, Equatable, Codable {
     public var maxTokens: Int
     public var repetitionPenalty: Double?
     public var seed: UInt64?
+    /// 0 turns it off.
+    public var topK: Int = 0
+    /// 0 turns it off.
+    public var minP: Double = 0
+    public var presencePenalty: Double?
+    public var frequencyPenalty: Double?
 
     /// 8192 by default: a reasoning model spends thousands of tokens before the visible answer, and a lower limit
     /// cuts the reply off while it is still thinking — which reads as no answer at all.
-    public init(temperature: Double = 0.7, topP: Double = 0.9, maxTokens: Int = 8192, repetitionPenalty: Double? = nil, seed: UInt64? = nil)
-    {
+    public init(
+        temperature: Double = 0.7, topP: Double = 0.9, maxTokens: Int = 8192, repetitionPenalty: Double? = nil, seed: UInt64? = nil,
+        topK: Int = 0, minP: Double = 0, presencePenalty: Double? = nil, frequencyPenalty: Double? = nil
+    ) {
         self.temperature = temperature
         self.topP = topP
         self.maxTokens = maxTokens
         self.repetitionPenalty = repetitionPenalty
         self.seed = seed
+        self.topK = topK
+        self.minP = minP
+        self.presencePenalty = presencePenalty
+        self.frequencyPenalty = frequencyPenalty
     }
 }
 
@@ -123,10 +135,13 @@ public struct GenerationRequest: Sendable {
     /// The model may reason before answering. Families whose chat template makes thinking optional (Gemma 4, Qwen3)
     /// read this as `enable_thinking`; one that always reasons ignores it. Off, Gemma 4 does not think at all.
     public var thinks: Bool
+    /// A prompt longer than `contextTokens` fails with `EngineError.promptTooLong` instead of sliding the window over
+    /// its beginning. API clients ask for this; the chat trims its own history first.
+    public var rejectsLongPrompt: Bool
 
     public init(
         messages: [EngineMessage], tools: [ToolSpec] = [], sampling: SamplingParams = .init(), keepAlive: KeepAlive = .default,
-        chatID: UUID? = nil, contextTokens: Int? = nil, speculates: Bool = false, thinks: Bool = false
+        chatID: UUID? = nil, contextTokens: Int? = nil, speculates: Bool = false, thinks: Bool = false, rejectsLongPrompt: Bool = false
     ) {
         self.messages = messages
         self.tools = tools
@@ -136,6 +151,7 @@ public struct GenerationRequest: Sendable {
         self.contextTokens = contextTokens
         self.speculates = speculates
         self.thinks = thinks
+        self.rejectsLongPrompt = rejectsLongPrompt
     }
 }
 
@@ -174,6 +190,7 @@ public enum EngineError: DescribedError, Equatable, Sendable {
     case loadFailed(String)
     case generationFailed(String)
     case busy
+    case promptTooLong(tokens: Int, limit: Int)
 }
 
 // "\(error)" is what the UI shows, so the cases read as sentences instead of enum dumps.
@@ -183,6 +200,8 @@ extension EngineError {
         case .noModelLoaded: String(localized: "No model is loaded.")
         case .imagesNotSupported: String(localized: "This model does not accept images.")
         case .busy: String(localized: "The model is busy with another request.")
+        case .promptTooLong(let tokens, let limit):
+            String(localized: "The prompt is \(tokens) tokens long, but the context window holds \(limit).")
         case .generationFailed(let detail): String(localized: "Generation failed: \(detail)")
         case .loadFailed(let detail):
             // MLX reports a checkpoint/architecture mismatch as keyNotFound(path: [...]) for the first missing weight.
@@ -282,6 +301,7 @@ public actor EngineManager {
     private let engine: any InferenceEngine
     private var subscribers: [UUID: AsyncStream<EngineState>.Continuation] = [:]
     private var idleTask: Task<Void, Never>?
+    /// Set by a request with `keep_alive: -1`; the next request that asks for anything else, or an unload, clears it.
     private var keepForever = false
     /// Generation queue: each request waits for the previous one.
     private var queueTail: Task<Void, Never>?
@@ -390,6 +410,7 @@ public actor EngineManager {
     public func unload() async {
         idleTask?.cancel()
         idleTask = nil
+        keepForever = false
         await engine.cancelCurrent()
         await engine.unload()
         state = .unloaded
@@ -422,7 +443,8 @@ public actor EngineManager {
         let previous = queueTail
         let task = Task { [weak self] in
             _ = await previous?.value
-            guard let self else { continuation.finish(throwing: CancellationError()); return }
+            // A client that gave up while queued must not load a model or start a reply nobody reads.
+            guard let self, !Task.isCancelled else { continuation.finish(throwing: CancellationError()); return }
             await self.run(model: model, request: request, continuation: continuation)
         }
         queueTail = task
@@ -442,7 +464,6 @@ public actor EngineManager {
             continuation.finish(throwing: error)
             return
         }
-        applyKeepAlivePolicy(request.keepAlive)
         state = .generating(modelID: model.id, chatID: request.chatID, tokensPerSecond: 0)
         var tokenCount = 0
         let start = ContinuousClock.now
@@ -467,25 +488,27 @@ public actor EngineManager {
         } catch {
             continuation.finish(throwing: error)
         }
-        finishGeneration(model: model, keepAlive: request.keepAlive)
+        // Awaited here, inside this request's turn in the queue: the next request cannot start before the unload.
+        await finishGeneration(model: model, keepAlive: request.keepAlive)
     }
 
-    private func applyKeepAlivePolicy(_ keepAlive: KeepAlive) {
-        if case .forever = keepAlive { keepForever = true }
-    }
-
-    private func finishGeneration(model: ModelDescriptor, keepAlive: KeepAlive) {
+    /// Each request's `keep_alive` replaces the previous one's, as in Ollama; `.default` returns to the idle timer.
+    private func finishGeneration(model: ModelDescriptor, keepAlive: KeepAlive) async {
         switch keepAlive {
         case .unloadNow:
-            Task { await unload() }
+            await unload()
         case .forever:
             keepForever = true
+            // The load armed the idle timer before this request's keep-alive was known.
+            idleTask?.cancel()
+            idleTask = nil
             state = .ready(modelID: model.id)
         case .seconds(let s):
             keepForever = false
             state = .ready(modelID: model.id)
             scheduleIdleUnload(after: s)
         case .default:
+            keepForever = false
             state = .ready(modelID: model.id)
             scheduleIdleUnload()
         }

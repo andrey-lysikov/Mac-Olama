@@ -46,7 +46,10 @@ final class APIFixture {
     private(set) var server: APIServer!
     private(set) var port = 0
 
-    init(script: [GenerationEvent] = APIFixture.answer, maxQueued: Int = 8) async throws {
+    init(
+        script: [GenerationEvent] = APIFixture.answer, maxQueued: Int = 8,
+        defaults: @escaping @Sendable (ModelDescriptor) async -> APIModelDefaults = { APIModelDefaults(contextTokens: $0.contextLength) }
+    ) async throws {
         let folder = directory.appendingPathComponent(ModelDescriptor.directoryName(forRepo: Self.repoID))
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try ModelManifest(
@@ -61,7 +64,8 @@ final class APIFixture {
         for _ in 0..<20 {
             let port = Int.random(in: 20000..<60000)
             let server = APIServer(
-                configuration: .init(port: port, version: "9.9", maxQueued: maxQueued), catalog: catalog, engine: manager)
+                configuration: .init(port: port, version: "9.9", maxQueued: maxQueued), catalog: catalog, engine: manager,
+                defaults: defaults)
             if (try? server.start()) != nil {
                 self.server = server
                 self.port = port
@@ -235,17 +239,12 @@ final class APIFixture {
         #expect(status == 400)
     }
 
-    @Test func pullNeedsARepositoryAndADownloader() async throws {
+    /// Models are downloaded and removed in the app only.
+    @Test func pullAndDeleteAreRefused() async throws {
         let api = try await APIFixture()
-        #expect(try await api.call("POST", "/api/pull", #"{"model":"llama3"}"#).status == 400)
-        #expect(try await api.call("POST", "/api/pull", #"{"model":"mlx-community/Qwen3-8B-4bit"}"#).status == 501)
-    }
-
-    @Test func deleteRemovesTheModel() async throws {
-        let api = try await APIFixture()
-        #expect(try await api.call("DELETE", "/api/delete", #"{"model":"qwen3-8b-4bit"}"#).status == 200)
-        #expect((try await api.object("GET", "/api/tags").json["models"] as? [Any])?.isEmpty == true)
-        #expect(try await api.call("DELETE", "/api/delete", #"{"model":"qwen3-8b-4bit"}"#).status == 404)
+        #expect(try await api.call("POST", "/api/pull", #"{"model":"mlx-community/Qwen3-8B-4bit"}"#).status == 403)
+        #expect(try await api.call("DELETE", "/api/delete", #"{"model":"qwen3-8b-4bit"}"#).status == 403)
+        #expect((try await api.object("GET", "/api/tags").json["models"] as? [Any])?.count == 1)
     }
 
     @Test(arguments: ["/api/embed", "/api/embeddings", "/api/create", "/api/push", "/api/copy"])

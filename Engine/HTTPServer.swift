@@ -48,7 +48,8 @@ public struct HTTPResponse: Sendable {
 
     static let reasons: [Int: String] = [
         200: "OK", 204: "No Content", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found",
-        405: "Method Not Allowed", 500: "Internal Server Error", 501: "Not Implemented", 503: "Service Unavailable",
+        405: "Method Not Allowed", 413: "Content Too Large", 500: "Internal Server Error", 501: "Not Implemented",
+        503: "Service Unavailable",
     ]
 }
 
@@ -126,7 +127,10 @@ public final class HTTPServer: Sendable {
     private let running = Mutex(false)
     private let cors = Mutex<CORSPolicy>(.localhost)
     private let activeConnections = Mutex(0)
-    /// Thread-per-connection needs a ceiling; beyond it new clients get an immediate 503.
+    /// Connections waiting for their next request, and since when: at the ceiling the oldest is closed for a new client.
+    private let idleConnections = Mutex<[Int32: ContinuousClock.Instant]>([:])
+    /// Thread-per-connection needs a ceiling; beyond it the longest-idle keep-alive connection makes room, and only
+    /// when every connection is busy does a new client get a 503.
     private static let maxConnections = 64
     /// A client that stops reading fails its send() after this instead of parking the thread forever.
     private static let sendTimeoutSeconds = 30
@@ -191,8 +195,11 @@ public final class HTTPServer: Sendable {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { accept(fd, $0, &len) }
             }
             guard client >= 0 else { if errno == EINTR { continue } else { break } }
-            if activeConnections.withLock({ $0 }) >= Self.maxConnections {
-                let reply = Data("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
+            if activeConnections.withLock({ $0 }) >= Self.maxConnections, !closeOldestIdleConnection() {
+                let body = #"{"error":"server busy: too many connections"}"#
+                let reply = Data(
+                    ("HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\n"
+                        + "Retry-After: 1\r\nConnection: close\r\n\r\n" + body).utf8)
                 _ = reply.withUnsafeBytes { send(client, $0.baseAddress, $0.count, 0) }
                 close(client)
                 continue
@@ -216,13 +223,43 @@ public final class HTTPServer: Sendable {
         }
     }
 
+    /// Shuts the longest-idle keep-alive connection down; its thread sees the end of the stream and exits. The owner
+    /// leaves the map under the same lock before it closes the descriptor, so a reused number is never shut here.
+    private func closeOldestIdleConnection() -> Bool {
+        idleConnections.withLock { idle in
+            guard let oldest = idle.min(by: { $0.value < $1.value })?.key else { return false }
+            idle[oldest] = nil
+            shutdown(oldest, Int32(SHUT_RDWR))
+            return true
+        }
+    }
+
     // Connection
 
     private func serve(_ fd: Int32) {
-        defer { close(fd) }
+        defer {
+            idleConnections.withLock { $0[fd] = nil }
+            close(fd)
+        }
         let connection = Connection(fd: fd)
         while running.withLock({ $0 }) {
-            guard let request = try? connection.readRequest(maxBody: configuration.maxBodyBytes) else { return }
+            idleConnections.withLock { $0[fd] = .now }
+            let parsed: Connection.Parsed?
+            do {
+                // Busy from the first byte on: an evicted connection must not be one that is sending a request.
+                parsed = try connection.readRequest(maxBody: configuration.maxBodyBytes) {
+                    idleConnections.withLock { $0[fd] = nil }
+                }
+            } catch Connection.ReadError.tooLarge {
+                let limit = configuration.maxBodyBytes >> 20
+                let response = HTTPResponse.text(
+                    "{\"error\":\"request body is larger than \(limit) MB\"}", status: 413, contentType: "application/json")
+                _ = connection.write(response, isHead: false)
+                return
+            } catch {
+                return
+            }
+            guard let request = parsed else { return }
             let wantsClose = request.request.headers["connection"]?.lowercased() == "close" || request.version == "HTTP/1.0"
             let origin = request.request.headers["origin"]
             let allowedOrigin = cors.withLock { $0 }.allowedOrigin(for: origin)
@@ -232,7 +269,7 @@ public final class HTTPServer: Sendable {
             if origin != nil, allowedOrigin == nil, !["GET", "HEAD", "OPTIONS"].contains(request.request.method) {
                 response = HTTPResponse.text("{\"error\":\"origin not allowed\"}", status: 403, contentType: "application/json")
             } else {
-                response = handle(request.request)
+                response = handle(request.request, fd: fd)
             }
             var headers = response.headers
             headers["Server"] = configuration.serverName
@@ -245,8 +282,10 @@ public final class HTTPServer: Sendable {
         }
     }
 
-    /// Runs the async handler on a cooperative task and blocks this connection thread until it returns.
-    private func handle(_ request: HTTPRequest) -> HTTPResponse {
+    /// Runs the async handler on a cooperative task and blocks this connection thread until it returns. A client that
+    /// hangs up meanwhile (a request without streaming, still generating) cancels the handler instead of leaving a
+    /// reply nobody reads at the head of the model's queue.
+    private func handle(_ request: HTTPRequest, fd: Int32) -> HTTPResponse {
         if request.method == "OPTIONS" {
             let origin = request.headers["origin"]
             guard origin == nil || cors.withLock({ $0 }).allowedOrigin(for: origin) != nil else {
@@ -266,7 +305,7 @@ public final class HTTPServer: Sendable {
         // A lock rather than `Mutex`: the result crosses into an escaping closure, and `Mutex` cannot be captured there.
         let result = OSAllocatedUnfairLock(initialState: HTTPResponse(status: 500))
         let semaphore = DispatchSemaphore(value: 0)
-        Task.detached {
+        let task = Task.detached {
             let response: HTTPResponse
             do { response = try await handler(request) } catch {
                 response = mapper?(error) ?? HTTPResponse.text("{\"error\":\"\(error)\"}", status: 500, contentType: "application/json")
@@ -274,7 +313,9 @@ public final class HTTPServer: Sendable {
             result.withLock { $0 = response }
             semaphore.signal()
         }
-        semaphore.wait()
+        while semaphore.wait(timeout: .now() + .milliseconds(250)) == .timedOut {
+            if Connection.peerClosed(fd) { task.cancel() }
+        }
         return result.withLock { $0 }
     }
 }
@@ -286,10 +327,23 @@ private final class Connection {
         var version: String
     }
 
+    enum ReadError: Error { case tooLarge }
+
     let fd: Int32
     private var buffer = Data()
 
     init(fd: Int32) { self.fd = fd }
+
+    /// Whether the client has closed its side: readable with nothing to read, or an error. Pipelined bytes of a next
+    /// request mean it is still there.
+    static func peerClosed(_ fd: Int32) -> Bool {
+        var entry = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        guard poll(&entry, 1, 0) > 0 else { return false }
+        if entry.revents & Int16(POLLHUP | POLLERR) != 0 { return true }
+        var byte: UInt8 = 0
+        let n = recv(fd, &byte, 1, MSG_PEEK | MSG_DONTWAIT)
+        return n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
+    }
 
     private func fill() -> Bool {
         var chunk = [UInt8](repeating: 0, count: 64 << 10)
@@ -299,12 +353,16 @@ private final class Connection {
         return true
     }
 
-    func readRequest(maxBody: Int) throws -> Parsed? {
+    /// `started` runs once the first byte of the request is here (at once for a pipelined one).
+    func readRequest(maxBody: Int, started: () -> Void = {}) throws -> Parsed? {
+        if !buffer.isEmpty { started() }
         // Head: up to the blank line.
         var headEnd: Range<Data.Index>?
         while true {
             if let r = buffer.range(of: Data([0x0D, 0x0A, 0x0D, 0x0A])) { headEnd = r; break }
+            let wasEmpty = buffer.isEmpty
             guard buffer.count < 64 << 10, fill() else { return nil }
+            if wasEmpty { started() }
         }
         guard let headEnd else { return nil }
         let headData = buffer.subdata(in: buffer.startIndex..<headEnd.lowerBound)
@@ -326,7 +384,7 @@ private final class Connection {
         if headers["transfer-encoding"]?.lowercased().contains("chunked") == true {
             body = try readChunkedBody(maxBody: maxBody)
         } else if let lengthText = headers["content-length"], let length = Int(lengthText) {
-            guard length <= maxBody else { return nil }
+            guard length <= maxBody else { throw ReadError.tooLarge }
             while buffer.count < length { guard fill() else { return nil } }
             body = buffer.prefix(length)
             buffer.removeFirst(length)
@@ -356,7 +414,7 @@ private final class Connection {
             while buffer.count < size + 2 { guard fill() else { return body } }
             body.append(buffer.prefix(size))
             buffer.removeFirst(size + 2)
-            guard body.count <= maxBody else { return body }
+            guard body.count <= maxBody else { throw ReadError.tooLarge }
         }
     }
 

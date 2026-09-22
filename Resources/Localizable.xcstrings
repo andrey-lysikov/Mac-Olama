@@ -3402,6 +3402,16 @@
         }
       }
     },
+    "The prompt is %lld tokens long, but the context window holds %lld." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Промпт длиной %lld токенов, а окно контекста вмещает %lld."
+          }
+        }
+      }
+    },
     "The repository lists an unsafe file path (%@) and cannot be installed." : {
       "localizations" : {
         "ru" : {

@@ -4,6 +4,8 @@
 
 - Model search lists only MLX builds for Apple Silicon
 - Connect by API speaks only the OpenAI-compatible API
+- API: reasoning comes apart from the answer (`thinking`, `reasoning_content`)
+- API: pull and delete are refused, models are managed in the app
 
 ## 0.4
 

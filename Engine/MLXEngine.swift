@@ -2,6 +2,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 
 import CoreImage
+import CryptoKit
 import Foundation
 import MLX
 import MLXLLM
@@ -17,8 +18,15 @@ public actor MLXEngine: InferenceEngine {
     public private(set) var loadedModel: ModelDescriptor?
     private var container: ModelContainer?
     private let current = GenerationTaskBox()
-    /// The model's cache after the last generation, reused when the next prompt continues it (see `PromptSession`).
-    private var session: PromptSession?
+    /// Caches of recent generations, least recently used first: a prompt that continues one of them (the next turn of
+    /// that chat, or of an API client's conversation) prefills only its remainder (see `PromptSession`).
+    private var sessions: [PromptSession] = []
+    /// Several chats stay warm; the byte budget keeps idle caches from crowding out the model on a small Mac.
+    private static let maxSessions = 4
+    private static let sessionBudgetBytes = max(1 << 30, (GPU.maxRecommendedWorkingSetBytes() ?? 0) / 6)
+    /// Token ids that stand for images in the prompt (from `config.json`); empty when the model does not say, which
+    /// keeps image prompts out of cache reuse.
+    private var mediaTokenIDs: Set<Int> = []
     /// Off switch for cache reuse. Symptom of a cache gone wrong: after tool rounds (not in the first round) the answer turns
     /// incoherent, repeats itself or loses the question, while the same chat regenerated with this off is fine.
     private static let reusesPromptCache = true
@@ -33,7 +41,6 @@ public actor MLXEngine: InferenceEngine {
     private var drafterState: DrafterState = .unknown
     /// Metal buffer cache limit after generation (bytes); nil keeps the MLX default.
     private let cacheLimitBytes: Int?
-    private let imageResize = CGSize(width: 1024, height: 1024)
 
     public init(cacheLimitBytes: Int? = 512 * 1024 * 1024) {
         self.cacheLimitBytes = cacheLimitBytes
@@ -64,6 +71,7 @@ public actor MLXEngine: InferenceEngine {
             if let cacheLimitBytes { Memory.cacheLimit = cacheLimitBytes }
             container = loaded
             loadedModel = model
+            mediaTokenIDs = Self.mediaTokenIDs(in: model.directory)
             progress(1)
         } catch is CancellationError {
             throw CancellationError()
@@ -76,7 +84,8 @@ public actor MLXEngine: InferenceEngine {
         current.cancel()
         container = nil
         loadedModel = nil
-        session = nil
+        sessions = []
+        mediaTokenIDs = []
         drafterState = .unknown
         Memory.clearCache()  // release Metal buffers so memory actually returns to the system
     }
@@ -87,7 +96,7 @@ public actor MLXEngine: InferenceEngine {
 
     // Generate
 
-    // The task body mutates actor state (`session`, `drafterState`), so unlike the other engines it cannot move into
+    // The task body mutates actor state (`sessions`, `drafterState`), so unlike the other engines it cannot move into
     // the nonisolated `AsyncThrowingStream.engine` helper: the inline `Task` inherits this actor's isolation.
     public func generate(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
         guard let container, let model = loadedModel else { return .failed(EngineError.noModelLoaded) }
@@ -100,17 +109,24 @@ public actor MLXEngine: InferenceEngine {
             maxKVSize: request.contextTokens,  // rotating KV cache: memory stays bounded by the chosen context window
             temperature: Float(request.sampling.temperature),
             topP: Float(request.sampling.topP),
+            topK: request.sampling.topK,
+            minP: Float(request.sampling.minP),
             repetitionPenalty: request.sampling.repetitionPenalty.map(Float.init),
+            presencePenalty: request.sampling.presencePenalty.map(Float.init),
+            frequencyPenalty: request.sampling.frequencyPenalty.map(Float.init),
             seed: request.sampling.seed
         )
-        let resize = imageResize
         let task = Task {
             do {
-                let userInput = try Self.makeUserInput(request, resize: resize)
+                let userInput = try Self.makeUserInput(request)
                 let input = try await container.prepare(input: userInput)
+                let promptTokens = input.text.tokens.asArray(Int32.self).map(Int.init)
+                if request.rejectsLongPrompt, let limit = request.contextTokens, promptTokens.count >= limit {
+                    throw EngineError.promptTooLong(tokens: promptTokens.count, limit: limit)
+                }
                 // Some templates open the reasoning block in the prompt itself (`…assistant\n<think>\n`), so the reply
                 // carries only the closing tag. Re-open it in the stream, so the transcript hides the reasoning while it is written.
-                let promptTail = input.text.tokens.asArray(Int32.self).suffix(8).map(Int.init)
+                let promptTail = Array(promptTokens.suffix(8))
                 let promptEnd = await container.perform(values: promptTail) { context, ids in
                     context.tokenizer.decode(tokenIds: ids, skipSpecialTokens: false)
                 }
@@ -119,16 +135,16 @@ public actor MLXEngine: InferenceEngine {
                     continuation.yield(.token(block.open))
                 }
                 // Only the part of the prompt the cache does not hold yet is prefilled (the tool result of the next round,
-                // the next question). Images are always prefilled whole: a cached prefix cannot carry them.
-                let promptTokens = input.text.tokens.asArray(Int32.self).map(Int.init)
-                let reusable = Self.reusesPromptCache && input.image == nil && input.video == nil && input.audio == nil
-                let previous = reusable ? self.session : nil
-                self.session = nil  // owned by this generation until it ends; a failure leaves none
+                // the next question). A cache holding images is reused only for the same images, and only when every
+                // image token lies in the reused part: the text-only remainder cannot carry pixels.
+                let images = PromptSession.imageKeys(request)
+                let reusable = Self.reusesPromptCache && input.video == nil && input.audio == nil
+                let previous = reusable ? self.takeSession(for: promptTokens, images: images) : nil
                 let drafter = request.speculates ? await self.drafter(temperature: request.sampling.temperature) : nil
                 let run = try await container.perform(nonSendable: StartInput(input: input, drafter: drafter)) { context, start in
                     try Self.start(
-                        input: start.input, promptTokens: promptTokens, previous: previous, parameters: parameters, context: context,
-                        drafter: start.drafter?.model)
+                        input: start.input, promptTokens: promptTokens, images: images, previous: previous, parameters: parameters,
+                        context: context, drafter: start.drafter?.model)
                 }
                 let generation = run.stream
                 var finish: FinishReason = .stop
@@ -168,7 +184,7 @@ public actor MLXEngine: InferenceEngine {
                 // The loop may still be stepping after a cancel: the cache is read only once it has stopped.
                 run.loop.cancel()
                 await run.loop.value
-                if reusable { self.session = run.session.completed(with: run.recorder.tokens) }
+                if reusable, let done = run.session.completed(with: run.recorder.tokens) { self.keep(done) }
                 continuation.yield(.finished(finish))
                 continuation.finish()
             } catch is CancellationError {
@@ -259,13 +275,13 @@ public actor MLXEngine: InferenceEngine {
     /// Picks what to prefill: the suffix after a reused prefix, or the whole prompt on a fresh cache, and how to
     /// decode it. Runs inside `perform`, i.e. with the model to itself for the prefill.
     private static func start(
-        input: LMInput, promptTokens: [Int], previous: PromptSession?, parameters: GenerateParameters, context: ModelContext,
-        drafter: (any MTPDrafterModel)?
+        input: LMInput, promptTokens: [Int], images: [String], previous: (session: PromptSession, reuse: Int)?,
+        parameters: GenerateParameters, context: ModelContext, drafter: (any MTPDrafterModel)?
     ) throws -> Run {
         var cache: [KVCache]
         var state: LMOutput.State?
         var kept = 0
-        if let previous, let reuse = previous.reusablePrefix(for: promptTokens) {
+        if let (previous, reuse) = previous {
             (cache, state, kept) = (previous.cache, previous.state, reuse)
             // Trimming must leave the carried state valid too. Qwen-VL keeps its rope anchor offset-relative, so it survives;
             // a model storing absolute positions would misplace the suffix (garbled text right after the reused part).
@@ -288,7 +304,7 @@ public actor MLXEngine: InferenceEngine {
                 iterator: RecordingTokenIterator(base: iterator, recorder: recorder))
             return Run(
                 stream: stream, loop: loop, recorder: recorder,
-                session: PromptSession(cache: cache, state: iterator.state, tokens: promptTokens))
+                session: PromptSession(cache: cache, state: iterator.state, tokens: promptTokens, images: images))
         }
         let iterator = try TokenIterator(input: suffix, model: context.model, cache: cache, state: state, parameters: parameters)
         // Read right after the prefill, as mlx-swift-lm's ChatSession does: models that anchor positions (Qwen-VL rope
@@ -297,10 +313,57 @@ public actor MLXEngine: InferenceEngine {
         let (stream, loop) = generateTask(
             promptTokenCount: prefill, modelConfiguration: context.configuration, tokenizer: context.tokenizer,
             iterator: RecordingTokenIterator(base: iterator, recorder: recorder))
-        return Run(stream: stream, loop: loop, recorder: recorder, session: PromptSession(cache: cache, state: state, tokens: promptTokens))
+        return Run(
+            stream: stream, loop: loop, recorder: recorder,
+            session: PromptSession(cache: cache, state: state, tokens: promptTokens, images: images))
     }
 
-    private static func makeUserInput(_ request: GenerationRequest, resize: CGSize) throws -> UserInput {
+    // Prompt cache pool
+
+    /// Takes the cache this prompt can continue out of the pool (it is this generation's until it ends; a failure
+    /// leaves none). The next turn of a conversation covers that cache's whole prompt; a cache from another chat that
+    /// shares only the system prompt is not cut down for it while the pool has room, since that chat will be back.
+    private func takeSession(for prompt: [Int], images: [String]) -> (session: PromptSession, reuse: Int)? {
+        let full = sessions.count >= Self.maxSessions
+        var best: (index: Int, reuse: Int)?
+        for (index, session) in sessions.enumerated() {
+            guard session.images == images, let reuse = session.reusablePrefix(for: prompt) else { continue }
+            if !images.isEmpty, prompt[reuse...].contains(where: mediaTokenIDs.contains) || mediaTokenIDs.isEmpty { continue }
+            let continues = reuse >= session.promptCount || reuse * 2 >= session.tokens.count
+            guard continues || (full && index == 0) else { continue }
+            if reuse > (best?.reuse ?? 0) { best = (index, reuse) }
+        }
+        guard let best else { return nil }
+        return (sessions.remove(at: best.index), best.reuse)
+    }
+
+    /// Adds a finished generation's cache as the most recent, evicting the least recent past the count or byte budget.
+    private func keep(_ session: PromptSession) {
+        sessions.append(session)
+        while sessions.count > Self.maxSessions
+            || (sessions.count > 1 && sessions.reduce(0, { $0 + $1.bytes }) > Self.sessionBudgetBytes)
+        {
+            sessions.removeFirst()
+        }
+    }
+
+    /// Image, video and audio placeholder ids a VLM's `config.json` declares at its root (`image_token_id`,
+    /// `image_token_index`, `boi_token_index`, `vision_start_token_id`…).
+    private static func mediaTokenIDs(in directory: URL) -> Set<Int> {
+        guard let data = try? Data(contentsOf: directory.appending(path: "config.json")),
+            let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return [] }
+        let media = ["image", "video", "vision", "audio", "boi", "eoi", "boa", "eoa"]
+        var ids: Set<Int> = []
+        for (key, value) in root where key.hasSuffix("_token_id") || key.hasSuffix("_token_index") || key.hasSuffix("_token_ids") {
+            guard media.contains(where: key.contains) else { continue }
+            if let id = value as? Int { ids.insert(id) }
+            if let list = value as? [Int] { ids.formUnion(list) }
+        }
+        return ids
+    }
+
+    private static func makeUserInput(_ request: GenerationRequest) throws -> UserInput {
         var chat: [MLXLMCommon.Chat.Message] = []
         for m in request.messages {
             let images: [UserInput.Image] = try m.images.map { img in
@@ -333,9 +396,9 @@ public actor MLXEngine: InferenceEngine {
                 ] as [String: any Sendable]
             }
         // `enable_thinking` is what a template with optional reasoning reads; Gemma 4 writes no thought channel without
-        // it, and one that always reasons ignores the key.
-        return UserInput(
-            chat: chat, processing: .init(resize: resize), tools: tools, additionalContext: ["enable_thinking": request.thinks])
+        // it, and one that always reasons ignores the key. No resize: each model's processor scales images to what its
+        // vision tower was trained on (Qwen-VL within its pixel budget, Gemma at its fixed size).
+        return UserInput(chat: chat, tools: tools, additionalContext: ["enable_thinking": request.thinks])
     }
 
     /// Plain Sendable representation of a JSONValue tree (String/Int/Double/Bool/arrays/dictionaries).
@@ -370,17 +433,29 @@ public actor MLXEngine: InferenceEngine {
 /// next step's input). A new prompt that starts with these tokens only needs its remainder prefilled.
 // Ways it can go wrong: the token list drifts from what the cache holds (an iterator in mlx-swift-lm that feeds tokens it
 // does not yield, or stops feeding the last one), which `completed` catches through the attention offset; a recurrent
-// cache (Mamba) shared by two generations at once, which the `session = nil` hand-over in `generate` prevents; and one
+// cache (Mamba) shared by two generations at once, which taking it out of the pool (`takeSession`) prevents; and one
 // word of difference from a cold run, which is not an error: chunked prefill rounds differently in a 4-bit model.
 private final class PromptSession: @unchecked Sendable {
     let cache: [KVCache]
     let state: LMOutput.State?
     let tokens: [Int]
+    /// How many of `tokens` were the prompt; the rest were generated.
+    let promptCount: Int
+    /// Fingerprints of the images the prompt carried, in order: equal token ids do not mean equal pixels.
+    let images: [String]
+    /// What the cache holds in memory, counted once the generation has ended.
+    private(set) lazy var bytes: Int = cache.reduce(0) { total, layer in total + layer.state.reduce(0) { $0 + $1.nbytes } }
 
-    init(cache: [KVCache], state: LMOutput.State?, tokens: [Int]) {
+    init(cache: [KVCache], state: LMOutput.State?, tokens: [Int], promptCount: Int? = nil, images: [String]) {
         self.cache = cache
         self.state = state
         self.tokens = tokens
+        self.promptCount = promptCount ?? tokens.count
+        self.images = images
+    }
+
+    static func imageKeys(_ request: GenerationRequest) -> [String] {
+        request.messages.flatMap(\.images).map { SHA256.hash(data: $0.data).map { String(format: "%02x", $0) }.joined() }
     }
 
     /// How many leading tokens of `prompt` the cache can keep. A cache with recurrent layers (Qwen 3.5/3.6: Mamba-style
@@ -400,7 +475,7 @@ private final class PromptSession: @unchecked Sendable {
         let all = tokens + generated
         let attention = cache.first { !($0 is ArraysCache) }
         guard attention?.offset == all.count else { return nil }
-        return PromptSession(cache: cache, state: state, tokens: all)
+        return PromptSession(cache: cache, state: state, tokens: all, promptCount: tokens.count, images: images)
     }
 }
 

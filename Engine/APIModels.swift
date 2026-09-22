@@ -48,6 +48,15 @@ public enum JSON: Codable, Sendable, Equatable {
     public static func parse(_ text: String) -> JSON {
         (try? JSONCoding.plainDecoder.decode(JSON.self, from: Data(text.utf8))) ?? .object([:])
     }
+
+    /// `stop` arrives as one string or a list of them.
+    public var strings: [String] {
+        switch self {
+        case .string(let s): [s]
+        case .array(let a): a.compactMap { if case .string(let s) = $0 { s } else { nil } }
+        default: []
+        }
+    }
 }
 
 /// Ollama `options` map → sampling params. Unknown keys are ignored.
@@ -55,18 +64,26 @@ public struct OllamaOptions: Codable, Sendable {
     public var temperature: Double?
     public var top_p: Double?
     public var top_k: Int?
+    public var min_p: Double?
     public var num_predict: Int?
     public var seed: Int?
     public var repeat_penalty: Double?
+    public var presence_penalty: Double?
+    public var frequency_penalty: Double?
     public var num_ctx: Int?
+    public var stop: [String]?
 
     public func sampling(default base: SamplingParams) -> SamplingParams {
         var s = base
         if let temperature { s.temperature = temperature }
         if let top_p { s.topP = top_p }
+        if let top_k { s.topK = max(0, top_k) }
+        if let min_p { s.minP = min_p }
         if let num_predict, num_predict > 0 { s.maxTokens = num_predict }
         if let seed { s.seed = UInt64(max(0, seed)) }
         if let repeat_penalty { s.repetitionPenalty = repeat_penalty }
+        if let presence_penalty { s.presencePenalty = presence_penalty }
+        if let frequency_penalty { s.frequencyPenalty = frequency_penalty }
         return s
     }
 }
@@ -111,13 +128,18 @@ public struct OllamaMessage: Codable, Sendable {
     public var role: String
     /// Optional so that a streamed chunk (or a request) without it still decodes; always set on responses.
     public var content: String?
+    /// The model's reasoning, apart from the answer in `content`; read from requests only to be dropped.
+    public var thinking: String?
     public var images: [String]?  // base64
     public var tool_calls: [OllamaToolCall]?
     public var tool_name: String?
 
-    public init(role: String, content: String, images: [String]? = nil, tool_calls: [OllamaToolCall]? = nil) {
+    public init(
+        role: String, content: String, thinking: String? = nil, images: [String]? = nil, tool_calls: [OllamaToolCall]? = nil
+    ) {
         self.role = role
         self.content = content
+        self.thinking = thinking
         self.images = images
         self.tool_calls = tool_calls
     }
@@ -140,7 +162,10 @@ public struct OllamaChatRequest: Codable, Sendable {
     public var tools: [OllamaTool]?
     public var options: OllamaOptions?
     public var keep_alive: KeepAliveValue?
-    public var think: Bool?
+    /// `true`/`false`, or a level (`"low"`, `"high"`) that some models take; any level turns thinking on.
+    public var think: JSON?
+    /// `"json"` or a JSON schema.
+    public var format: JSON?
 }
 
 public struct OllamaGenerateRequest: Codable, Sendable {
@@ -152,6 +177,19 @@ public struct OllamaGenerateRequest: Codable, Sendable {
     public var options: OllamaOptions?
     public var keep_alive: KeepAliveValue?
     public var raw: Bool?
+    public var think: JSON?
+    public var format: JSON?
+}
+
+extension JSON {
+    /// Ollama's `think`: a flag or a level.
+    public var thinkFlag: Bool? {
+        switch self {
+        case .bool(let b): b
+        case .string(let s): !["", "false", "none", "off"].contains(s.lowercased())
+        default: nil
+        }
+    }
 }
 
 public struct OllamaModelDetails: Codable, Sendable {
@@ -268,6 +306,7 @@ public struct OllamaGenerateChunk: Codable, Sendable {
     public var model: String
     public var created_at: Date
     public var response: String
+    public var thinking: String?
     public var done: Bool
     public var done_reason: String?
     public var total_duration: Int64?
@@ -280,32 +319,13 @@ public struct OllamaGenerateChunk: Codable, Sendable {
 
 extension OllamaGenerateChunk {
     /// Final chunk of a generate response. Lives in an extension so the memberwise initializer survives.
-    public init(model: String, response: String, done_reason: String, timings: OllamaTimings) {
+    public init(model: String, response: String, thinking: String? = nil, done_reason: String, timings: OllamaTimings) {
         self.init(
-            model: model, created_at: .now, response: response, done: true, done_reason: done_reason,
+            model: model, created_at: .now, response: response, thinking: thinking, done: true, done_reason: done_reason,
             total_duration: timings.total_duration, load_duration: timings.load_duration,
             prompt_eval_count: timings.prompt_eval_count, prompt_eval_duration: timings.prompt_eval_duration,
             eval_count: timings.eval_count, eval_duration: timings.eval_duration)
     }
-}
-
-public struct OllamaPullRequest: Codable, Sendable, OllamaModelRequest {
-    public var model: String?
-    public var name: String?
-    public var stream: Bool?
-}
-
-public struct OllamaPullStatus: Codable, Sendable {
-    public var status: String
-    public var digest: String?
-    public var total: Int64?
-    public var completed: Int64?
-    public var error: String?
-}
-
-public struct OllamaDeleteRequest: Codable, Sendable, OllamaModelRequest {
-    public var model: String?
-    public var name: String?
 }
 
 public struct OllamaVersionResponse: Codable, Sendable {
@@ -368,6 +388,8 @@ public struct OpenAIMessage: Codable, Sendable {
     public var tool_calls: [OpenAIToolCall]?
     public var tool_call_id: String?
     public var name: String?
+    /// The model's reasoning, apart from the answer (DeepSeek's field, read by most clients).
+    public var reasoning_content: String?
 }
 
 /// Identical to Ollama's tool schema on the wire, so it is the same type.
@@ -385,6 +407,20 @@ public struct OpenAIChatRequest: Codable, Sendable {
     public var tools: [OpenAITool]?
     public var stream_options: StreamOptions?
     public struct StreamOptions: Codable, Sendable { public var include_usage: Bool? }
+    /// A string or a list of strings.
+    public var stop: JSON?
+    public var presence_penalty: Double?
+    public var frequency_penalty: Double?
+    /// llama.cpp and vLLM extensions.
+    public var top_k: Int?
+    public var min_p: Double?
+    public var repetition_penalty: Double?
+    /// `{"type": "json_object"}` or `{"type": "json_schema", "json_schema": {"schema": …}}`.
+    public var response_format: JSON?
+    /// `"none"` turns reasoning off, any other level on.
+    public var reasoning_effort: String?
+    /// llama.cpp / vLLM: `{"enable_thinking": false}`.
+    public var chat_template_kwargs: JSON?
 
     public func sampling(default base: SamplingParams) -> SamplingParams {
         var s = base
@@ -392,7 +428,31 @@ public struct OpenAIChatRequest: Codable, Sendable {
         if let top_p { s.topP = top_p }
         if let m = max_completion_tokens ?? max_tokens, m > 0 { s.maxTokens = m }
         if let seed { s.seed = UInt64(max(0, seed)) }
+        if let top_k { s.topK = max(0, top_k) }
+        if let min_p { s.minP = min_p }
+        if let repetition_penalty { s.repetitionPenalty = repetition_penalty }
+        if let presence_penalty { s.presencePenalty = presence_penalty }
+        if let frequency_penalty { s.frequencyPenalty = frequency_penalty }
         return s
+    }
+
+    /// Whether the client asked for reasoning on or off; nil leaves the app's choice for the model.
+    public var thinks: Bool? {
+        if let effort = reasoning_effort { return effort.lowercased() != "none" }
+        if case .object(let kwargs) = chat_template_kwargs, case .bool(let on) = kwargs["enable_thinking"] { return on }
+        return nil
+    }
+
+    /// The schema of `json_schema`, `.object([:])` for plain `json_object`, nil for text.
+    public var jsonFormat: JSON? {
+        guard case .object(let format) = response_format, case .string(let type) = format["type"] else { return nil }
+        switch type {
+        case "json_object": return .object([:])
+        case "json_schema":
+            if case .object(let wrapper) = format["json_schema"], let schema = wrapper["schema"] { return schema }
+            return .object([:])
+        default: return nil
+        }
     }
 }
 
@@ -410,7 +470,7 @@ public struct OpenAIChatChunk: Codable, Sendable {
         public struct Delta: Codable, Sendable {
             public var role: String?
             public var content: String?
-            /// Separate reasoning stream (DeepSeek-style servers); never written by this server.
+            /// Separate reasoning stream (DeepSeek's field), apart from `content`.
             public var reasoning_content: String?
             public var tool_calls: [OpenAIToolCall]?
         }
@@ -452,6 +512,10 @@ public struct OpenAICompletionRequest: Codable, Sendable {
     public var temperature: Double?
     public var top_p: Double?
     public var max_tokens: Int?
+    public var seed: Int?
+    public var stop: JSON?
+    public var presence_penalty: Double?
+    public var frequency_penalty: Double?
 }
 
 public struct OpenAICompletionResponse: Codable, Sendable {

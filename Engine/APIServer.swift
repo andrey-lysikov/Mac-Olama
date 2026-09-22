@@ -11,8 +11,25 @@ public enum PortStatus: Sendable, Equatable {
     case occupied
 }
 
+/// What the app runs a model with when a client does not say: the context window, temperature, reasoning and MTP
+/// chosen for it in the app, so an API client gets the same model as the chat.
+public struct APIModelDefaults: Sendable, Equatable {
+    public var contextTokens: Int?
+    public var temperature: Double?
+    public var thinks: Bool
+    public var speculates: Bool
+
+    public init(contextTokens: Int?, temperature: Double? = nil, thinks: Bool = false, speculates: Bool = false) {
+        self.contextTokens = contextTokens
+        self.temperature = temperature
+        self.thinks = thinks
+        self.speculates = speculates
+    }
+}
+
 /// Local HTTP server exposing Ollama (`/api/*`, primary) and OpenAI (`/v1/*`) compatible endpoints.
 /// Stateless: clients send full history; tool calls are returned to the client, not executed here.
+/// Models are downloaded and removed in the app only: `pull` and `delete` are refused.
 public final class APIServer: Sendable {
     public struct Configuration: Sendable {
         public var host: String
@@ -39,20 +56,18 @@ public final class APIServer: Sendable {
     public let configuration: Configuration
     private let catalog: ModelCatalog
     private let engine: EngineManager
-    private let downloader: ModelDownloader?
-    private let onModelsChanged: (@Sendable () async -> Void)?
+    private let defaults: @Sendable (ModelDescriptor) async -> APIModelDefaults
     private let server: HTTPServer
     private let pending = Mutex(0)
 
     public init(
         configuration: Configuration, catalog: ModelCatalog, engine: EngineManager,
-        downloader: ModelDownloader? = nil, onModelsChanged: (@Sendable () async -> Void)? = nil
+        defaults: @escaping @Sendable (ModelDescriptor) async -> APIModelDefaults = { APIModelDefaults(contextTokens: $0.contextLength) }
     ) {
         self.configuration = configuration
         self.catalog = catalog
         self.engine = engine
-        self.downloader = downloader
-        self.onModelsChanged = onModelsChanged
+        self.defaults = defaults
         self.server = HTTPServer(configuration: .init(host: configuration.host, port: configuration.port, log: configuration.log))
         registerRoutes()
     }
@@ -102,7 +117,7 @@ public final class APIServer: Sendable {
     private func registerRoutes() {
         server.setErrorMapper { error in
             if let api = error as? APIError { return Self.error(api.status, api.message) }
-            return Self.error(500, "\(error)")
+            return Self.error(Self.status(for: error), "\(error)")
         }
         server.setNotFound { _ in Self.error(404, "not found") }
         server.route("GET", "/") { _ in HTTPResponse.text("Mac-Olama is running") }
@@ -116,8 +131,8 @@ public final class APIServer: Sendable {
         server.route("POST", "/api/show") { [self] req in try await show(req) }
         server.route("POST", "/api/chat") { [self] req in try await ollamaChat(req) }
         server.route("POST", "/api/generate") { [self] req in try await ollamaGenerate(req) }
-        server.route("POST", "/api/pull") { [self] req in try await pull(req) }
-        server.route("DELETE", "/api/delete") { [self] req in try await delete(req) }
+        server.route("POST", "/api/pull") { _ in Self.error(403, Self.managedInApp) }
+        server.route("DELETE", "/api/delete") { _ in Self.error(403, Self.managedInApp) }
         for path in ["/api/embed", "/api/embeddings"] {
             server.route("POST", path) { _ in Self.error(501, "embeddings are not supported yet") }
         }
@@ -197,6 +212,55 @@ public final class APIServer: Sendable {
             })
     }
 
+    // Request building
+
+    static let managedInApp = "models are downloaded and removed in the Mac-Olama app"
+    /// The window of a model whose config does not say, as the chat assumes too.
+    private static let fallbackContext = 8192
+
+    /// The request the chat would make for this model, with what the client asked for on top. A client's `num_ctx`
+    /// may move the window up to the model's limit; a prompt that does not fit fails instead of losing its beginning.
+    private func generationRequest(
+        model: ModelDescriptor, messages: [EngineMessage], tools: [ToolSpec] = [],
+        sampling: (SamplingParams) -> SamplingParams, thinks: Bool?, contextTokens: Int?, keepAlive: KeepAlive = .default,
+        jsonFormat: JSON?
+    ) async -> GenerationRequest {
+        let chosen = await defaults(model)
+        var base = configuration.defaultSampling
+        if let temperature = chosen.temperature { base.temperature = temperature }
+        let modelMax = model.contextLength ?? chosen.contextTokens ?? Self.fallbackContext
+        return GenerationRequest(
+            messages: jsonFormat.map { Self.withJSONInstruction(messages, schema: $0) } ?? messages, tools: tools,
+            sampling: sampling(base), keepAlive: keepAlive,
+            contextTokens: min(contextTokens ?? chosen.contextTokens ?? modelMax, modelMax),
+            speculates: chosen.speculates, thinks: thinks ?? chosen.thinks, rejectsLongPrompt: true)
+    }
+
+    /// MLX here has no constrained decoding: the model is told to answer in JSON, and the reply is cut to the value.
+    static func withJSONInstruction(_ messages: [EngineMessage], schema: JSON) -> [EngineMessage] {
+        var instruction = "Reply with one valid JSON value and nothing else: no explanations, no Markdown code fences."
+        if case .object(let fields) = schema, !fields.isEmpty {
+            instruction += " The JSON must match this schema: \(schema.jsonString())"
+        }
+        var out = messages
+        // Some templates accept a system message only in the first place, so the instruction joins the existing one.
+        if let i = out.firstIndex(where: { $0.role == .system }) {
+            out[i].content += "\n\n" + instruction
+        } else {
+            out.insert(EngineMessage(role: .system, content: instruction), at: 0)
+        }
+        return out
+    }
+
+    /// Ollama's `format`: `"json"` or a schema object.
+    static func ollamaJSONFormat(_ format: JSON?) -> JSON? {
+        switch format {
+        case .string(let s) where s.lowercased() == "json": .object([:])
+        case .object(let schema): .object(schema)
+        default: nil
+        }
+    }
+
     // Chat (Ollama)
 
     private func ollamaChat(_ req: HTTPRequest) async throws -> HTTPResponse {
@@ -206,34 +270,36 @@ public final class APIServer: Sendable {
         if model.kind == .llm, messages.contains(where: { !$0.images.isEmpty }) {
             return Self.error(400, "model '\(body.model)' does not support images")
         }
-        let request = GenerationRequest(
-            messages: messages, tools: Self.toolSpecs(body.tools),
-            sampling: (body.options ?? .init()).sampling(default: configuration.defaultSampling),
-            keepAlive: body.keep_alive?.keepAlive ?? .default,
-            contextTokens: body.options?.num_ctx)
+        let options = body.options ?? .init()
+        let format = Self.ollamaJSONFormat(body.format)
+        let request = await generationRequest(
+            model: model, messages: messages, tools: Self.toolSpecs(body.tools), sampling: { options.sampling(default: $0) },
+            thinks: body.think?.thinkFlag, contextTokens: options.num_ctx, keepAlive: body.keep_alive?.keepAlive ?? .default,
+            jsonFormat: format)
+        let reply = Reply(stops: options.stop ?? [], json: format != nil)
         let modelName = body.model
-        let stream = body.stream ?? true
         let start = ContinuousClock.now
         try admit()
-        defer { release() }
 
-        if !stream {
-            let result = try await collect(model: model, request: request)
-            let chunk = OllamaChatChunk(
-                model: modelName,
-                message: OllamaMessage(role: "assistant", content: result.text, tool_calls: Self.ollamaCalls(result.toolCalls)),
-                done_reason: result.finish.rawValue, timings: .init(start: start, usage: result.usage))
-            return try Self.json(chunk)
+        if body.stream == false {
+            defer { release() }
+            let result = try await generate(model: model, request: request, reply: reply)
+            return try Self.json(
+                OllamaChatChunk(
+                    model: modelName, message: Self.ollamaMessage(result), done_reason: result.finish.rawValue,
+                    timings: .init(start: start, usage: result.usage)))
         }
 
-        let events = await engine.generate(model: model, request: request)
-        return Self.ndjson { write in
+        return Self.ndjson { [self] write in
+            defer { release() }
             let result: Collected
             do {
-                result = try await Self.drain(events) { t in
+                result = try await generate(model: model, request: request, reply: reply) { delta in
                     try write(
                         OllamaChatChunk(
-                            model: modelName, created_at: .now, message: OllamaMessage(role: "assistant", content: t), done: false))
+                            model: modelName, created_at: .now,
+                            message: OllamaMessage(role: "assistant", content: delta.content, thinking: delta.reasoning.nilIfEmpty),
+                            done: false))
                 }
             } catch {
                 try write(APIErrorBody(error: "\(error)"))
@@ -247,6 +313,11 @@ public final class APIServer: Sendable {
         }
     }
 
+    private static func ollamaMessage(_ result: Collected) -> OllamaMessage {
+        OllamaMessage(
+            role: "assistant", content: result.content, thinking: result.reasoning.nilIfEmpty, tool_calls: ollamaCalls(result.toolCalls))
+    }
+
     private func ollamaGenerate(_ req: HTTPRequest) async throws -> HTTPResponse {
         let body = try req.decode(OllamaGenerateRequest.self)
         let model = try await resolve(body.model)
@@ -254,34 +325,40 @@ public final class APIServer: Sendable {
         if let system = body.system, !system.isEmpty { messages.append(EngineMessage(role: .system, content: system)) }
         let images = try (body.images ?? []).map { try Self.decodeImage($0) }
         messages.append(EngineMessage(role: .user, content: body.prompt ?? "", images: images))
-        let request = GenerationRequest(
-            messages: messages, sampling: (body.options ?? .init()).sampling(default: configuration.defaultSampling),
-            keepAlive: body.keep_alive?.keepAlive ?? .default,
-            contextTokens: body.options?.num_ctx)
+        let options = body.options ?? .init()
+        let format = Self.ollamaJSONFormat(body.format)
+        let request = await generationRequest(
+            model: model, messages: messages, sampling: { options.sampling(default: $0) }, thinks: body.think?.thinkFlag,
+            contextTokens: options.num_ctx, keepAlive: body.keep_alive?.keepAlive ?? .default, jsonFormat: format)
+        let reply = Reply(stops: options.stop ?? [], json: format != nil)
         let modelName = body.model
         let start = ContinuousClock.now
         try admit()
-        defer { release() }
 
         // Empty prompt = load/unload only (Ollama semantics).
         if (body.prompt ?? "").isEmpty {
+            defer { release() }
             if case .unloadNow = request.keepAlive { await engine.unload() } else { try await engine.ensureLoaded(model) }
             return try Self.json(OllamaGenerateChunk(model: modelName, created_at: .now, response: "", done: true, done_reason: "load"))
         }
 
         if body.stream == false {
-            let result = try await collect(model: model, request: request)
+            defer { release() }
+            let result = try await generate(model: model, request: request, reply: reply)
             return try Self.json(
                 OllamaGenerateChunk(
-                    model: modelName, response: result.text, done_reason: result.finish.rawValue,
-                    timings: .init(start: start, usage: result.usage)))
+                    model: modelName, response: result.content, thinking: result.reasoning.nilIfEmpty,
+                    done_reason: result.finish.rawValue, timings: .init(start: start, usage: result.usage)))
         }
-        let events = await engine.generate(model: model, request: request)
-        return Self.ndjson { write in
+        return Self.ndjson { [self] write in
+            defer { release() }
             let result: Collected
             do {
-                result = try await Self.drain(events) { t in
-                    try write(OllamaGenerateChunk(model: modelName, created_at: .now, response: t, done: false))
+                result = try await generate(model: model, request: request, reply: reply) { delta in
+                    try write(
+                        OllamaGenerateChunk(
+                            model: modelName, created_at: .now, response: delta.content, thinking: delta.reasoning.nilIfEmpty,
+                            done: false))
                 }
             } catch {
                 try write(APIErrorBody(error: "\(error)"))
@@ -292,60 +369,6 @@ public final class APIServer: Sendable {
                     model: modelName, response: "", done_reason: result.finish.rawValue,
                     timings: .init(start: start, usage: result.usage)))
         }
-    }
-
-    // Pull / delete
-
-    private func pull(_ req: HTTPRequest) async throws -> HTTPResponse {
-        let body = try req.decode(OllamaPullRequest.self)
-        guard let ref = body.ref, let reference = ModelReference.parse(ref) else {
-            return Self.error(
-                400, "model must be a repo id like mlx-community/Qwen3.5-9B-MLX-4bit (Hugging Face) or modelscope:org/repo (ModelScope)")
-        }
-        guard let downloader else { return Self.error(501, "downloads are disabled") }
-        let events = await downloader.download(reference)
-        let onChanged = onModelsChanged
-        if body.stream == false {
-            do {
-                for try await _ in events {}
-                await onChanged?()
-                return try Self.json(OllamaPullStatus(status: "success"))
-            } catch {
-                return Self.error(500, "\(error)")
-            }
-        }
-        return Self.ndjson { write in
-            try write(OllamaPullStatus(status: "pulling manifest"))
-            do {
-                for try await event in events {
-                    switch event {
-                    case .resolved(let c): try write(OllamaPullStatus(status: "pulling \(c.files) files", total: c.bytes, completed: 0))
-                    case .progress(let p):
-                        try write(
-                            OllamaPullStatus(
-                                status: "pulling \(p.currentFile)", digest: p.currentFile, total: p.bytesTotal, completed: p.bytesReceived))
-                    case .fileFinished: break
-                    case .finished:
-                        try write(OllamaPullStatus(status: "verifying sha256 digest"))
-                        try write(OllamaPullStatus(status: "writing manifest"))
-                    }
-                }
-                await onChanged?()
-                try write(OllamaPullStatus(status: "success"))
-            } catch {
-                try write(OllamaPullStatus(status: "error", error: "\(error)"))
-            }
-        }
-    }
-
-    private func delete(_ req: HTTPRequest) async throws -> HTTPResponse {
-        let body = try req.decode(OllamaDeleteRequest.self)
-        guard let ref = body.ref else { return Self.error(400, "model is required") }
-        let m = try await resolve(ref)
-        if await engine.loadedModel?.id == m.id { await engine.unload() }
-        try await catalog.remove(id: m.id)
-        await onModelsChanged?()
-        return HTTPResponse(status: 200)
     }
 
     // Chat (OpenAI)
@@ -361,44 +384,55 @@ public final class APIServer: Sendable {
         if model.kind == .llm, messages.contains(where: { !$0.images.isEmpty }) {
             return Self.openAIError(400, "model '\(body.model)' does not support images")
         }
-        let request = GenerationRequest(
-            messages: messages, tools: Self.toolSpecs(body.tools), sampling: body.sampling(default: configuration.defaultSampling))
+        let request = await generationRequest(
+            model: model, messages: messages, tools: Self.toolSpecs(body.tools), sampling: { body.sampling(default: $0) },
+            thinks: body.thinks, contextTokens: nil, jsonFormat: body.jsonFormat)
+        let reply = Reply(stops: body.stop?.strings ?? [], json: body.jsonFormat != nil)
         let id = "chatcmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
         let created = Int(Date().timeIntervalSince1970)
         let modelName = body.model
         try admit()
-        defer { release() }
 
         if body.stream != true {
-            let result = try await collect(model: model, request: request)
+            defer { release() }
+            let result: Collected
+            do { result = try await generate(model: model, request: request, reply: reply) } catch {
+                return Self.openAIError(Self.status(for: error), "\(error)")
+            }
             let calls = Self.openAICalls(result.toolCalls)
-            let finish = result.finish == .toolCalls ? "tool_calls" : result.finish == .length ? "length" : "stop"
             return try Self.json(
                 OpenAIChatResponse(
                     id: id, created: created, model: modelName,
                     choices: [
                         .init(
                             index: 0,
-                            message: OpenAIMessage(role: "assistant", content: .text(result.text), tool_calls: calls.isEmpty ? nil : calls),
-                            finish_reason: finish)
+                            message: OpenAIMessage(
+                                role: "assistant", content: .text(result.content), tool_calls: calls.isEmpty ? nil : calls,
+                                reasoning_content: result.reasoning.nilIfEmpty),
+                            finish_reason: Self.openAIFinish(result, hasCalls: !calls.isEmpty))
                     ],
                     usage: Self.usage(result.usage)
                 ))
         }
         let includeUsage = body.stream_options?.include_usage ?? false
-        let events = await engine.generate(model: model, request: request)
-        return Self.sse { write in
+        return Self.sse { [self] write in
+            defer { release() }
             try write(
                 OpenAIChatChunk(
                     id: id, created: created, model: modelName,
                     choices: [.init(index: 0, delta: .init(role: "assistant", content: ""), finish_reason: nil)]))
             let result: Collected
             do {
-                result = try await Self.drain(events) { t in
+                result = try await generate(model: model, request: request, reply: reply) { delta in
                     try write(
                         OpenAIChatChunk(
                             id: id, created: created, model: modelName,
-                            choices: [.init(index: 0, delta: .init(content: t), finish_reason: nil)]))
+                            choices: [
+                                .init(
+                                    index: 0,
+                                    delta: .init(content: delta.content.nilIfEmpty, reasoning_content: delta.reasoning.nilIfEmpty),
+                                    finish_reason: nil)
+                            ]))
                 }
             } catch {
                 try write(OpenAIErrorBody(error: .init(message: "\(error)", type: "server_error")))
@@ -411,12 +445,16 @@ public final class APIServer: Sendable {
                         id: id, created: created, model: modelName,
                         choices: [.init(index: 0, delta: .init(tool_calls: oaCalls), finish_reason: nil)]))
             }
-            let reason = !oaCalls.isEmpty ? "tool_calls" : result.finish == .length ? "length" : "stop"
             try write(
                 OpenAIChatChunk(
-                    id: id, created: created, model: modelName, choices: [.init(index: 0, delta: .init(), finish_reason: reason)],
+                    id: id, created: created, model: modelName,
+                    choices: [.init(index: 0, delta: .init(), finish_reason: Self.openAIFinish(result, hasCalls: !oaCalls.isEmpty))],
                     usage: includeUsage ? Self.usage(result.usage) : nil))
         }
+    }
+
+    private static func openAIFinish(_ result: Collected, hasCalls: Bool) -> String {
+        hasCalls ? "tool_calls" : result.finish == .length ? "length" : "stop"
     }
 
     private func openAICompletions(_ req: HTTPRequest) async throws -> HTTPResponse {
@@ -425,33 +463,45 @@ public final class APIServer: Sendable {
             return Self.openAIError(400, "invalid request: \(error)")
         }
         guard let model = await catalog.resolve(body.model) else { return Self.openAIError(404, "model '\(body.model)' not found") }
-        var sampling = configuration.defaultSampling
-        if let t = body.temperature { sampling.temperature = t }
-        if let p = body.top_p { sampling.topP = p }
-        if let m = body.max_tokens, m > 0 { sampling.maxTokens = m }
-        let request = GenerationRequest(messages: [EngineMessage(role: .user, content: body.prompt)], sampling: sampling)
+        let request = await generationRequest(
+            model: model, messages: [EngineMessage(role: .user, content: body.prompt)],
+            sampling: { base in
+                var s = base
+                if let t = body.temperature { s.temperature = t }
+                if let p = body.top_p { s.topP = p }
+                if let m = body.max_tokens, m > 0 { s.maxTokens = m }
+                if let seed = body.seed { s.seed = UInt64(max(0, seed)) }
+                if let p = body.presence_penalty { s.presencePenalty = p }
+                if let f = body.frequency_penalty { s.frequencyPenalty = f }
+                return s
+            }, thinks: nil, contextTokens: nil, jsonFormat: nil)
+        let reply = Reply(stops: body.stop?.strings ?? [], json: false)
         let id = "cmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
         let created = Int(Date().timeIntervalSince1970)
         let modelName = body.model
         try admit()
-        defer { release() }
         if body.stream != true {
-            let result = try await collect(model: model, request: request)
+            defer { release() }
+            let result: Collected
+            do { result = try await generate(model: model, request: request, reply: reply) } catch {
+                return Self.openAIError(Self.status(for: error), "\(error)")
+            }
             return try Self.json(
                 OpenAICompletionResponse(
                     id: id, object: "text_completion", created: created, model: modelName,
-                    choices: [.init(index: 0, text: result.text, finish_reason: result.finish == .length ? "length" : "stop")],
+                    choices: [.init(index: 0, text: result.content, finish_reason: result.finish == .length ? "length" : "stop")],
                     usage: Self.usage(result.usage)))
         }
-        let events = await engine.generate(model: model, request: request)
-        return Self.sse { write in
+        return Self.sse { [self] write in
+            defer { release() }
             let result: Collected
             do {
-                result = try await Self.drain(events) { t in
+                result = try await generate(model: model, request: request, reply: reply) { delta in
+                    guard !delta.content.isEmpty else { return }
                     try write(
                         OpenAICompletionResponse(
                             id: id, object: "text_completion", created: created, model: modelName,
-                            choices: [.init(index: 0, text: t, finish_reason: nil)]))
+                            choices: [.init(index: 0, text: delta.content, finish_reason: nil)]))
                 }
             } catch {
                 try write(OpenAIErrorBody(error: .init(message: "\(error)", type: "server_error")))
@@ -466,41 +516,49 @@ public final class APIServer: Sendable {
 
     // Generation helpers
 
+    /// How the reply is cut and shaped for the client (see `ReplyAssembler`).
+    struct Reply: Sendable {
+        var stops: [String]
+        var json: Bool
+    }
+
     struct Collected {
-        var text = ""
+        var content = ""
+        var reasoning = ""
         var toolCalls: [ToolCall] = []
         var usage: GenerationUsage?
         var finish: FinishReason = .stop
     }
 
-    private func collect(model: ModelDescriptor, request: GenerationRequest) async throws -> Collected {
-        var c = Collected()
-        for try await event in await engine.generate(model: model, request: request) {
-            switch event {
-            case .token(let t): c.text += t
-            case .toolCall(let call): c.toolCalls.append(call)
-            case .usage(let u): c.usage = u
-            case .finished(let f): c.finish = f
-            }
-        }
-        return c
-    }
-
-    /// Common drain loop of the streaming handlers: forwards each token through `onToken` (which writes the
-    /// handler's own chunk shape) and collects everything else for the final chunk.
-    private static func drain(
-        _ events: AsyncThrowingStream<GenerationEvent, Error>, onToken: @Sendable (String) throws -> Void
+    /// Runs one generation and hands each new piece of answer and reasoning to `onDelta` as it is written. A stop
+    /// sequence ends the stream early, which cancels the generation.
+    private func generate(
+        model: ModelDescriptor, request: GenerationRequest, reply: Reply,
+        onDelta: (ReplyAssembler.Delta) throws -> Void = { _ in }
     ) async throws -> Collected {
-        var c = Collected()
-        for try await event in events {
+        var assembler = ReplyAssembler(stops: reply.stops, holdsAnswer: reply.json)
+        var collected = Collected()
+        func take(_ delta: ReplyAssembler.Delta) throws {
+            collected.content += delta.content
+            collected.reasoning += delta.reasoning
+            if !delta.isEmpty { try onDelta(delta) }
+        }
+        events: for try await event in await engine.generate(model: model, request: request) {
             switch event {
-            case .token(let t): try onToken(t)
-            case .toolCall(let call): c.toolCalls.append(call)
-            case .usage(let u): c.usage = u
-            case .finished(let f): c.finish = f
+            case .token(let text):
+                let delta = assembler.feed(text)
+                try take(delta)
+                if delta.stopped {
+                    collected.finish = .stop
+                    break events
+                }
+            case .toolCall(let call): collected.toolCalls.append(call)
+            case .usage(let usage): collected.usage = usage
+            case .finished(let finish): collected.finish = finish
             }
         }
-        return c
+        try take(assembler.finish())
+        return collected
     }
 
     /// Ollama and OpenAI tool schemas are the same type, so both chat handlers share this.
@@ -510,6 +568,13 @@ public final class APIServer: Sendable {
                 name: $0.function.name, description: $0.function.description ?? "",
                 parametersJSONSchema: $0.function.parameters?.jsonString() ?? "{}")
         }
+    }
+
+    /// A prompt longer than the window is the client's to fix; anything else is the server's.
+    static func status(for error: Error) -> Int {
+        if let api = error as? APIError { return api.status }
+        if case .promptTooLong = error as? EngineError { return 400 }
+        return 500
     }
 
     private func admit() throws {
@@ -631,9 +696,10 @@ public final class APIServer: Sendable {
         <h2>Ollama</h2><ul>
         <li><code>GET /api/version</code>, <code>GET /api/tags</code>, <code>GET /api/ps</code>, <code>POST /api/show</code></li>
         <li><code>POST /api/chat</code>, <code>POST /api/generate</code> (NDJSON streaming, <code>keep_alive</code>, <code>images</code>, <code>tools</code>)</li>
-        <li><code>POST /api/pull</code> (Hugging Face repo id or <code>modelscope:org/repo</code>), <code>DELETE /api/delete</code></li>
+        <li><code>think</code>, <code>format</code> (<code>"json"</code> or a schema), <code>options.stop</code>, <code>top_k</code>, <code>min_p</code>, penalties</li>
+        <li>403: <code>/api/pull</code>, <code>/api/delete</code> — models are downloaded and removed in the app</li>
         <li>501: <code>/api/embed</code>, <code>/api/embeddings</code>, <code>/api/create</code>, <code>/api/push</code>, <code>/api/copy</code></li></ul>
-        <h2>OpenAI</h2><ul><li><code>GET /v1/models</code>, <code>POST /v1/chat/completions</code> (SSE), <code>POST /v1/completions</code></li><li>501: <code>/v1/embeddings</code></li></ul>
+        <h2>OpenAI</h2><ul><li><code>GET /v1/models</code>, <code>POST /v1/chat/completions</code> (SSE, <code>reasoning_content</code>), <code>POST /v1/completions</code></li><li><code>stop</code>, <code>response_format</code>, <code>reasoning_effort</code>, <code>chat_template_kwargs.enable_thinking</code>, <code>top_k</code>, <code>min_p</code>, penalties</li><li>501: <code>/v1/embeddings</code></li></ul>
         """
 }
 
@@ -645,4 +711,117 @@ struct APIError: Error {
         self.status = status
         self.message = message
     }
+}
+
+// ReplyAssembler
+
+/// Turns the raw token stream into what an API client reads: reasoning apart from the answer, template markup
+/// dropped (the same rules as the chat, `AnswerText`), the answer cut at the first stop sequence, and in JSON mode
+/// reduced to the JSON value. Deltas only ever extend what was sent: a marker or stop sequence still being written is
+/// held back until it resolves.
+struct ReplyAssembler {
+    struct Delta: Equatable {
+        var reasoning = ""
+        var content = ""
+        var stopped = false
+        var isEmpty: Bool { reasoning.isEmpty && content.isEmpty }
+    }
+
+    private let stops: [String]
+    /// JSON mode: the answer is sent whole at the end, once it can be cut to the value.
+    private let holdsAnswer: Bool
+    private var raw = ""
+    private var sentReasoning = ""
+    private var sentContent = ""
+    private var stopped = false
+    /// Re-reading the whole reply per token would be quadratic; a few times a second is smooth enough for a client.
+    private var lastPass = ContinuousClock.now
+    private static let passInterval = Duration.milliseconds(40)
+
+    init(stops: [String], holdsAnswer: Bool = false) {
+        self.stops = stops.filter { !$0.isEmpty }
+        self.holdsAnswer = holdsAnswer
+    }
+
+    mutating func feed(_ token: String) -> Delta {
+        raw += token
+        let now = ContinuousClock.now
+        // A token that may complete a stop sequence is checked at once, so the cut is never late.
+        guard now - lastPass >= Self.passInterval || stops.contains(where: { token.contains($0.suffix(1)) }) else { return Delta() }
+        lastPass = now
+        return pass(final: false)
+    }
+
+    mutating func finish() -> Delta { pass(final: true) }
+
+    private mutating func pass(final: Bool) -> Delta {
+        guard !stopped else { return Delta() }
+        let text = final ? raw : Self.withoutOpenMarker(raw)
+        var answer = AnswerText.visible(text)
+        var delta = Delta()
+        if let cut = stops.compactMap({ answer.range(of: $0)?.lowerBound }).min() {
+            answer = String(answer[..<cut])
+            stopped = true
+            delta.stopped = true
+        } else if !final {
+            answer = String(answer.dropLast(Self.pendingStopLength(answer, stops)))
+        }
+        let reasoning = AnswerText.reasoning(text)
+        if reasoning.hasPrefix(sentReasoning) {
+            delta.reasoning = String(reasoning.dropFirst(sentReasoning.count))
+            sentReasoning = reasoning
+        }
+        if holdsAnswer {
+            guard final || stopped else { return delta }
+            answer = Self.jsonValue(in: answer)
+        }
+        if answer.hasPrefix(sentContent) {
+            delta.content = String(answer.dropFirst(sentContent.count))
+            sentContent = answer
+        }
+        return delta
+    }
+
+    /// The reply without a trailing `<…`, `[…` or `◁…` that has not closed yet: it may become a tag that hides text.
+    static func withoutOpenMarker(_ raw: String) -> String {
+        let pairs: [(Character, Character)] = [("<", ">"), ("[", "]"), ("◁", "▷")]
+        var cut = raw.endIndex
+        for (open, close) in pairs {
+            guard let start = raw.lastIndex(of: open), !raw[start...].contains(close),
+                raw.distance(from: start, to: raw.endIndex) <= 40
+            else { continue }
+            cut = min(cut, start)
+        }
+        return String(raw[..<cut])
+    }
+
+    /// Length of the longest tail of `text` that begins some stop sequence.
+    static func pendingStopLength(_ text: String, _ stops: [String]) -> Int {
+        var longest = 0
+        for stop in stops {
+            for length in stride(from: min(stop.count - 1, text.count), to: longest, by: -1)
+            where text.hasSuffix(stop.prefix(length)) {
+                longest = length
+                break
+            }
+        }
+        return longest
+    }
+
+    /// The JSON value in a reply that wrapped it in prose or a code fence; the reply as it is when there is none.
+    static func jsonValue(in text: String) -> String {
+        guard let start = text.firstIndex(where: { $0 == "{" || $0 == "[" }) else { return text }
+        let close: Character = text[start] == "{" ? "}" : "]"
+        var end = text.lastIndex(of: close)
+        while let e = end, e > start {
+            let candidate = String(text[start...e])
+            if (try? JSONSerialization.jsonObject(with: Data(candidate.utf8), options: .fragmentsAllowed)) != nil { return candidate }
+            end = text[start..<e].lastIndex(of: close)
+        }
+        return text
+    }
+}
+
+extension String {
+    fileprivate var nilIfEmpty: String? { isEmpty ? nil : self }
 }

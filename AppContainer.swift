@@ -415,6 +415,16 @@ final class AppContainer {
         return model.contextLength.map { min(chosen, $0) } ?? chosen
     }
 
+    /// What an API client gets for a model it does not configure: the chat's window, temperature, reasoning and MTP.
+    func apiDefaults(for model: ModelDescriptor) -> APIModelDefaults {
+        let speculates = settings.speculativeModels.contains(model.id)
+        // As in the chat: a drafter that verifies only greedy decoding sets the temperature, or speculation switches off.
+        let greedy = speculates && settings.greedyDrafters.contains(model.id)
+        return APIModelDefaults(
+            contextTokens: contextTokens(for: model), temperature: greedy ? 0 : settings.modelTemperatures[model.id],
+            thinks: settings.reasoningShown.contains(model.id), speculates: speculates)
+    }
+
     private func applyConversationConfiguration() {
         var config = ConversationService.Configuration(maxToolIterations: settings.toolIterations)
         config.contextTokensByModel = settings.modelContextTokens
@@ -1168,8 +1178,8 @@ final class AppContainer {
                     configuration: .init(
                         host: settings.apiBindHost, port: port,
                         version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1"),
-                    catalog: catalog, engine: engineManager, downloader: downloader
-                ) { [weak self] in await self?.refreshModels() }
+                    catalog: catalog, engine: engineManager
+                ) { [weak self] model in await self?.apiDefaults(for: model) ?? APIModelDefaults(contextTokens: model.contextLength) }
                 server.setCORSPolicy(corsPolicy)
                 do {
                     try server.start()
