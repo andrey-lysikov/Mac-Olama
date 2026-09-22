@@ -140,6 +140,9 @@ public actor ConversationService {
         runningTasks[chatID] != nil
     }
 
+    /// Chats with a reply being written right now, whichever surface (window, panel, API) asked for it.
+    public var generatingChatIDs: Set<UUID> { Set(runningTasks.keys) }
+
     public func cancel(chatID: UUID) async {
         runningTasks[chatID]?.cancel()
         await engineManager.cancelCurrent()

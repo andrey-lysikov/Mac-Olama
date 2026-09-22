@@ -506,9 +506,9 @@ struct ModelLibraryView: View {
     @Environment(AppContainer.self) private var container
     /// The model whose MTP popover is open and the drafters the hub offers for it.
     @State private var drafterTarget: String?
-    @State private var drafterCandidates: [String] = []
-    @State private var drafterSearch: Task<Void, Never>?
-    @State private var drafterSearching = false
+    /// Kept per model: another model's popover opened while this one closes must never show this one's answer.
+    /// No entry means the search for that model is still running.
+    @State private var drafterCandidates: [String: [String]] = [:]
 
     var body: some View {
         content(viewModel)
@@ -926,7 +926,6 @@ struct ModelLibraryView: View {
             style: on ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary)
         ) {
             drafterTarget = drafterTarget == model.id ? nil : model.id
-            if drafterTarget != nil, !installed { findDrafters(for: model) }
         }
         .popover(
             isPresented: Binding(get: { drafterTarget == model.id }, set: { if !$0 { drafterTarget = nil } }), arrowEdge: .bottom
@@ -946,7 +945,8 @@ struct ModelLibraryView: View {
                     Spacer(minLength: 8)
                     symbolButton("trash", String(localized: "Remove Drafter"), role: .destructive) {
                         container.removeDrafter(for: model)
-                        findDrafters(for: model)
+                        // A state change, so the popover redraws without the drafter; the search it starts replaces this.
+                        drafterCandidates[model.id] = []
                     }
                 }
                 Toggle(
@@ -974,42 +974,39 @@ struct ModelLibraryView: View {
                 if let verdict = container.drafterVerdict(for: model) {
                     Text(verdict).font(.caption).foregroundStyle(.red)
                 }
-                if drafterSearching {
+                if let candidates = drafterCandidates[model.id] {
+                    if candidates.isEmpty {
+                        Text(String(localized: "The hub lists no MLX drafter for this model.")).font(.callout)
+                    }
+                    // Found by the base model the hub records, so the repository never has to be typed out.
+                    // Picked like a model in the search list: the same pictogram starts the download.
+                    ForEach(candidates, id: \.self) { candidate in
+                        HStack(spacing: 8) {
+                            Text(verbatim: candidate).font(.callout).lineLimit(1).truncationMode(.middle)
+                            Spacer(minLength: 8)
+                            symbolButton("arrow.down.circle", String(localized: "Download")) {
+                                container.installDrafter(repoID: candidate, for: model)
+                                drafterTarget = nil
+                            }
+                        }
+                    }
+                } else {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
                         Text(String(localized: "Looking for a drafter…")).font(.callout)
-                    }
-                } else if drafterCandidates.isEmpty {
-                    Text(String(localized: "The hub lists no MLX drafter for this model.")).font(.callout)
-                }
-                // Found by the base model the hub records, so the repository never has to be typed out.
-                // Picked like a model in the search list: the same pictogram starts the download.
-                ForEach(drafterCandidates, id: \.self) { candidate in
-                    HStack(spacing: 8) {
-                        Text(verbatim: candidate).font(.callout).lineLimit(1).truncationMode(.middle)
-                        Spacer(minLength: 8)
-                        symbolButton("arrow.down.circle", String(localized: "Download")) {
-                            container.installDrafter(repoID: candidate, for: model)
-                            drafterTarget = nil
-                        }
                     }
                 }
             }
         }
         .padding(14)
         .frame(width: 640, alignment: .leading)
-    }
-
-    /// Asks the hub which drafters were published for this checkpoint and keeps the ones that fit it.
-    private func findDrafters(for model: ModelDescriptor) {
-        drafterSearch?.cancel()
-        drafterCandidates = []
-        drafterSearching = true
-        drafterSearch = Task {
+        // Each opening asks the hub again for the model it belongs to; closing the popover cancels the search.
+        .task(id: installed) {
+            guard !installed else { return }
+            drafterCandidates[model.id] = nil
             let found = await container.drafterCandidates(for: model)
             guard !Task.isCancelled else { return }
-            drafterCandidates = found
-            drafterSearching = false
+            drafterCandidates[model.id] = found
         }
     }
 

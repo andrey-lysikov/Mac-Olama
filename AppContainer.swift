@@ -684,8 +684,12 @@ final class AppContainer {
 
     /// Whether the switch belongs in this model's row at all. Every local model may have a drafter published for it —
     /// Qwen declares its heads in the config, Gemma says nothing and ships an assistant model — so the popover asks
-    /// the hub rather than the row guessing.
-    func canSpeculate(_ model: ModelDescriptor) -> Bool { model.source != .remote }
+    /// the hub rather than the row guessing. Drafters are found by the base model the hub records; without one there
+    /// is nothing to look for, so the switch stays only to manage a drafter already installed.
+    func canSpeculate(_ model: ModelDescriptor) -> Bool {
+        guard model.source != .remote else { return false }
+        return model.baseModel?.isEmpty == false || drafterIsInstalled(for: model)
+    }
 
     func drafterIsInstalled(for model: ModelDescriptor) -> Bool { MTPDrafter.isInstalled(forModel: model.directory) }
 

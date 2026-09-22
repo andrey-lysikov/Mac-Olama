@@ -3171,6 +3171,16 @@
         }
       }
     },
+    "The model is answering in this chat" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель отвечает в этом чате"
+          }
+        }
+      }
+    },
     "The model is busy with another request." : {
       "localizations" : {
         "ru" : {

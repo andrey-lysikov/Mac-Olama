@@ -39,8 +39,19 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
     @ObservationIgnored nonisolated(unsafe) private var activationObserver: Any?
 
     // The rest of the coordinator's state is forwarded by `ConversationStreamHosting`; only this differs here:
-    // another surface may be writing into the selected chat, and the window counts that as generating too.
-    var isGenerating: Bool { stream.isGenerating || remoteGenerating }
+    // the window's own reply shows only in the chat it writes into, and another surface writing into the selected
+    // chat counts as generating too.
+    var isGenerating: Bool { streamsIntoShownChat || remoteGenerating }
+    var streamingText: String { streamsIntoShownChat ? stream.streamingText : "" }
+    var visibleStreamingText: String { streamsIntoShownChat ? stream.visibleStreamingText : "" }
+    var progress: GenerationProgress? { streamsIntoShownChat ? stream.progress : nil }
+    var streamsHere: Bool { streamsIntoShownChat && stream.streamsHere }
+
+    /// The window's reply runs in the chat on screen (or is still creating it); another chat opened meanwhile
+    /// shows its own history, not the stream.
+    private var streamsIntoShownChat: Bool {
+        stream.isGenerating && (stream.streamingChatID == nil || stream.streamingChatID == selectedChatID)
+    }
 
     var selectedChat: Chat? { chats.first { $0.id == selectedChatID } }
     var engineState: EngineState { container.engineState }
@@ -61,6 +72,7 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
         observeWindowActivation()
         Task {
             await reload()
+            await refreshGeneratingChats()
             // Opened from "Model Library…": stay on the models section instead of auto-selecting a chat.
             if selectedChatID == nil, container.section == .chat { selectedChatID = container.settings.activeChatID ?? chats.first?.id }
         }
@@ -124,7 +136,7 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
         stream.setMessages(loaded)
         loadedChatID = id
         let wasRemote = remoteGenerating
-        remoteGenerating = await container.conversation.isGenerating(chatID: id) && !stream.isGenerating
+        remoteGenerating = await container.conversation.isGenerating(chatID: id) && stream.streamingChatID != id
         // A reply that ran on another surface just ended: questions queued here may go out now.
         if wasRemote, !remoteGenerating { stream.drainQueue() }
         if opened { transcriptToken += 1 }
@@ -153,11 +165,34 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
         changesTask = stream.observeStoreChanges(
             onChats: { [weak self] in await self?.reload() },
             onMessages: { [weak self] chatID in
+                await self?.refreshGeneratingChats()
                 // Skipped only while this window streams the reply itself; one written by the panel or the API is
                 // followed through the store, its partial text saved every quarter second.
                 guard let self, chatID == self.selectedChatID, !self.streamsHere else { return }
                 await self.loadMessages()
             })
+    }
+
+    /// Chats the model is answering in right now, marked in the list whichever surface asked.
+    private(set) var generatingChatIDs: Set<UUID> = []
+    @ObservationIgnored private var generatingPoll: Task<Void, Never>?
+
+    /// A reply's last write lands just before its run is over, so while any chat is busy the set is re-read
+    /// twice a second until it empties; the mark would otherwise stay on a finished chat.
+    private func refreshGeneratingChats() async {
+        let ids = await container.conversation.generatingChatIDs
+        if ids != generatingChatIDs { generatingChatIDs = ids }
+        guard !ids.isEmpty, generatingPoll == nil else { return }
+        generatingPoll = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard let self else { return }
+                let ids = await self.container.conversation.generatingChatIDs
+                if ids != self.generatingChatIDs { self.generatingChatIDs = ids }
+                if ids.isEmpty { break }
+            }
+            self?.generatingPoll = nil
+        }
     }
 
     // Chats
@@ -219,14 +254,15 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
 
     /// Deletes the tail from the last user message and asks it again.
     func regenerate() {
-        guard let chatID = selectedChatID else { return }
+        // A new run would take over the window's stream while it still writes into another chat.
+        guard let chatID = selectedChatID, !stream.isGenerating else { return }
         stream.regenerate(chatID: chatID)
         transcriptToken += 1
     }
 
     func stop() {
-        // The running reply may stream into a chat other than the selected one.
-        guard let id = stream.streamingChatID ?? selectedChatID else { return }
+        // Stops the reply of the chat on screen: the window's own, or one another surface writes into it.
+        guard let id = streamsIntoShownChat ? stream.streamingChatID ?? selectedChatID : selectedChatID else { return }
         Task { await container.conversation.cancel(chatID: id) }
     }
 
@@ -488,6 +524,10 @@ private struct ChatsSplitView: View {
                                     .secondary)
                             }
                             Spacer(minLength: 4)
+                            if viewModel.generatingChatIDs.contains(chat.id) {
+                                ProgressView().controlSize(.small)
+                                    .help(String(localized: "The model is answering in this chat"))
+                            }
                             Button {
                                 viewModel.delete(chat)
                             } label: {
@@ -638,6 +678,7 @@ private struct ChatsSplitView: View {
                         ChatMessageView(
                             message: message, summary: summary, maps: maps[message.id] ?? [],
                             onRegenerate: message.id == visible.last?.id && message.role == .assistant && !viewModel.isGenerating
+                                && !viewModel.stream.isGenerating
                                 ? { viewModel.regenerate() } : nil)
                     }
                 }
