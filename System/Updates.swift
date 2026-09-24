@@ -38,8 +38,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
     private let logger = Logger(subsystem: "ru.lysnet.macolama", category: "notifications")
     private weak var container: AppContainer?
 
-    /// Set when the system says notifications are refused for this app: every message the app sends then goes nowhere,
-    /// so the menu offers to open the settings where that is changed.
+    /// The last answer `authorize()` got: true when notifications are refused and every message goes nowhere.
     private(set) var isDenied = false
 
     func configure(container: AppContainer) {
@@ -80,49 +79,27 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
                 intentIdentifiers: []),
             UNNotificationCategory(identifier: Category.info.rawValue, actions: [], intentIdentifiers: []),
         ])
-        // Not at once: asked during launch, the system answers "not allowed for this application" before the app is
-        // registered with Notification Center, and it never shows its question again.
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(2))
-            self?.askAuthorization()
-        }
-        // Asked again after the Mac wakes: the answer may have been given in System Settings in the meantime, and the
-        // system itself only ever shows its question once.
-        NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
-        ) { _ in
-            MainActor.assumeIsolated { NotificationService.shared.askAuthorization() }
-        }
     }
 
-    /// Asked at launch and before a message: while the answer is "not determined" macOS shows its own question, and a
-    /// refusal is remembered so the app can point at the settings instead of talking to a wall.
-    func askAuthorization() {
-        Task { @MainActor [logger] in
-            let center = UNUserNotificationCenter.current()
-            let status = await center.notificationSettings().authorizationStatus
-            logger.notice("notification status: \(status.rawValue)")
-            do {
-                let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
-                isDenied = !granted
-                if !granted { logger.notice("notifications not granted") }
-            } catch {
-                logger.error("notification authorization failed: \(error)")
-                isDenied = true
-            }
+    /// Asked right before each notification, never at launch: macOS shows its question only while there is no answer,
+    /// so the user meets it with the first message the app has, and after that the stored answer comes back at once.
+    func authorize() async -> Bool {
+        do {
+            isDenied = !(try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]))
+        } catch {
+            logger.error("notification authorization failed: \(error)")
+            isDenied = true
         }
-    }
-
-    /// Checked before a notification the user must see: macOS asks while it has no answer, and after a refusal its
-    /// Notifications pane opens, every time until the user allows it.
-    func ensureAllowed() async -> Bool {
-        let center = UNUserNotificationCenter.current()
-        if await center.notificationSettings().authorizationStatus != .authorized {
-            _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
-        }
-        isDenied = await center.notificationSettings().authorizationStatus != .authorized
-        if isDenied { openSettings() }
         return !isDenied
+    }
+
+    /// For a notification the user must see: after a refusal the Notifications pane opens, every time until allowed.
+    func ensureAllowed() async -> Bool {
+        guard await authorize() else {
+            openSettings()
+            return false
+        }
+        return true
     }
 
     /// A refused permission, asked again: Allow (or a tap) opens its privacy pane. One notification per pane, replaced
@@ -130,7 +107,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
     func askAccess(to pane: PrivacySettings.Pane) {
         guard let url = pane.url else { return }
         Task { @MainActor in
-            guard await UNUserNotificationCenter.current().notificationSettings().authorizationStatus == .authorized else {
+            guard await authorize() else {
                 NSWorkspace.shared.open(url)
                 return
             }
@@ -156,8 +133,9 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
         content.userInfo = userInfo
         content.sound = .default
         let request = UNNotificationRequest(identifier: identifier ?? UUID().uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request) { [logger] error in
-            if let error { logger.error("notification failed: \(error)") }
+        Task { @MainActor [logger] in
+            guard await authorize() else { return logger.notice("notification dropped: not allowed") }
+            do { try await UNUserNotificationCenter.current().add(request) } catch { logger.error("notification failed: \(error)") }
         }
     }
 
