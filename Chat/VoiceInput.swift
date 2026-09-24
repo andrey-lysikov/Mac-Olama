@@ -53,6 +53,7 @@ final class VoiceInput {
         settled = ""
         heardVoice = false
         guard await AVCaptureDevice.requestAccess(for: .audio) else {
+            PrivacySettings.ask(.microphone)
             return fail(
                 String(localized: "Mac-Olama may not use the microphone: allow it in System Settings → Privacy & Security → Microphone."))
         }

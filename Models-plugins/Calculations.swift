@@ -113,7 +113,7 @@ public struct CurrencyToolProvider: ToolProvider {
         guard let url = components?.url else { return "error: bad date" }
         let table: Table
         do {
-            let (data, response) = try await HTTP.get(url, userAgent: "Mac-Olama/0.1", accept: nil)
+            let (data, response) = try await HTTP.get(url, userAgent: HTTP.appUserAgent, accept: nil)
             guard response.statusCode == 200, let parsed = Self.parse(data) else {
                 return "error: the Bank of Russia did not give its rates (HTTP \(response.statusCode))"
             }

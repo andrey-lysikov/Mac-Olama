@@ -33,10 +33,16 @@ public struct ContactsToolProvider: ToolProvider {
     public func execute(_ call: ToolCall) async throws -> String {
         guard let query = ToolArguments(call.argumentsJSON).string("query")?.trimmingCharacters(in: .whitespaces), !query.isEmpty
         else { return toolFailure(missing: "query") }
+        // Asked on every call without access: macOS shows its question while it has none, its privacy pane after a refusal.
+        if CNContactStore.authorizationStatus(for: .contacts) != .authorized {
+            _ = try? await CNContactStore().requestAccess(for: .contacts)
+        }
         switch CNContactStore.authorizationStatus(for: .contacts) {
         case .authorized, .limited: break
         default:
-            return "error: Mac-Olama may not read Contacts. Tell the user to allow it in System Settings → Privacy & Security → Contacts."
+            PrivacySettings.ask(.contacts)
+            return
+                "error: Mac-Olama may not read Contacts. A notification now asks the user to allow Mac-Olama in System Settings → Privacy & Security → Contacts; ask again once they have."
         }
         let digits = query.filter(\.isNumber)
         let predicate =

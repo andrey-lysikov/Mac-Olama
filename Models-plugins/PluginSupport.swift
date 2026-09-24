@@ -58,8 +58,9 @@ enum JXA {
     /// What the model reads when a script failed: macOS refusing Mac-Olama the app (-1743) is said with the way out.
     static func failure(_ out: String, app: String) -> String {
         if out.contains("-1743") {
+            PrivacySettings.ask(.automation)
             return
-                "error: Mac-Olama may not control \(app). Tell the user to allow it in System Settings → Privacy & Security → Automation → Mac-Olama → \(app)."
+                "error: Mac-Olama may not control \(app). A notification now asks the user to allow Mac-Olama → \(app) in System Settings → Privacy & Security → Automation; ask again once they have."
         }
         return "error: \(app) could not do it: \(out.dropFirst("ERROR:".count).prefix(300))"
     }
@@ -78,6 +79,35 @@ enum SocketAddress {
         var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
         guard getnameinfo(address, length, &buffer, socklen_t(buffer.count), nil, 0, NI_NUMERICHOST) == 0 else { return nil }
         return String(cBuffer: buffer)
+    }
+}
+
+/// macOS shows its own permission question only while the answer is "not determined"; after a refusal a tool asks on
+/// every call with a notification whose Allow opens the privacy pane, the one place access is given back.
+enum PrivacySettings {
+    enum Pane: String {
+        case location = "Privacy_LocationServices", calendars = "Privacy_Calendars", reminders = "Privacy_Reminders"
+        case contacts = "Privacy_Contacts", screen = "Privacy_ScreenCapture", microphone = "Privacy_Microphone"
+        case automation = "Privacy_Automation"
+
+        var url: URL? { URL(string: "x-apple.systempreferences:com.apple.preference.security?\(rawValue)") }
+
+        /// How the pane is named in System Settings, for the notification.
+        var title: String {
+            switch self {
+            case .location: String(localized: "Location Services")
+            case .calendars: String(localized: "Calendars")
+            case .reminders: String(localized: "Reminders")
+            case .contacts: String(localized: "Contacts")
+            case .screen: String(localized: "Screen & System Audio Recording")
+            case .microphone: String(localized: "Microphone")
+            case .automation: String(localized: "Automation")
+            }
+        }
+    }
+
+    static func ask(_ pane: Pane) {
+        Task { @MainActor in NotificationService.shared.askAccess(to: pane) }
     }
 }
 

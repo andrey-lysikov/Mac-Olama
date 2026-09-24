@@ -18,6 +18,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
         case modelUpdate = "MODEL_UPDATE"
         case downloadFinished = "DOWNLOAD_FINISHED"
         case confirm = "CONFIRM"
+        case access = "ACCESS"
         case info = "INFO"
     }
 
@@ -27,6 +28,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
         case openChats = "OPEN_CHATS"
         case allow = "ALLOW"
         case deny = "DENY"
+        case openPrivacy = "OPEN_PRIVACY"
     }
 
     /// Pending Allow/Deny questions keyed by notification id; resolved from the delegate callback.
@@ -70,6 +72,12 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
                     UNNotificationAction(identifier: Action.deny.rawValue, title: String(localized: "Deny"), options: [.destructive]),
                 ],
                 intentIdentifiers: []),
+            UNNotificationCategory(
+                identifier: Category.access.rawValue,
+                actions: [
+                    UNNotificationAction(identifier: Action.openPrivacy.rawValue, title: String(localized: "Allow"), options: [.foreground])
+                ],
+                intentIdentifiers: []),
             UNNotificationCategory(identifier: Category.info.rawValue, actions: [], intentIdentifiers: []),
         ])
         // Not at once: asked during launch, the system answers "not allowed for this application" before the app is
@@ -105,6 +113,34 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
         }
     }
 
+    /// Checked before a notification the user must see: macOS asks while it has no answer, and after a refusal its
+    /// Notifications pane opens, every time until the user allows it.
+    func ensureAllowed() async -> Bool {
+        let center = UNUserNotificationCenter.current()
+        if await center.notificationSettings().authorizationStatus != .authorized {
+            _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
+        }
+        isDenied = await center.notificationSettings().authorizationStatus != .authorized
+        if isDenied { openSettings() }
+        return !isDenied
+    }
+
+    /// A refused permission, asked again: Allow (or a tap) opens its privacy pane. One notification per pane, replaced
+    /// on each call. With notifications refused too, the pane opens at once: nothing else of the system could ask.
+    func askAccess(to pane: PrivacySettings.Pane) {
+        guard let url = pane.url else { return }
+        Task { @MainActor in
+            guard await UNUserNotificationCenter.current().notificationSettings().authorizationStatus == .authorized else {
+                NSWorkspace.shared.open(url)
+                return
+            }
+            send(
+                title: String(localized: "Allow Mac-Olama access to \(pane.title)?"),
+                body: String(localized: "A model needs it to answer. Allow opens System Settings, where access is turned on."),
+                category: .access, userInfo: ["url": url.absoluteString], identifier: "access-\(pane.rawValue)")
+        }
+    }
+
     /// Opens Notifications for this app in System Settings; the switch there is the only way back from a refusal.
     func openSettings() {
         let id = Bundle.main.bundleIdentifier ?? ""
@@ -127,6 +163,8 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
 
     /// Tool confirmation: a notification with Allow/Deny; no answer within the timeout counts as Deny.
     func confirm(title: String, detail: String) async -> Bool {
+        // Without notifications the question would never show and silently time out as Deny.
+        guard await ensureAllowed() else { return false }
         let id = "confirm-\(UUID().uuidString)"
         return await withCheckedContinuation { continuation in
             // The body runs synchronously on the caller's actor, but the closure itself is typed nonisolated.
@@ -163,6 +201,8 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
             switch Action(rawValue: response.actionIdentifier) {
             case .allow: resolveConfirmation(id: requestID, allowed: true)
             case .deny: resolveConfirmation(id: requestID, allowed: false)
+            case .openPrivacy:
+                if let s = info["url"] as? String, let url = URL(string: s) { NSWorkspace.shared.open(url) }
             case .downloadUpdate:
                 if let s = info["url"] as? String, let url = URL(string: s) { NSWorkspace.shared.open(url) }
             case .updateModel:

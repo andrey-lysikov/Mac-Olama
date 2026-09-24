@@ -94,11 +94,15 @@ extension AnswerText {
     static func summary(of calls: [ToolCall], thoughtSeconds: Int?) -> String? {
         let searches = calls.filter { $0.name == "web_search" }.count
         let pages = calls.filter { $0.name == "fetch_url" }.count
-        let others = calls.count - searches - pages
+        // The other tools by name, each once, in the order they ran: a count alone did not say what was done.
+        var others: [String] = []
+        for call in calls where call.name != "web_search" && call.name != "fetch_url" && !others.contains(call.name) {
+            others.append(call.name)
+        }
         var parts: [String] = []
         if searches > 0 { parts.append(String(localized: "Searches: \(searches)")) }
         if pages > 0 { parts.append(String(localized: "Pages read: \(pages)")) }
-        if others > 0 { parts.append(String(localized: "Tools used: \(others)")) }
+        if !others.isEmpty { parts.append(String(localized: "Tools used: \(others.joined(separator: ", "))")) }
         if let thoughtSeconds { parts.append(String(localized: "Thought for \(thoughtSeconds) s")) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }

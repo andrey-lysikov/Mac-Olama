@@ -135,6 +135,16 @@
         }
       }
     },
+    "A model needs it to answer. Allow opens System Settings, where access is turned on." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Он нужен модели для ответа. «Разрешить» откроет Системные настройки, где включается доступ."
+          }
+        }
+      }
+    },
     "About This Mac" : {
       "localizations" : {
         "ru" : {
@@ -285,6 +295,16 @@
         }
       }
     },
+    "Allow Mac-Olama access to %@?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешить Mac-Olama доступ: %@?"
+          }
+        }
+      }
+    },
     "An update is available" : {
       "localizations" : {
         "ru" : {
@@ -395,6 +415,16 @@
         }
       }
     },
+    "Automation" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автоматизация"
+          }
+        }
+      }
+    },
     "Autostart" : {
       "localizations" : {
         "ru" : {
@@ -461,6 +491,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Календарь и напоминания"
+          }
+        }
+      }
+    },
+    "Calendars" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Календари"
           }
         }
       }
@@ -1463,6 +1503,16 @@
         }
       }
     },
+    "Location Services" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Службы геолокации"
+          }
+        }
+      }
+    },
     "Looking at %@…" : {
       "localizations" : {
         "ru" : {
@@ -1653,6 +1703,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Максимум (%lldk)"
+          }
+        }
+      }
+    },
+    "Microphone" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Микрофон"
           }
         }
       }
@@ -2499,6 +2559,16 @@
         }
       }
     },
+    "Reminders" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Напоминания"
+          }
+        }
+      }
+    },
     "Remove Drafter" : {
       "localizations" : {
         "ru" : {
@@ -2685,6 +2755,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Сохранить: проверить модель на сервере и добавить"
+          }
+        }
+      }
+    },
+    "Screen & System Audio Recording" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запись экрана и системного звука"
           }
         }
       }
@@ -3672,12 +3752,12 @@
         }
       }
     },
-    "Tools used: %lld" : {
+    "Tools used: %@" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Инструменты: %lld"
+            "value" : "Инструменты: %@"
           }
         }
       }

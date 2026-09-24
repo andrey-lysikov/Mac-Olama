@@ -177,7 +177,7 @@ public struct NetworkToolProvider: ToolProvider {
         guard let url, ["http", "https"].contains(url.scheme ?? "") else { return "error: not an http(s) address" }
         var request = URLRequest(url: url, timeoutInterval: 15)
         request.httpMethod = "HEAD"
-        request.setValue("Mac-Olama/0.1", forHTTPHeaderField: "User-Agent")
+        request.setValue(HTTP.appUserAgent, forHTTPHeaderField: "User-Agent")
         let start = ContinuousClock.now
         do {
             let (_, response) = try await URLSession(configuration: .ephemeral).data(for: request)
@@ -422,9 +422,11 @@ public struct ScreenToolProvider: ToolProvider {
             }
             return "Put \(text.count) characters on the clipboard."
         case "screen_read":
-            guard CGPreflightScreenCaptureAccess() else {
+            // macOS asks by itself the first time; after a refusal its privacy pane opens, on every call until allowed.
+            guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
+                PrivacySettings.ask(.screen)
                 return
-                    "error: Mac-Olama may not see the screen. Tell the user to allow it in System Settings → Privacy & Security → Screen & System Audio Recording."
+                    "error: Mac-Olama may not see the screen. A notification now asks the user to allow Mac-Olama in System Settings → Privacy & Security → Screen & System Audio Recording; ask again once they have."
             }
             let front = await MainActor.run { NSWorkspace.shared.frontmostApplication?.localizedName } ?? "?"
             guard let confirmation else { return "error: reading the screen needs the user's approval" }

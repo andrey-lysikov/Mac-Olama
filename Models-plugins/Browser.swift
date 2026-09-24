@@ -364,7 +364,9 @@ enum SafariFailure: Error {
 
     init(error: String) {
         switch true {
-        case error.contains("-1743"): self = .notAllowed
+        case error.contains("-1743"):
+            PrivacySettings.ask(.automation)
+            self = .notAllowed
         case error.contains("Apple Events") || error.contains("Apple events"): self = .javaScriptOff
         case error.contains("NO_WINDOW"): self = .noWindow
         case error.contains("NO_TAB"): self = .noTab
@@ -377,7 +379,7 @@ enum SafariFailure: Error {
         case .javaScriptOff:
             "error: Safari does not let apps run scripts in its pages yet. Tell the user to turn on Safari → Settings → Advanced → Show features for web developers, then Develop → Allow JavaScript from Apple Events."
         case .notAllowed:
-            "error: Mac-Olama may not control Safari. Tell the user to allow it in System Settings → Privacy & Security → Automation → Mac-Olama → Safari."
+            "error: Mac-Olama may not control Safari. A notification now asks the user to allow Mac-Olama → Safari in System Settings → Privacy & Security → Automation; ask again once they have."
         case .noWindow: "error: Safari has no open window; open a page with browser_open"
         case .noTab: "error: there is no tab with that number; call browser_tabs"
         case .missing(let id): "error: element \(id) is not on the page any more; call browser_read and use the new numbers"

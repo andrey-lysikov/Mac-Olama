@@ -258,7 +258,7 @@ public actor ModelDownloader {
 
         var request = url.host?.hasSuffix("huggingface.co") == true ? client.request(url) : URLRequest(url: url)
         request.setValue(nil, forHTTPHeaderField: "Accept")
-        request.setValue("Mac-Olama/0.1", forHTTPHeaderField: "User-Agent")
+        request.setValue(HTTP.appUserAgent, forHTTPHeaderField: "User-Agent")
         if offset > 0 { request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range") }
 
         let (http, body, bridge) = try await ChunkedResponse.begin(request, on: session)

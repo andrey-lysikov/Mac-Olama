@@ -81,7 +81,10 @@ import Testing
 
     @Test func placeIsParsed() throws {
         let place = try WeatherToolProvider.parsePlace(geocoding)
-        #expect(place == WeatherToolProvider.Place(name: "Москва", region: "Москва", country: "Россия", latitude: 55.75, longitude: 37.62))
+        #expect(
+            place
+                == WeatherToolProvider.Place(
+                    name: "Москва", region: "Москва", country: "Россия", latitude: 55.75, longitude: 37.62, timeZone: "Europe/Moscow"))
         #expect(try WeatherToolProvider.parsePlace(Data(#"{"generationtime_ms":0.1}"#.utf8)) == nil)
     }
 

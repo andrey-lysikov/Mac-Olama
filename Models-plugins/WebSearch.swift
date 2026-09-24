@@ -19,8 +19,11 @@ public protocol SearchProvider: Sendable {
 
 /// Shared fetch with a browser-like UA and a hard timeout.
 enum HTTP {
+    /// Plain product token for APIs that want to know the client, carrying the app's own version.
+    static let appUserAgent = "Mac-Olama/" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0")
     static let userAgent =
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15 Mac-Olama/0.1"
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15 "
+        + appUserAgent
 
     /// `userAgent`/`accept` nil = do not set the header (the session's defaults apply).
     static func get(

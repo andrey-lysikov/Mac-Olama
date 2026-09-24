@@ -133,7 +133,7 @@ enum HTTPJSON {
     /// requests must stay byte-identical to what they were (remote inference servers, port probes).
     static func request(
         _ url: URL, token: String? = nil, jsonBody: Data? = nil, timeout: TimeInterval? = nil,
-        accept: String? = "application/json", userAgent: String? = "Mac-Olama/0.1"
+        accept: String? = "application/json", userAgent: String? = HTTP.appUserAgent
     ) -> URLRequest {
         var r = URLRequest(url: url)
         if let timeout { r.timeoutInterval = timeout }

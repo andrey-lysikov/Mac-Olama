@@ -20,7 +20,18 @@ enum CalendarAccess {
         }
     }
 
-    static func allowed(_ type: EKEntityType) -> Bool { EKEventStore.authorizationStatus(for: type) == .fullAccess }
+    /// Asked on every call without full access: macOS shows its question while it has none (a new build is a new app
+    /// to it, write-only access asks to widen), and after a refusal its privacy pane opens instead.
+    static func allowed(_ type: EKEntityType) async -> Bool {
+        if EKEventStore.authorizationStatus(for: type) != .fullAccess {
+            _ = try? await (type == .event ? store.requestFullAccessToEvents() : store.requestFullAccessToReminders())
+        }
+        guard EKEventStore.authorizationStatus(for: type) == .fullAccess else {
+            PrivacySettings.ask(type == .event ? .calendars : .reminders)
+            return false
+        }
+        return true
+    }
 }
 
 /// `calendar_events`, `calendar_add_event`, `reminders_list` and `reminders_add`: the user's Calendar and Reminders.
@@ -105,13 +116,13 @@ public struct CalendarToolProvider: ToolProvider {
     // EventKit, on the main actor with the one store
 
     private static let noCalendar =
-        "error: Mac-Olama may not read the calendar. Tell the user to allow it in System Settings → Privacy & Security → Calendars."
+        "error: Mac-Olama may not read the calendar. A notification now asks the user to allow Mac-Olama in System Settings → Privacy & Security → Calendars; ask again once they have."
     private static let noReminders =
-        "error: Mac-Olama may not read reminders. Tell the user to allow it in System Settings → Privacy & Security → Reminders."
+        "error: Mac-Olama may not read reminders. A notification now asks the user to allow Mac-Olama in System Settings → Privacy & Security → Reminders; ask again once they have."
 
     @MainActor
-    private static func events(from: Date, days: Int) -> String {
-        guard CalendarAccess.allowed(.event) else { return noCalendar }
+    private static func events(from: Date, days: Int) async -> String {
+        guard await CalendarAccess.allowed(.event) else { return noCalendar }
         let start = Calendar.current.startOfDay(for: from)
         guard let end = Calendar.current.date(byAdding: .day, value: days, to: start) else { return "error: bad date" }
         let store = CalendarAccess.store
@@ -132,8 +143,8 @@ public struct CalendarToolProvider: ToolProvider {
     }
 
     @MainActor
-    private static func addEvent(title: String, start: Date, minutes: Int, allDay: Bool, place: String?, notes: String?) -> String {
-        guard CalendarAccess.allowed(.event) else { return noCalendar }
+    private static func addEvent(title: String, start: Date, minutes: Int, allDay: Bool, place: String?, notes: String?) async -> String {
+        guard await CalendarAccess.allowed(.event) else { return noCalendar }
         let store = CalendarAccess.store
         guard let calendar = store.defaultCalendarForNewEvents else { return "error: the user has no calendar to add to" }
         let event = EKEvent(eventStore: store)
@@ -160,7 +171,7 @@ public struct CalendarToolProvider: ToolProvider {
 
     @MainActor
     private static func reminders(list: String?) async -> String {
-        guard CalendarAccess.allowed(.reminder) else { return noReminders }
+        guard await CalendarAccess.allowed(.reminder) else { return noReminders }
         let store = CalendarAccess.store
         var calendars = store.calendars(for: .reminder)
         if let list, !list.isEmpty {
@@ -187,8 +198,8 @@ public struct CalendarToolProvider: ToolProvider {
     }
 
     @MainActor
-    private static func addReminder(title: String, due: Date?, notes: String?) -> String {
-        guard CalendarAccess.allowed(.reminder) else { return noReminders }
+    private static func addReminder(title: String, due: Date?, notes: String?) async -> String {
+        guard await CalendarAccess.allowed(.reminder) else { return noReminders }
         let store = CalendarAccess.store
         guard let list = store.defaultCalendarForNewReminders() else { return "error: the user has no Reminders list to add to" }
         let reminder = EKReminder(eventStore: store)
@@ -251,9 +262,9 @@ public struct TimerToolProvider: ToolProvider {
                 return "error: give minutes or a time"
             }
             guard fire.timeIntervalSinceNow >= 1 else { return "error: that time has already passed; \(ToolDate.now)" }
-            guard await center.notificationSettings().authorizationStatus == .authorized else {
+            guard await NotificationService.shared.ensureAllowed() else {
                 return
-                    "error: Mac-Olama may not show notifications. Tell the user to allow them in System Settings → Notifications → Mac-Olama."
+                    "error: Mac-Olama may not show notifications. System Settings → Notifications is now open: tell the user to allow Mac-Olama there and ask again."
             }
             let content = UNMutableNotificationContent()
             content.title = String(localized: "Reminder")

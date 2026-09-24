@@ -51,7 +51,10 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
             await decision(within: 60)
         }
         switch manager.authorizationStatus {
-        case .notDetermined, .denied, .restricted: throw Failure.denied
+        case .denied, .restricted:
+            PrivacySettings.ask(.location)
+            throw Failure.denied
+        case .notDetermined: throw Failure.denied
         default: break
         }
         return await describe(try await fix(within: 30))
@@ -149,7 +152,7 @@ extension LocationService.Failure {
     var toolText: String {
         switch self {
         case .denied:
-            "error: Location Services are off for Mac-Olama. Ask the user which place they mean; they can allow Mac-Olama in System Settings → Privacy & Security → Location Services."
+            "error: Location Services are off for Mac-Olama. A notification now asks the user to allow Mac-Olama in System Settings → Privacy & Security → Location Services; meanwhile ask which place they mean."
         case .unavailable(let reason):
             "error: this Mac's location is unknown right now (\(reason)). Ask the user which place they mean."
         }
@@ -198,7 +201,8 @@ extension WeatherToolProvider {
     static func currentPlace() async throws -> Place {
         let here = try await LocationService.shared.current()
         return Place(
-            name: here.city ?? "your location", region: nil, country: here.country, latitude: here.latitude, longitude: here.longitude)
+            name: here.city ?? "your location", region: nil, country: here.country, latitude: here.latitude, longitude: here.longitude,
+            timeZone: TimeZone.current.identifier)
     }
 }
 
@@ -448,6 +452,8 @@ extension String {
 public struct WeatherToolProvider: ToolProvider {
     public var geocodingURL = URL(string: "https://geocoding-api.open-meteo.com/v1/search")!
     public var forecastURL = URL(string: "https://api.open-meteo.com/v1/forecast")!
+    /// Fallback when Open-Meteo fails: ProjectEOL's MCP server with NOAA GFS, as System Spinner uses it.
+    public var projectEolURL = URL(string: "https://weatherapi.projecteol.ru/mcp/")!
     /// The location switch is on too: a call without a place means where the user is, found by Location Services,
     /// so a question about the weather "here" takes one round instead of asking the city first.
     public var usesCurrentPlace = false
@@ -463,7 +469,7 @@ public struct WeatherToolProvider: ToolProvider {
             ToolSpec(
                 name: "get_weather",
                 description:
-                    "Current weather and a daily forecast (up to 7 days) for a place: temperature, feels-like, conditions, precipitation and its probability, wind, humidity, pressure. Data from Open-Meteo.",
+                    "Current weather and a daily forecast (up to 7 days) for a place: temperature, feels-like, conditions, precipitation and its probability, wind, humidity, pressure. Data from Open-Meteo, or from NOAA GFS through ProjectEOL when Open-Meteo is down.",
                 parametersJSONSchema:
                     #"{"type":"object","properties":{"# + place
                     + #","days":{"type":"integer","description":"Days of forecast, 1 to 7 (default 3)"}}"#
@@ -481,13 +487,19 @@ public struct WeatherToolProvider: ToolProvider {
             let place: Place
             if location.isEmpty {
                 place = try await Self.currentPlace()
-            } else if let found = try Self.parsePlace(try await get(geocodeQuery(location))) {
+            } else if let found = try await findPlace(location) {
                 place = found
             } else {
                 return "error: no place called \"\(location)\"; try another spelling or add the country"
             }
-            let forecast = try await get(forecastQuery(place, days: days))
-            return ToolOutput.wrap(try Self.format(place: place, forecast: forecast), source: "get_weather: \(place.name)")
+            let text: String
+            do {
+                text = try Self.format(place: place, forecast: try await get(forecastQuery(place, days: days)))
+            } catch {
+                let forecast = try await callProjectEol("get_weather_forecast", arguments: projectEolForecastArguments(place, days: days))
+                text = try Self.formatProjectEol(place: place, days: days, forecast: forecast)
+            }
+            return ToolOutput.wrap(text, source: "get_weather: \(place.name)")
         } catch let failure as LocationService.Failure {
             return failure.toolText
         } catch {
@@ -528,9 +540,44 @@ public struct WeatherToolProvider: ToolProvider {
         return c?.url
     }
 
+    private func findPlace(_ name: String) async throws -> Place? {
+        do {
+            return try Self.parsePlace(try await get(geocodeQuery(name)))
+        } catch {
+            return try Self.parseProjectEolPlace(try await callProjectEol("search_locations", arguments: ["query": name, "limit": 1]))
+        }
+    }
+
+    private func projectEolForecastArguments(_ place: Place, days: Int) -> [String: Any] {
+        [
+            // Decimals, or 55.76 goes out as 55.759999999999998.
+            "latitude": NSDecimalNumber(string: String(format: "%.2f", place.latitude)),
+            "longitude": NSDecimalNumber(string: String(format: "%.2f", place.longitude)),
+            "hours": min(days * 24, 168),
+            "parameters": Self.projectEolParameters,
+        ]
+    }
+
+    /// One MCP `tools/call` to ProjectEOL; the answer is plain JSON-RPC.
+    private func callProjectEol(_ tool: String, arguments: [String: Any]) async throws -> Data {
+        let body: [String: Any] = [
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": ["name": tool, "arguments": arguments] as [String: Any],
+        ]
+        var request = URLRequest(url: projectEolURL, timeoutInterval: 15)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue(HTTP.appUserAgent, forHTTPHeaderField: "User-Agent")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        return data
+    }
+
+    /// Open-Meteo only. 5 s, not the usual 15: a slow answer is not worth waiting for when ProjectEOL can stand in.
     private func get(_ url: URL?) async throws -> Data {
         guard let url else { throw URLError(.badURL) }
-        let (data, response) = try await HTTP.get(url, userAgent: "Mac-Olama/0.1", accept: nil)
+        let (data, response) = try await HTTP.get(url, timeout: 5, userAgent: HTTP.appUserAgent, accept: nil)
         guard response.statusCode == 200 else { throw URLError(.badServerResponse) }
         return data
     }
@@ -543,6 +590,8 @@ public struct WeatherToolProvider: ToolProvider {
         var country: String?
         var latitude: Double
         var longitude: Double
+        /// IANA name; ProjectEOL answers in UTC and its hours are put into this zone's days.
+        var timeZone: String? = nil
     }
 
     static func parsePlace(_ data: Data) throws -> Place? {
@@ -551,7 +600,8 @@ public struct WeatherToolProvider: ToolProvider {
             let latitude = first["latitude"] as? Double, let longitude = first["longitude"] as? Double
         else { return nil }
         return Place(
-            name: name, region: first["admin1"] as? String, country: first["country"] as? String, latitude: latitude, longitude: longitude)
+            name: name, region: first["admin1"] as? String, country: first["country"] as? String, latitude: latitude, longitude: longitude,
+            timeZone: first["timezone"] as? String)
     }
 
     static func format(place: Place, forecast data: Data) throws -> String {
@@ -596,6 +646,112 @@ public struct WeatherToolProvider: ToolProvider {
         }
         lines.append("Source: Open-Meteo.com (CC BY 4.0).")
         return lines.joined(separator: "\n")
+    }
+
+    // ProjectEOL (NOAA GFS): hourly, then 3-hourly values in UTC and SI units
+
+    static let projectEolParameters = [
+        "surface.air_temperature_2m", "surface.relative_humidity_2m", "surface.eastward_wind_10m", "surface.northward_wind_10m",
+        "surface.wind_speed_of_gust", "surface.surface_air_pressure", "surface.cloud_area_fraction", "surface.precipitation_flux",
+    ]
+
+    static func projectEolContent(_ data: Data) throws -> [String: Any] {
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let result = json?["result"] as? [String: Any], result["isError"] as? Bool != true,
+            let content = result["structuredContent"] as? [String: Any]
+        else { throw URLError(.cannotParseResponse) }
+        return content
+    }
+
+    static func parseProjectEolPlace(_ data: Data) throws -> Place? {
+        guard let first = (try projectEolContent(data)["results"] as? [[String: Any]])?.first, let name = first["name"] as? String,
+            let latitude = (first["latitude"] as? NSNumber)?.doubleValue, let longitude = (first["longitude"] as? NSNumber)?.doubleValue
+        else { return nil }
+        // The country comes as an ISO code.
+        let country = (first["country"] as? String).map { Locale.current.localizedString(forRegionCode: $0) ?? $0 }
+        return Place(
+            name: name, region: nil, country: country, latitude: latitude, longitude: longitude, timeZone: first["timezone"] as? String)
+    }
+
+    static func formatProjectEol(place: Place, days: Int, forecast data: Data) throws -> String {
+        let iso = ISO8601DateFormatter()
+        let points: [(time: Date, values: [String: Double])] =
+            (try projectEolContent(data)["forecast"] as? [[String: Any]] ?? []).compactMap { point in
+                guard let time = (point["time"] as? String).flatMap(iso.date(from:)), let values = point["values"] as? [String: Any]
+                else { return nil }
+                return (time, values.compactMapValues { (($0 as? [String: Any])?["value"] as? NSNumber)?.doubleValue })
+            }
+        guard !points.isEmpty else { throw URLError(.cannotParseResponse) }
+
+        let zone = place.timeZone.flatMap(TimeZone.init(identifier:)) ?? .current
+        let local = DateFormatter()
+        local.locale = Locale(identifier: "en_US_POSIX")
+        local.timeZone = zone
+        let celsius = { (values: [String: Double]) in values["surface.air_temperature_2m"].map { $0 - 273.15 } }
+        let wind = { (values: [String: Double]) -> (speed: Double, from: Double)? in
+            guard let u = values["surface.eastward_wind_10m"], let v = values["surface.northward_wind_10m"] else { return nil }
+            return ((u * u + v * v).squareRoot(), (atan2(-u, -v) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360))
+        }
+        // The flux is kg/m²/s, i.e. mm/s of water; each value stands until the next one.
+        let rain = { (i: Int) -> Double in
+            let step = i + 1 < points.count ? points[i + 1].time.timeIntervalSince(points[i].time) : 3600
+            return max(0, points[i].values["surface.precipitation_flux"] ?? 0) * step
+        }
+
+        let label = [place.name, place.region == place.name ? nil : place.region, place.country].compactMap { $0 }.joined(separator: ", ")
+        var lines = [String(format: "Weather for %@ (%.2f, %.2f)", label, place.latitude, place.longitude)]
+
+        let now = points[0].values
+        var parts: [String] = []
+        if let t = celsius(now) { parts.append(String(format: "%.1f°C", t)) }
+        let rate = max(0, now["surface.precipitation_flux"] ?? 0) * 3600
+        parts.append(condition(cloud: now["surface.cloud_area_fraction"] ?? 0, rain: rate, rainAbove: 0.1, celsius: celsius(now)))
+        if let h = now["surface.relative_humidity_2m"] { parts.append(String(format: "humidity %.0f%%", h)) }
+        if let w = wind(now) {
+            var text = String(format: "wind %.1f m/s from the ", w.speed) + compass(w.from)
+            if let g = now["surface.wind_speed_of_gust"] { text += String(format: ", gusts %.0f m/s", g) }
+            parts.append(text)
+        }
+        if rate > 0.05 { parts.append(String(format: "precipitation %.1f mm/h", rate)) }
+        if let p = now["surface.surface_air_pressure"].map({ $0 / 100 }) {
+            parts.append(String(format: "pressure %.0f hPa (%.0f mmHg)", p, p * 0.750062))
+        }
+        local.dateFormat = "yyyy-MM-dd'T'HH:mm"
+        lines.append("Now (\(local.string(from: points[0].time))): " + parts.joined(separator: ", "))
+
+        local.dateFormat = "yyyy-MM-dd"
+        var dates: [String] = []
+        var byDate: [String: [Int]] = [:]
+        for i in points.indices {
+            let date = local.string(from: points[i].time)
+            if byDate[date] == nil {
+                guard dates.count < days else { break }
+                dates.append(date)
+            }
+            byDate[date, default: []].append(i)
+        }
+        lines.append("Forecast:")
+        for date in dates {
+            let hours = byDate[date] ?? []
+            let temperatures = hours.compactMap { celsius(points[$0].values) }
+            let clouds = hours.compactMap { points[$0].values["surface.cloud_area_fraction"] }
+            let sum = hours.reduce(0) { $0 + rain($1) }
+            var day = "\(date): "
+            if let lo = temperatures.min(), let hi = temperatures.max() { day += String(format: "%.0f…%.0f°C", lo, hi) }
+            let cloud = clouds.isEmpty ? 0 : clouds.reduce(0, +) / Double(clouds.count)
+            day += ", " + condition(cloud: cloud, rain: sum, rainAbove: 1, celsius: temperatures.max())
+            day += String(format: ", precipitation %.1f mm", sum)
+            if let top = hours.compactMap({ wind(points[$0].values)?.speed }).max() { day += String(format: ", wind up to %.0f m/s", top) }
+            lines.append(day)
+        }
+        lines.append("Source: NOAA GFS through ProjectEOL (Open-Meteo did not answer); times are local.")
+        return lines.joined(separator: "\n")
+    }
+
+    /// GFS has no weather code: the words come from cloud cover (0…1) and rain, snow when it stays below freezing.
+    static func condition(cloud: Double, rain: Double, rainAbove: Double, celsius: Double?) -> String {
+        if rain >= rainAbove { return (celsius ?? 1) <= 0 ? "snow" : "rain" }
+        return cloud < 0.2 ? "clear sky" : cloud < 0.6 ? "partly cloudy" : "overcast"
     }
 
     /// WMO weather interpretation codes, as Open-Meteo documents them.
