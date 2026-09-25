@@ -25,8 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Unit tests run hosted inside the app: keep it inert then (no status item, API server, downloads or model loading).
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
         UserDefaults.standard.register(defaults: SettingsDefaults.registration)
-        // Tooltips carry real information here (why a model fits or not), so they should not wait the default ~1.5 s.
-        UserDefaults.standard.set(150, forKey: "NSInitialToolTipDelay")
+        // An earlier build shortened the tooltip delay in the app's own defaults; the system delay applies again.
+        UserDefaults.standard.removeObject(forKey: "NSInitialToolTipDelay")
         NSApp.setActivationPolicy(.accessory)  // LSUIElement: no Dock icon; windows are raised manually
         installMainMenu()
         container = AppContainer()

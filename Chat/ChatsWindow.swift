@@ -507,21 +507,21 @@ private struct ChatsSplitView: View {
 
     private var chatList: some View {
         @Bindable var container = container
-        // Clicking the empty area below the rows clears a `List` selection; the chat on the right stays open instead.
-        let selection = Binding(
-            get: { viewModel.selectedChatID },
-            set: { if let id = $0 { viewModel.selectedChatID = id } })
-        return List(selection: selection) {
+        // No `List` selection: it was cleared by a click on the empty area below the rows and fought back into place
+        // (blue, then grey), and its highlight faded whenever the composer held the keyboard. A click opens the chat,
+        // and the open chat is tinted like the chosen section below, whatever has the focus.
+        return List {
             ForEach(groupedChats, id: \.0) { section, chats in
                 Section(section) {
                     ForEach(chats) { chat in
+                        let isChosen = chat.id == viewModel.selectedChatID
                         HStack(spacing: 6) {
                             VStack(alignment: .leading, spacing: 2) {
                                 // Titles come from the first question: three lines tell chats apart better than one.
                                 Text(chat.title.isEmpty ? String(localized: "Untitled chat") : chat.title).lineLimit(3)
                                 // A plain date, not a ticking relative timer: a running clock read as "still generating".
-                                Text(chat.updatedAt.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(
-                                    .secondary)
+                                Text(chat.updatedAt.formatted(date: .abbreviated, time: .shortened)).font(.caption)
+                                    .foregroundStyle(isChosen ? AnyShapeStyle(.white.opacity(0.8)) : AnyShapeStyle(.secondary))
                             }
                             Spacer(minLength: 4)
                             if viewModel.generatingChatIDs.contains(chat.id) {
@@ -533,10 +533,19 @@ private struct ChatsSplitView: View {
                             } label: {
                                 Image(systemName: "trash").contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain).foregroundStyle(.secondary)
+                            .buttonStyle(.plain).foregroundStyle(isChosen ? AnyShapeStyle(.white.opacity(0.8)) : AnyShapeStyle(.secondary))
                             .help(String(localized: "Delete Chat"))
                         }
-                        .tag(chat.id)
+                        .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                        .onTapGesture { viewModel.selectedChatID = chat.id }
+                        .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
+                        .listRowBackground(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(isChosen ? Color.accentColor : .clear)
+                                .padding(.horizontal, 8).padding(.vertical, 1))
+                        .accessibilityAddTraits(isChosen ? [.isButton, .isSelected] : .isButton)
                         // Rows run one under another; the only lines in the list are the ones between dates.
                         .listRowSeparator(.hidden)
                         .contextMenu {
@@ -885,7 +894,6 @@ struct ChatMessageView: View {
     /// Routes and places the tools found on the way, drawn under the answer.
     var maps: [TranscriptMap] = []
     var onRegenerate: (() -> Void)?
-    @State private var hovering = false
     @Environment(AppContainer.self) private var container
 
     /// Reasoning channels and tool syntax are the model talking to itself; only the answer is shown and copied.
@@ -968,11 +976,9 @@ struct ChatMessageView: View {
                         }
                     }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
-                    .opacity(hovering || onRegenerate != nil ? 1 : 0)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .onHover { hovering = $0 }
         }
     }
 }
