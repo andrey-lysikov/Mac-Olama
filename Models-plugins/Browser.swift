@@ -6,19 +6,13 @@ import Foundation
 // Safari
 
 /// `browser_*`: the user's own Safari, driven through Apple Events (JXA run by osascript, no shell). The model opens,
-/// reads, clicks and goes back on its own; typing, sending a form and downloading wait for the user's approval, and
-/// password fields are never touched. Off by default, with its own switch in the settings.
+/// reads, clicks, types and goes back on its own; password fields are never touched. Off by default, with its own switch in the settings.
 public struct SafariToolProvider: ToolProvider {
     public struct Configuration: Sendable {
         /// Characters of page text one read returns; the same setting as the page reader's.
         public var pageCharacters: Int
-        /// Asks before typing, sending a form or downloading. Without one those actions are refused, never done unasked.
-        public var confirmation: (any ToolConfirmation)?
         public var timeout: TimeInterval = 30
-        public init(pageCharacters: Int, confirmation: (any ToolConfirmation)?) {
-            self.pageCharacters = pageCharacters
-            self.confirmation = confirmation
-        }
+        public init(pageCharacters: Int) { self.pageCharacters = pageCharacters }
     }
 
     public var configuration: Configuration
@@ -47,14 +41,14 @@ public struct SafariToolProvider: ToolProvider {
             ToolSpec(
                 name: "browser_click",
                 description:
-                    "Click a link or button by its number from browser_read, then return the page as it is afterwards. A button that sends a form or a download link asks the user first.",
+                    "Click a link or button by its number from browser_read, then return the page as it is afterwards.",
                 parametersJSONSchema:
                     #"{"type":"object","properties":{"element":{"type":"integer","description":"Number from browser_read"},"#
                     + Self.tabParameter + #"}},"required":["element"]}"#),
             ToolSpec(
                 name: "browser_type",
                 description:
-                    "Type text into a field (or pick a list option by its text) by its number from browser_read, optionally sending the form after. The user approves every typing; password fields are refused.",
+                    "Type text into a field (or pick a list option by its text) by its number from browser_read, optionally sending the form after. Password fields are refused.",
                 parametersJSONSchema:
                     #"{"type":"object","properties":{"element":{"type":"integer","description":"Number from browser_read"},"text":{"type":"string"},"submit":{"type":"boolean","description":"Send the form (or press Enter) after typing; default false"},"#
                     + Self.tabParameter + #"}},"required":["element","text"]}"#),
@@ -117,13 +111,7 @@ public struct SafariToolProvider: ToolProvider {
     }
 
     private func click(_ element: Int, tab: Int?) async throws -> String {
-        let target = try await describe(element, tab: tab)
-        if target.submits || target.download {
-            let what = target.download ? String(localized: "This downloads a file.") : String(localized: "This sends a form.")
-            guard try await approved(title: String(localized: "Press “\(target.label)” on \(target.host)?"), detail: what) else {
-                return "error: the user declined; do not try this action another way"
-            }
-        }
+        _ = try await describe(element, tab: tab)  // a stale number fails here with a clear error, before anything is pressed
         let body = """
             const t = tabAt(\(Self.literal(tab)));
             t.doJavaScript(\(Self.literal(Self.clickScript(element))));
@@ -137,12 +125,6 @@ public struct SafariToolProvider: ToolProvider {
         let target = try await describe(element, tab: tab)
         guard target.password != true else { return "error: that is a password field; the user types passwords themselves" }
         guard target.typable == true else { return "error: element \(element) is not a field; read the page again" }
-        let detail =
-            String(localized: "Text: \(String(text.prefix(300)))")
-            + (submit ? "\n" + String(localized: "Then the form is sent.") : "")
-        guard try await approved(title: String(localized: "Type into “\(target.label)” on \(target.host)?"), detail: detail) else {
-            return "error: the user declined; do not try this action another way"
-        }
         let body = """
             const t = tabAt(\(Self.literal(tab)));
             const done = t.doJavaScript(\(Self.literal(Self.fillScript(element, text: text, submit: submit))));
@@ -171,11 +153,6 @@ public struct SafariToolProvider: ToolProvider {
         guard out != "MISSING" else { throw SafariFailure.missing(element) }
         guard let target = try? JSONDecoder().decode(Target.self, from: Data(out.utf8)) else { throw SafariFailure.unreadable(out) }
         return target
-    }
-
-    private func approved(title: String, detail: String) async throws -> Bool {
-        guard let confirmation = configuration.confirmation else { return false }
-        return await confirmation.confirm(title: title, detail: detail)
     }
 
     // Running JXA
