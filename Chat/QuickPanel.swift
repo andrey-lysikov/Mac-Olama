@@ -31,6 +31,8 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
     private var fitScheduled = false
     /// Waits for the end of a drag, see `windowDidMove`.
     private var dragWatch: Task<Void, Never>?
+    /// The chat is being read before the panel comes up; a second hotkey press meanwhile closes it instead.
+    private var opening: Task<Void, Never>?
 
     init(container: AppContainer) {
         self.container = container
@@ -110,7 +112,7 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
     var isVisible: Bool { panel.isVisible }
 
     func toggle() {
-        isVisible ? hide() : show()
+        isVisible || opening != nil ? hide() : show()
     }
 
     /// The menu bar icon's window, so a click on it is not taken for "clicked elsewhere".
@@ -128,24 +130,35 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
             panel.orderFrontRegardless()
             panel.makeKey()
             viewModel.panelDidAppear()
+            Task { await viewModel.loadActiveChat() }
             return
         }
-        position()
-        // Lay out and size the panel before it is on screen, so it appears at its final height instead of growing a frame
-        // later (the deferred `scheduleFit` is for layout passes; here, in an event handler, resizing directly is safe).
-        panel.contentView?.layoutSubtreeIfNeeded()
-        fit(contentHeight: contentHeight)
-        // The app is usually not active here (hotkey, status item): "regardless" orders the panel front anyway,
-        // and a non-activating panel takes the keyboard without pulling the app forward.
-        panel.orderFrontRegardless()
-        panel.makeKey()
-        // A status menu item dismisses its menu only after this call returns; repeat once it has.
-        Task { @MainActor [panel] in panel?.orderFrontRegardless() }
-        viewModel.panelDidAppear()
-        installFocusObserver()
+        guard opening == nil else { return }
+        // The chat is read first: shown with the last transcript's height, the panel shrank on screen a moment later
+        // whenever the active chat turned out to be another one, or empty.
+        opening = Task { [weak self] in
+            await self?.viewModel.loadActiveChat()
+            guard let self, !Task.isCancelled else { return }
+            opening = nil
+            position()
+            // Lay out and size the panel before it is on screen, so it appears at its final height instead of growing
+            // a frame later (the deferred `scheduleFit` is for layout passes; resizing directly is safe here).
+            panel.contentView?.layoutSubtreeIfNeeded()
+            fit(contentHeight: contentHeight)
+            // The app is usually not active here (hotkey, status item): "regardless" orders the panel front anyway,
+            // and a non-activating panel takes the keyboard without pulling the app forward.
+            panel.orderFrontRegardless()
+            panel.makeKey()
+            // A status menu item dismisses its menu only after its action returns; repeat once it has.
+            Task { @MainActor [panel] in panel?.orderFrontRegardless() }
+            viewModel.panelDidAppear()
+            installFocusObserver()
+        }
     }
 
     func hide() {
+        opening?.cancel()
+        opening = nil
         panel.orderOut(nil)
         removeFocusObserver()
     }
@@ -412,9 +425,9 @@ final class QuickPanelViewModel: ConversationStreamDelegate, ConversationStreamH
     /// Bumped on every show: the field takes the keyboard each time, not only the first time the view appears.
     private(set) var focusToken = 0
 
+    /// The chat itself is loaded by the caller: before the panel is shown, so it comes up at the right height.
     func panelDidAppear() {
         focusToken += 1
-        Task { await loadActiveChat() }
     }
 
     // Chat

@@ -332,13 +332,18 @@ final class DownloadViewModel {
 
     // Verdict
 
+    /// nil until the row's size is known: there is nothing to estimate from.
+    func fit(for row: Row) -> ModelFitReport? {
+        guard row.detailsLoaded, let bytes = row.sizeBytes, bytes > 0 else { return nil }
+        return ModelFitReport.evaluate(
+            modelBytes: bytes, contextLength: row.contextLength, hardware: container.hardware, kvCache: row.kvCache,
+            availableBytes: HardwareProfile.availableMemoryBytes())
+    }
+
     func verdict(for row: Row) -> Verdict {
         guard row.detailsLoaded else { return .unknown(String(localized: "Checking size and architecture…")) }
-        guard let bytes = row.sizeBytes, bytes > 0 else { return .unknown(String(localized: "Model size is unknown.")) }
+        guard let fit = fit(for: row) else { return .unknown(String(localized: "Model size is unknown.")) }
         let hardware = container.hardware
-        let fit = ModelFitReport.evaluate(
-            modelBytes: bytes, contextLength: row.contextLength, hardware: hardware, kvCache: row.kvCache,
-            availableBytes: HardwareProfile.availableMemoryBytes())
         let machine = "\(hardware.chipName), \(hardware.memoryGB) GB"
         let needed = (Int64(hardware.memoryBytes) - fit.memoryAfterLoadBytes).memorySizeText
         let limit = Int64(hardware.wiredLimitBytes).memorySizeText
@@ -566,9 +571,10 @@ struct ModelLibraryView: View {
         return HStack(spacing: 14) {
             rowText(
                 source: row.source, owners: row.owners, repoID: row.repoID, sizeBytes: row.sizeBytes, quantization: row.quantization,
-                detail: detail(repoID: row.repoID, kind: row.kind, contextLength: row.contextLength), gated: row.isGated)
+                detail: detail(repoID: row.repoID, kind: row.kind, contextLength: row.contextLength), gated: row.isGated,
+                stars: vm.fit(for: row)?.stars)
             Spacer(minLength: 8)
-            // The reason is a plain tooltip; the app shortens the system tooltip delay so it appears as soon as the pointer stops.
+            // The reason is a plain tooltip.
             Image(systemName: verdict.symbol)
                 .font(.system(size: Self.pictogramSize))
                 .foregroundStyle(.secondary)  // monochrome: the shape (check, question mark, triangle) carries the verdict
@@ -588,15 +594,17 @@ struct ModelLibraryView: View {
 
     /// Left: the model's icon, two lines tall. Line 1: model name (large), size and quantization. Line 2: full identifier with its
     /// owner, input → output, maximum context. The first line is a single attributed Text so every part shares one baseline.
+    /// `stars` is the memory fit, as in the status menu; left out when the size is unknown.
     private func rowText(
         source: ModelSource?, owners: ModelOwners?, repoID: String, sizeBytes: Int64?, quantization: String?, detail: String,
-        gated: Bool = false
+        gated: Bool = false, stars: Int? = nil
     ) -> some View {
         var line = AttributedString()
         var name = AttributedString(repoID.split(separator: "/").last.map(String.init) ?? repoID)
         name.font = .title3.weight(.semibold)
         var facts: [String] = []
         if let sizeBytes, sizeBytes > 0 { facts.append(sizeBytes.fileSizeText) }
+        if let stars { facts.append(String(repeating: "★", count: stars)) }
         if let quantization, !quantization.isEmpty { facts.append(quantization) }
         var tail = AttributedString(facts.isEmpty ? "" : "   " + facts.joined(separator: "   "))
         tail.font = .body
@@ -745,7 +753,8 @@ struct ModelLibraryView: View {
         return HStack(alignment: .center, spacing: 14) {
             rowText(
                 source: model.source, owners: model.owners, repoID: model.repoID, sizeBytes: model.sizeBytes,
-                quantization: model.quantization, detail: detailText
+                quantization: model.quantization, detail: detailText,
+                stars: model.sizeBytes > 0 ? container.fit(for: model).stars : nil
             )
             .opacity(unavailable ? 0.4 : 1)
             .layoutPriority(1)  // a narrow window shortens the controls on the right, not the model's name
@@ -1104,7 +1113,6 @@ struct ModelLibraryView: View {
             Text(text).font(.caption).foregroundStyle(.red).underline().multilineTextAlignment(.leading)
         }
         .buttonStyle(.plain)
-        .pointerStyle(.link)
     }
 
     /// Shared by every pictogram in the lists (actions, verdicts, marks); halved from 28 pt at the customer's request.
@@ -1139,7 +1147,7 @@ struct TokenSettingsView: View {
                 } label: {
                     Image(systemName: "globe").font(.title3)
                 }
-                .buttonStyle(.plain).foregroundStyle(.secondary).pointerStyle(.link)
+                .buttonStyle(.plain).foregroundStyle(.secondary)
                 .help(String(localized: "Get a token on huggingface.co"))
                 .accessibilityLabel(String(localized: "Get a token on huggingface.co"))
             }
