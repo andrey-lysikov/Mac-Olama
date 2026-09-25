@@ -95,11 +95,9 @@ public struct MacInfoToolProvider: ToolProvider {
 // Network
 
 /// `network_check`: ping, traceroute, DNS, an HTTP request, a TCP port and the speed test macOS ships. Fixed programs, no
-/// shell; the host is checked to be a plain name or address. Local and private addresses need the user's approval.
+/// shell; the host is checked to be a plain name or address.
 public struct NetworkToolProvider: ToolProvider {
-    public var confirmation: (any ToolConfirmation)?
-
-    public init(confirmation: (any ToolConfirmation)? = nil) { self.confirmation = confirmation }
+    public init() {}
 
     public var specs: [ToolSpec] {
         [
@@ -124,11 +122,6 @@ public struct NetworkToolProvider: ToolProvider {
         if action == "http", let url = URL(string: raw), let host = url.host() { raw = host }
         guard let host = Self.validHost(raw) else { return "error: host must be a domain name or an IP address" }
         if host.contains(":") { return "error: IPv6 addresses are not supported" }
-        if Self.isLocal(host), let confirmation {
-            let allowed = await confirmation.confirm(
-                title: String(localized: "Check a local address?"), detail: "\(action) \(host)")
-            guard allowed else { return "error: the user declined checking a local address" }
-        }
         let text: String
         switch action {
         case "ping":
@@ -208,8 +201,7 @@ public struct ShortcutToolProvider: ToolProvider {
         public var binary = URL(fileURLWithPath: "/usr/bin/shortcuts")
         public var timeout: TimeInterval = 120
         public var maxOutputCharacters = 8000
-        public var confirmation: (any ToolConfirmation)?
-        public init(confirmation: (any ToolConfirmation)? = nil) { self.confirmation = confirmation }
+        public init() {}
     }
 
     let configuration: Configuration
@@ -225,7 +217,7 @@ public struct ShortcutToolProvider: ToolProvider {
             ToolSpec(
                 name: "run_shortcut",
                 description:
-                    "Run one of the user's Shortcuts by exact name, optionally passing text input. The user is asked to approve each run. Returns the shortcut's text output.",
+                    "Run one of the user's Shortcuts by exact name, optionally passing text input. Returns the shortcut's text output.",
                 parametersJSONSchema:
                     #"{"type":"object","properties":{"name":{"type":"string","description":"Exact shortcut name from list_shortcuts"},"input":{"type":"string","description":"Optional text passed as input"}},"required":["name"]}"#
             ),
@@ -245,11 +237,6 @@ public struct ShortcutToolProvider: ToolProvider {
                 .split(whereSeparator: \.isNewline).map(String.init)
             guard known.contains(name) else { return "error: no shortcut named \"\(name)\"; call list_shortcuts" }
             let input = args.string("input")
-            if let confirmation = configuration.confirmation {
-                let allowed = await confirmation.confirm(
-                    title: "Run shortcut “\(name)”?", detail: input.map { "Input: \($0.prefix(200))" } ?? "No input")
-                guard allowed else { return "error: the user declined to run the shortcut" }
-            }
             let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("macolama-shortcut-\(UUID().uuidString).txt")
             defer { try? FileManager.default.removeItem(at: tmp) }
             var arguments = ["run", name, "--output-path", tmp.path]
@@ -387,12 +374,11 @@ enum ScreenAccess {
 }
 
 /// `clipboard_read`, `clipboard_write` and `screen_read`. The clipboard is read as text, never what a password manager
-/// marked as concealed; the screen is read as recognized text, on this Mac, after the user approves each look.
+/// marked as concealed; the screen is read as recognized text, on this Mac.
 public struct ScreenToolProvider: ToolProvider {
-    public var confirmation: (any ToolConfirmation)?
     public var maxCharacters = 12_000
 
-    public init(confirmation: (any ToolConfirmation)?) { self.confirmation = confirmation }
+    public init() {}
 
     public var specs: [ToolSpec] {
         [
@@ -405,7 +391,7 @@ public struct ScreenToolProvider: ToolProvider {
             ToolSpec(
                 name: "screen_read",
                 description:
-                    "Read the text on the user's screen right now (recognized on this Mac), with the app in front. The user approves every look.",
+                    "Read the text on the user's screen right now (recognized on this Mac), with the app in front.",
                 parametersJSONSchema: #"{"type":"object","properties":{}}"#),
         ]
     }
@@ -429,10 +415,6 @@ public struct ScreenToolProvider: ToolProvider {
                     "error: Mac-Olama may not see the screen. A notification now asks the user to allow Mac-Olama in System Settings → Privacy & Security → Screen & System Audio Recording; ask again once they have."
             }
             let front = await MainActor.run { NSWorkspace.shared.frontmostApplication?.localizedName } ?? "?"
-            guard let confirmation else { return "error: reading the screen needs the user's approval" }
-            guard await confirmation.confirm(title: String(localized: "Read the text on the screen?"), detail: front) else {
-                return "error: the user declined; do not try this another way"
-            }
             return try await readScreen(front: front)
         default:
             throw ConversationError.unknownTool(call.name)

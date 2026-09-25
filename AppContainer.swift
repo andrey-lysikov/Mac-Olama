@@ -1122,26 +1122,25 @@ final class AppContainer {
                         allowedFolders: settings.allowedFolders.map { URL(fileURLWithPath: $0) }, confirmation: NotificationService.shared))
             )
         }
+        // A tool switched on in the settings is the user's permission: only file changes (delete, move, archive) still ask.
         for tool in ExtraTool.allCases where isToolEnabled(tool) {
             switch tool {
             case .calculator: providers.append(JavaScriptToolProvider())
             case .macInfo: providers.append(MacInfoToolProvider())
-            case .network: providers.append(NetworkToolProvider(confirmation: NotificationService.shared))
+            case .network: providers.append(NetworkToolProvider())
             case .weather:
                 var weather = WeatherToolProvider()
                 weather.usesCurrentPlace = isToolEnabled(.location)
                 providers.append(weather)
             case .location: providers += [LocationToolProvider(), MapsToolProvider()]
             case .browser:
-                providers.append(
-                    SafariToolProvider(
-                        configuration: .init(pageCharacters: settings.pageCharacters, confirmation: NotificationService.shared)))
-            case .calendar: providers.append(CalendarToolProvider(confirmation: NotificationService.shared))
+                providers.append(SafariToolProvider(configuration: .init(pageCharacters: settings.pageCharacters)))
+            case .calendar: providers.append(CalendarToolProvider())
             case .timers: providers.append(TimerToolProvider())
-            case .screen: providers.append(ScreenToolProvider(confirmation: NotificationService.shared))
+            case .screen: providers.append(ScreenToolProvider())
             case .currency: providers.append(CurrencyToolProvider())
             case .contacts: providers.append(ContactsToolProvider())
-            case .notes: providers.append(NotesToolProvider(confirmation: NotificationService.shared))
+            case .notes: providers.append(NotesToolProvider())
             case .mail: providers.append(MailDraftToolProvider())
             case .spotlight: providers.append(SpotlightToolProvider())
             case .macControl: providers.append(MacControlToolProvider())
@@ -1149,7 +1148,7 @@ final class AppContainer {
             }
         }
         if settings.shortcutsToolEnabled {
-            providers.append(ShortcutToolProvider(configuration: .init(confirmation: NotificationService.shared)))
+            providers.append(ShortcutToolProvider())
         }
         let tools: any ToolProvider = CompositeToolProvider(providers)
         Task { await conversation.setTools(tools) }

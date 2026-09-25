@@ -4,8 +4,8 @@
 import Contacts
 import Foundation
 
-// The user's own records: contacts, notes and email drafts. Reading is free; a new note waits for the user's
-// approval, and an email is only ever a draft the user sends themselves.
+// The user's own records: contacts, notes and email drafts. An email is only ever a draft the user sends
+// themselves.
 
 // Contacts
 
@@ -90,12 +90,11 @@ public struct ContactsToolProvider: ToolProvider {
 
 // Notes
 
-/// `notes_search`, `notes_read` and `notes_create`: the Notes app through Apple Events. A new note is approved first.
+/// `notes_search`, `notes_read` and `notes_create`: the Notes app through Apple Events.
 public struct NotesToolProvider: ToolProvider {
-    public var confirmation: (any ToolConfirmation)?
     public var maxCharacters = 8000
 
-    public init(confirmation: (any ToolConfirmation)?) { self.confirmation = confirmation }
+    public init() {}
 
     public var specs: [ToolSpec] {
         [
@@ -107,7 +106,7 @@ public struct NotesToolProvider: ToolProvider {
                 name: "notes_read", description: "Read one note from Notes in full, by its title.",
                 parametersJSONSchema: #"{"type":"object","properties":{"title":{"type":"string"}},"required":["title"]}"#),
             ToolSpec(
-                name: "notes_create", description: "Create a note in Notes. The user approves it first.",
+                name: "notes_create", description: "Create a note in Notes.",
                 parametersJSONSchema:
                     #"{"type":"object","properties":{"title":{"type":"string"},"text":{"type":"string"}},"required":["title","text"]}"#
             ),
@@ -146,9 +145,6 @@ public struct NotesToolProvider: ToolProvider {
             guard let title = args.string("title"), !title.isEmpty, let text = args.string("text") else {
                 return toolFailure(missing: "title or text")
             }
-            guard let confirmation else { return "error: creating a note needs the user's approval" }
-            guard await confirmation.confirm(title: String(localized: "Create the note “\(title)”?"), detail: String(text.prefix(300)))
-            else { return "error: the user declined the note" }
             out = try await JXA.run(
                 """
                 const N = Application('Notes');

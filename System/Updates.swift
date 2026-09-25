@@ -145,8 +145,9 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
         guard await ensureAllowed() else { return false }
         let id = "confirm-\(UUID().uuidString)"
         return await withCheckedContinuation { continuation in
-            // The body runs synchronously on the caller's actor, but the closure itself is typed nonisolated.
-            MainActor.assumeIsolated { askConfirmation(id: id, title: title, detail: detail, continuation: continuation) }
+            // The body may run off the main thread (a tool calls in from the conversation's task), so it hops explicitly:
+            // `MainActor.assumeIsolated` here trapped. The question is sent only from inside, so no answer can come first.
+            Task { @MainActor in askConfirmation(id: id, title: title, detail: detail, continuation: continuation) }
         }
     }
 

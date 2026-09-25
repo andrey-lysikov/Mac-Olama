@@ -35,10 +35,8 @@ enum CalendarAccess {
 }
 
 /// `calendar_events`, `calendar_add_event`, `reminders_list` and `reminders_add`: the user's Calendar and Reminders.
-/// Reading is free; adding asks the user first.
 public struct CalendarToolProvider: ToolProvider {
-    public var confirmation: (any ToolConfirmation)?
-    public init(confirmation: (any ToolConfirmation)?) { self.confirmation = confirmation }
+    public init() {}
 
     public var specs: [ToolSpec] {
         [
@@ -51,7 +49,7 @@ public struct CalendarToolProvider: ToolProvider {
             ),
             ToolSpec(
                 name: "calendar_add_event",
-                description: "Add an event to the user's default calendar. The user approves it first.",
+                description: "Add an event to the user's default calendar.",
                 parametersJSONSchema:
                     #"{"type":"object","properties":{"title":{"type":"string"},"start":{"type":"string","description":"Local date and time, e.g. 2026-09-26 15:00; a date alone makes an all-day event"},"minutes":{"type":"integer","description":"Length, default 60"},"location":{"type":"string"},"notes":{"type":"string"}},"required":["title","start"]}"#
             ),
@@ -62,7 +60,7 @@ public struct CalendarToolProvider: ToolProvider {
             ToolSpec(
                 name: "reminders_add",
                 description:
-                    "Add a reminder to the user's default Reminders list, optionally due at a time (Reminders then alerts). The user approves it first.",
+                    "Add a reminder to the user's default Reminders list, optionally due at a time (Reminders then alerts).",
                 parametersJSONSchema:
                     #"{"type":"object","properties":{"title":{"type":"string"},"due":{"type":"string","description":"Local date and time, e.g. 2026-09-22 18:00"},"notes":{"type":"string"}},"required":["title"]}"#
             ),
@@ -84,14 +82,6 @@ public struct CalendarToolProvider: ToolProvider {
             let allDay = !text.contains(":")
             let minutes = max(args.int("minutes") ?? args.string("minutes").flatMap { Int($0) } ?? 60, 5)
             let place = args.string("location").flatMap { $0.isEmpty ? nil : $0 }
-            if let confirmation {
-                let detail = [ToolDate.forUser(start, allDay: allDay), place].compactMap { $0 }.joined(separator: "\n")
-                guard await confirmation.confirm(title: String(localized: "Add “\(title)” to Calendar?"), detail: detail) else {
-                    return "error: the user declined to add the event"
-                }
-            } else {
-                return "error: adding events needs the user's approval, which is not available here"
-            }
             return await Self.addEvent(
                 title: title, start: start, minutes: minutes, allDay: allDay, place: place, notes: args.string("notes"))
         case "reminders_list":
@@ -101,11 +91,6 @@ public struct CalendarToolProvider: ToolProvider {
             let due = args.string("due").flatMap(ToolDate.parse)
             if args.string("due").map({ !$0.isEmpty }) == true, due == nil {
                 return "error: due must be a local date and time such as 2026-09-22 18:00"
-            }
-            guard let confirmation else { return "error: adding reminders needs the user's approval, which is not available here" }
-            let detail = due.map { ToolDate.forUser($0) } ?? String(localized: "No due date")
-            guard await confirmation.confirm(title: String(localized: "Add reminder “\(title)”?"), detail: detail) else {
-                return "error: the user declined to add the reminder"
             }
             return await Self.addReminder(title: title, due: due, notes: args.string("notes"))
         default:
