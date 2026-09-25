@@ -211,9 +211,10 @@ extension View {
     }
 
     /// The glass capsule around a search field, as the stock apps draw it: interactive, so it answers the pointer the
-    /// way the glass buttons beside it do.
+    /// way the glass buttons beside it do. As tall as those buttons: `.buttonStyle(.glass)` pads a 30 pt label to 38 pt,
+    /// and a text field cannot take a button style, so the height is spelled out.
     func searchCapsule() -> some View {
-        padding(.horizontal, 10).frame(height: 30).glassEffect(.regular.interactive(), in: Capsule())
+        padding(.horizontal, 12).frame(height: 38).glassEffect(.regular.interactive(), in: Capsule())
     }
 }
 
