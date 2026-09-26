@@ -1133,6 +1133,10 @@ final class AppContainer {
                 weather.usesCurrentPlace = isToolEnabled(.location)
                 providers.append(weather)
             case .location: providers += [LocationToolProvider(), MapsToolProvider()]
+            case .trips:
+                var trips = TripsToolProvider()
+                trips.usesCurrentPlace = isToolEnabled(.location)
+                providers.append(trips)
             case .browser:
                 providers.append(SafariToolProvider(configuration: .init(pageCharacters: settings.pageCharacters)))
             case .calendar: providers.append(CalendarToolProvider())

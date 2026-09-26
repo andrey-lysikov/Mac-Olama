@@ -445,6 +445,385 @@ extension String {
     fileprivate var nonEmpty: String? { isEmpty ? nil : self }
 }
 
+// Trips
+
+/// `find_trips`: trains, flights, buses and commuter trains between two places on a day, from Yandex Schedules
+/// (rasp.yandex.ru, no key). Its search page carries the timetable with Russian Railways' seats and prices as JSON;
+/// buying is left to the user, through links to rzd.ru, Aviasales and the schedule itself.
+public struct TripsToolProvider: ToolProvider {
+    public var scheduleURL = URL(string: "https://rasp.yandex.ru/search/")!
+    public var suggestURL = URL(string: "https://suggests.rasp.yandex.net/all_suggests")!
+    public var railwayStationsURL = URL(string: "https://pass.rzd.ru/suggester")!
+    public var airportCodesURL = URL(string: "https://autocomplete.travelpayouts.com/places2")!
+    /// The location switch is on too: a trip without a start begins in the city this Mac is in.
+    public var usesCurrentPlace = false
+    /// A busy line (Moscow to Saint Petersburg) has a hundred departures a day; the rest stay behind the link.
+    static let listed = 30
+
+    public init() {}
+
+    public var specs: [ToolSpec] {
+        let from =
+            usesCurrentPlace
+            ? #""from":{"type":"string","description":"Start: a city, station or airport. Leave it out to start in the user's city"}"#
+            : #""from":{"type":"string","description":"Start: a city, station or airport"}"#
+        return [
+            ToolSpec(
+                name: "find_trips",
+                description:
+                    "Timetable of long-distance and commuter trains, flights and intercity buses between two places on a day, from Yandex Schedules: departure and arrival times, stations, travel time, carrier; for trains the free seats and prices by class (Russian Railways), for commuter trains the fare. Gives links to buy on rzd.ru and Aviasales. Use it for travel by rail, air or bus; get_route is for car, walking and city transit.",
+                parametersJSONSchema:
+                    #"{"type":"object","properties":{"# + from
+                    + #","to":{"type":"string","description":"Destination: a city, station or airport"},"date":{"type":"string","description":"Day of departure, YYYY-MM-DD (default today)"},"transport":{"type":"string","enum":["any","train","plane","bus","suburban"],"description":"train = long-distance trains, suburban = commuter trains (elektrichka, Lastochka); default any"}},"required":["#
+                    + (usesCurrentPlace ? #""to"]}"# : #""from","to"]}"#)
+            )
+        ]
+    }
+
+    public func execute(_ call: ToolCall) async throws -> String {
+        let args = ToolArguments(call.argumentsJSON)
+        let text = { (key: String) in args.string(key)?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty }
+        guard let to = text("to") else { return toolFailure(missing: "to") }
+        let transport = text("transport").flatMap { ["train", "plane", "bus", "suburban"].contains($0) ? $0 : nil }
+        let day = text("date").flatMap(ToolDate.parse) ?? .now
+        do {
+            let from: String
+            if let start = text("from") {
+                from = start
+            } else if usesCurrentPlace, let city = try await LocationService.shared.current().city {
+                from = city
+            } else {
+                return toolFailure(missing: "from")
+            }
+            // The page reads plain names itself and knows cities its suggester misses ("Париж"); a name it cannot
+            // place (an airport, "Шереметьево") is a 404, and then the suggester's keys are asked for instead.
+            var page = searchPage([("fromName", from), ("toName", to)], day: day, transport: transport)
+            var search = try await timetable(page)
+            if search?.context.from.title?.nonEmpty == nil || search?.context.to.title?.nonEmpty == nil {
+                async let origin = point(from)
+                async let destination = point(to)
+                guard let origin = try await origin else { return notFound(from) }
+                guard let destination = try await destination else { return notFound(to) }
+                page = searchPage([("fromId", origin), ("toId", destination)], day: day, transport: transport)
+                search = try await timetable(page)
+            }
+            guard let search else {
+                return "error: Yandex Schedules gave no timetable; the user can open \(page.absoluteString)"
+            }
+            let links = await links(for: search, day: day, page: page)
+            return ToolOutput.wrap(Self.format(search, day: day, links: links), source: "find_trips: \(from) — \(to)")
+        } catch let failure as LocationService.Failure {
+            return failure.toolText
+        } catch {
+            return "error: Yandex Schedules did not answer (\(error.localizedDescription))"
+        }
+    }
+
+    private func notFound(_ name: String) -> String {
+        "error: Yandex Schedules knows no city, station or airport called \"\(name)\"; try another spelling or a nearby city"
+    }
+
+    // Requests
+
+    /// The timetable a search page carries, or nil when the page is not one (an unknown place, a captcha).
+    private func timetable(_ page: URL) async throws -> Search? {
+        let (data, response) = try await HTTP.get(page, timeout: 20)
+        guard response.statusCode == 200, let state = Self.state(in: String(decoding: data, as: UTF8.self)) else { return nil }
+        return try? JSONDecoder().decode(Schedule.self, from: state).search
+    }
+
+    /// The schedule's own key for a name: "c213" for Moscow, "s9600213" for Sheremetyevo. The suggester lists streets
+    /// and stops too, so the same name wins, a city before a station, then any city, then whatever comes first.
+    private func point(_ name: String) async throws -> String? {
+        var c = URLComponents(url: suggestURL, resolvingAgainstBaseURL: false)
+        c?.queryItems = [
+            URLQueryItem(name: "format", value: "old"), URLQueryItem(name: "part", value: name),
+            URLQueryItem(name: "lang", value: "ru"), URLQueryItem(name: "national_version", value: "ru"),
+        ]
+        guard let url = c?.url else { return nil }
+        // [query, [[key, title, context, slug], …]]
+        let (data, _) = try await HTTP.get(url)
+        let found = (try? JSONSerialization.jsonObject(with: data)) as? [Any]
+        let keys = ((found?[safe: 1] as? [[Any]]) ?? []).compactMap { entry -> (key: String, title: String)? in
+            guard let key = entry.first as? String, let title = entry[safe: 1] as? String else { return nil }
+            return (key, title)
+        }
+        let same = keys.filter { $0.title.caseInsensitiveCompare(name) == .orderedSame }
+        let city = { (list: [(key: String, title: String)]) in list.first { $0.key.hasPrefix("c") } }
+        return (city(same) ?? same.first ?? city(keys) ?? keys.first)?.key
+    }
+
+    private func searchPage(_ places: [(String, String)], day: Date, transport: String?) -> URL {
+        let base = transport.map { scheduleURL.appending(path: $0 + "/") } ?? scheduleURL
+        var c = URLComponents(url: base, resolvingAgainstBaseURL: false)
+        c?.queryItems = places.map { URLQueryItem(name: $0.0, value: $0.1) } + [URLQueryItem(name: "when", value: Self.isoDay(day))]
+        return c?.url ?? base
+    }
+
+    /// Where to buy: the same search on rzd.ru for trains and on Aviasales for flights. A link that cannot be made
+    /// is left out; the schedule's own page is always there.
+    private func links(for search: Search, day: Date, page: URL) async -> [String] {
+        let kinds = Set(search.segments.map(\.transport.code))
+        let from = search.context.from.title ?? "", to = search.context.to.title ?? ""
+        async let railway = kinds.contains("train") ? railwayLink(search, from: from, to: to, day: day) : nil
+        // Searched from an airport, the flight's own cities go to Aviasales: "Шереметьево" is no city code.
+        let flight = search.segments.first { $0.transport.code == "plane" }
+        async let flights =
+            kinds.contains("plane")
+            ? flightsLink(
+                from: flight?.stationFrom.settlement?.title ?? from, to: flight?.stationTo.settlement?.title ?? to, day: day) : nil
+        return ["Timetable: " + page.absoluteString] + [await railway, await flights].compactMap { $0 }
+    }
+
+    /// Russian Railways' codes of the two cities, so every station of each is searched; a city its suggester does
+    /// not name exactly falls back to the stations of the first train.
+    private func railwayLink(_ search: Search, from: String, to: String, day: Date) async -> String? {
+        let train = search.segments.first { $0.transport.code == "train" }
+        async let start = railwayCode(from)
+        async let end = railwayCode(to)
+        guard let start = await start ?? train?.stationFrom.codes?.express,
+            let end = await end ?? train?.stationTo.codes?.express
+        else { return nil }
+        return "Russian Railways: https://ticket.rzd.ru/searchresults/v/1/\(start)/\(end)/\(Self.isoDay(day))"
+    }
+
+    private func railwayCode(_ city: String) async -> String? {
+        var c = URLComponents(url: railwayStationsURL, resolvingAgainstBaseURL: false)
+        c?.queryItems = [
+            URLQueryItem(name: "stationNamePart", value: city.uppercased()), URLQueryItem(name: "lang", value: "ru"),
+            URLQueryItem(name: "compactMode", value: "y"),
+        ]
+        guard let url = c?.url, let data = try? await HTTP.get(url, timeout: 10).0,
+            let stations = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]]
+        else { return nil }
+        let name = city.uppercased()
+        return stations.first { $0["n"] as? String == name }.flatMap { ($0["c"] as? NSNumber)?.stringValue }
+    }
+
+    /// Aviasales takes city codes and the day as DDMM: MOW0110KRR1 is Moscow to Krasnodar on 1 October, one adult.
+    private func flightsLink(from: String, to: String, day: Date) async -> String? {
+        async let start = airportCode(from)
+        async let end = airportCode(to)
+        guard let start = await start, let end = await end else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "ddMM"
+        return "Aviasales: https://www.aviasales.ru/search/\(start)\(formatter.string(from: day))\(end)1"
+    }
+
+    private func airportCode(_ city: String) async -> String? {
+        var c = URLComponents(url: airportCodesURL, resolvingAgainstBaseURL: false)
+        c?.queryItems = [
+            URLQueryItem(name: "term", value: city), URLQueryItem(name: "locale", value: "ru"),
+            URLQueryItem(name: "types[]", value: "city"),
+        ]
+        guard let url = c?.url, let data = try? await HTTP.get(url, timeout: 10).0,
+            let places = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]]
+        else { return nil }
+        return places.first?["code"] as? String
+    }
+
+    // The page's timetable
+
+    struct Schedule: Decodable { var search: Search }
+
+    struct Search: Decodable {
+        struct Context: Decodable {
+            struct Place: Decodable { var title: String? }
+            var from: Place
+            var to: Place
+        }
+        var context: Context
+        var segments: [Segment]
+    }
+
+    struct Segment: Decodable {
+        struct Transport: Decodable {
+            struct Model: Decodable { var title: String? }
+            var code: String
+            var model: Model?
+        }
+        struct Station: Decodable {
+            struct Codes: Decodable { var express: String? }
+            struct Settlement: Decodable { var title: String? }
+            var title: String
+            var timezone: String?
+            var codes: Codes?
+            var settlement: Settlement?
+        }
+        struct Company: Decodable {
+            var title: String?
+            var ufsTitle: String?
+        }
+        struct Tariffs: Decodable {
+            struct Fare: Decodable {
+                struct Price: Decodable {
+                    var value: Double
+                    var currency: String
+                }
+                var price: Price?
+                var seats: Int?
+                var title: String?
+            }
+            var classes: [String: Fare]?
+        }
+        var transport: Transport
+        var number: String?
+        var title: String?
+        var departure: String?
+        var arrival: String?
+        var duration: Double?
+        var stationFrom: Station
+        var stationTo: Station
+        var company: Company?
+        var tariffs: Tariffs?
+        var isTransfer: Bool?
+        var transferStations: String?
+        var segments: [Segment]?
+        var isGone: Bool?
+        var cancelType: String?
+    }
+
+    /// The JSON the page assigns to `window.INITIAL_STATE`, cut out by matching braces outside strings.
+    static func state(in html: String) -> Data? {
+        guard let marker = html.range(of: "window.INITIAL_STATE =") else { return nil }
+        let bytes = Array(html.utf8[marker.upperBound...])
+        var depth = 0, start: Int?, inString = false, escaped = false
+        for (index, byte) in bytes.enumerated() {
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if byte == UInt8(ascii: "\\") {
+                    escaped = true
+                } else if byte == UInt8(ascii: "\"") {
+                    inString = false
+                }
+                continue
+            }
+            switch byte {
+            case UInt8(ascii: "\""): inString = true
+            case UInt8(ascii: "{"):
+                if start == nil { start = index }
+                depth += 1
+            case UInt8(ascii: "}"):
+                depth -= 1
+                if depth == 0, let start { return Data(bytes[start...index]) }
+            default: break
+            }
+        }
+        return nil
+    }
+
+    // What the model reads
+
+    static func format(_ search: Search, day: Date, links: [String]) -> String {
+        let from = search.context.from.title ?? "?", to = search.context.to.title ?? "?"
+        // The page runs on into the small hours of the next day; those are that day's trips.
+        let trips = search.segments.filter { $0.isGone != true && localTime($0.departure, $0.stationFrom.timezone).hasPrefix(isoDay(day)) }
+            .sorted { ($0.departure ?? "") < ($1.departure ?? "") }
+        var lines = ["\(from) — \(to), \(isoDay(day)) (Yandex Schedules; local times of each station):"]
+        if trips.isEmpty { lines.append("No trains, flights or buses found for this day.") }
+        for (index, trip) in trips.prefix(listed).enumerated() {
+            lines.append("\(index + 1). " + describe(trip))
+            if trip.isTransfer == true {
+                lines += (trip.segments ?? []).map { "   leg: " + leg($0) }
+            }
+        }
+        if trips.count > listed {
+            lines.append("…and \(trips.count - listed) more; narrow by transport or see the timetable link.")
+        }
+        lines.append("Prices change and seats sell out; the user buys on the sites below.")
+        return (lines + links).joined(separator: "\n")
+    }
+
+    private static func describe(_ trip: Segment) -> String {
+        var text = kind(trip.transport.code)
+        if trip.isTransfer == true {
+            text += " with changes (\(plain(trip.transferStations ?? trip.title ?? "")))"
+        } else {
+            if let number = trip.number?.nonEmpty { text += " " + number }
+            if let title = trip.title?.nonEmpty { text += " " + plain(title) }
+            if let carrier = trip.company?.title ?? trip.company?.ufsTitle { text += ", " + plain(carrier) }
+            if let model = trip.transport.model?.title { text += ", " + model }
+        }
+        text += ": " + times(trip)
+        if let duration = trip.duration { text += ", " + travelTime(duration) }
+        if trip.cancelType != nil { text += ". CANCELLED" }
+        let fares = (trip.tariffs?.classes ?? [:])
+            .compactMap { key, fare in fare.price.map { (key, fare, $0) } }
+            .sorted { $0.2.value < $1.2.value }
+            .map { key, fare, price in
+                var line = "\(fare.title.map(plain) ?? seatClass(key)) from \(String(format: "%.0f", price.value)) \(price.currency)"
+                if let seats = fare.seats { line += " (seats left: \(seats))" }
+                return line
+            }
+        if !fares.isEmpty { text += ". " + fares.joined(separator: "; ") }
+        return text
+    }
+
+    private static func leg(_ leg: Segment) -> String {
+        [kind(leg.transport.code), leg.number, leg.company?.title].compactMap { $0?.nonEmpty }.joined(separator: " ")
+            + ": " + times(leg)
+    }
+
+    private static func times(_ trip: Segment) -> String {
+        "\(localTime(trip.departure, trip.stationFrom.timezone)) \(plain(trip.stationFrom.title)) → "
+            + "\(localTime(trip.arrival, trip.stationTo.timezone)) \(plain(trip.stationTo.title))"
+    }
+
+    private static func kind(_ code: String) -> String {
+        switch code {
+        case "train": "Train"
+        case "suburban": "Commuter train"
+        case "plane": "Flight"
+        case "bus": "Bus"
+        case "water": "Boat"
+        default: code
+        }
+    }
+
+    /// Russian Railways' classes by the names travellers use.
+    private static func seatClass(_ key: String) -> String {
+        switch key {
+        case "platzkarte": "platzkart (open sleeper)"
+        case "compartment": "kupe (4-berth compartment)"
+        case "suite": "SV (2-berth sleeper)"
+        case "soft": "lux"
+        case "sitting": "seat"
+        case "common": "common car"
+        default: key
+        }
+    }
+
+    private static func localTime(_ iso: String?, _ zone: String?) -> String {
+        guard let iso, let date = try? Date(iso, strategy: .iso8601) else { return "?" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = zone.flatMap(TimeZone.init(identifier:)) ?? .current
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter.string(from: date)
+    }
+
+    private static func travelTime(_ seconds: Double) -> String {
+        let minutes = Int((seconds / 60).rounded())
+        let days = minutes / 1440, hours = minutes % 1440 / 60
+        let rest = [days > 0 ? "\(days) d" : nil, hours > 0 ? "\(hours) h" : nil, minutes % 60 > 0 ? "\(minutes % 60) min" : nil]
+        return rest.compactMap { $0 }.joined(separator: " ")
+    }
+
+    private static func isoDay(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+
+    /// Names reach the page's JSON HTML-escaped: "Экспресс &quot;Ласточка&quot;".
+    private static func plain(_ text: String) -> String {
+        text.replacingOccurrences(of: "&quot;", with: "\"").replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&amp;", with: "&")
+    }
+}
+
 // Weather
 
 /// `get_weather`: current conditions and a daily forecast from Open-Meteo (free, no key; data under CC BY 4.0, so the

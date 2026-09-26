@@ -449,6 +449,7 @@ struct SettingsSectionView: View {
         case .network: String(localized: "Network Diagnostics")
         case .weather: String(localized: "Weather")
         case .location: String(localized: "Maps and Location")
+        case .trips: String(localized: "Trains, Flights and Buses")
         case .browser: String(localized: "Safari Control")
         case .calendar: String(localized: "Calendar and Reminders")
         case .timers: String(localized: "Timers")
@@ -471,6 +472,11 @@ struct SettingsSectionView: View {
         case .weather: String(localized: "The model may look up the weather (Open-Meteo)")
         case .location:
             String(localized: "The model may find out where this Mac is and use Apple Maps for routes, distances and places")
+        case .trips:
+            String(
+                localized:
+                    "The model may look up trains, flights, buses and commuter trains with seats and prices (Yandex Schedules) and give links to rzd.ru and Aviasales"
+            )
         case .browser:
             String(
                 localized:

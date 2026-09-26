@@ -196,6 +196,7 @@
       }
     },
     "Add “%@” to Calendar?" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -216,6 +217,7 @@
       }
     },
     "Add reminder “%@”?" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -576,6 +578,7 @@
       }
     },
     "Check a local address?" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -858,6 +861,7 @@
       }
     },
     "Create the note “%@”?" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -1948,6 +1952,7 @@
       }
     },
     "No due date" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -2419,6 +2424,7 @@
       }
     },
     "Press “%@” on %@?" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -2490,6 +2496,7 @@
       }
     },
     "Read the text on the screen?" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -3122,6 +3129,7 @@
       }
     },
     "Text: %@" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -3327,6 +3335,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Модель может узнать погоду (Open-Meteo)"
+          }
+        }
+      }
+    },
+    "The model may look up trains, flights, buses and commuter trains with seats and prices (Yandex Schedules) and give links to rzd.ru and Aviasales" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель может искать поезда, рейсы, автобусы и электрички с местами и ценами (Яндекс Расписания) и давать ссылки на rzd.ru и Aviasales"
           }
         }
       }
@@ -3563,6 +3581,7 @@
       }
     },
     "Then the form is sent." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -3613,6 +3632,7 @@
       }
     },
     "This downloads a file." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -3683,6 +3703,7 @@
       }
     },
     "This sends a form." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -3762,6 +3783,16 @@
         }
       }
     },
+    "Trains, Flights and Buses" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поезда, самолёты и автобусы"
+          }
+        }
+      }
+    },
     "Try Again" : {
       "localizations" : {
         "ru" : {
@@ -3773,6 +3804,7 @@
       }
     },
     "Type into “%@” on %@?" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {

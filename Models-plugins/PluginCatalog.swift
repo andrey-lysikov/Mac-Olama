@@ -8,7 +8,7 @@ import Foundation
 /// Switches for the plugins beyond web search, folders and Shortcuts, each off by default. The raw values are what the
 /// settings store, so a case keeps its name when its title changes: `location` is maps and location together.
 public enum ExtraTool: String, CaseIterable, Sendable {
-    case calculator, macInfo, network, weather, location, browser
+    case calculator, macInfo, network, weather, location, trips, browser
     case calendar, timers, screen, currency, contacts, notes, mail, spotlight, macControl, music
 }
 
@@ -26,7 +26,7 @@ public enum PluginGroup: CaseIterable, Sendable {
         case .time: [.calendar, .timers]
         case .personal: [.contacts, .notes, .mail]
         case .thisMac: [.macInfo, .network, .macControl, .music, .screen]
-        case .places: [.location, .weather]
+        case .places: [.location, .trips, .weather]
         case .calculations: [.calculator, .currency]
         }
     }
