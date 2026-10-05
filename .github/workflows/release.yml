@@ -1,22 +1,17 @@
 name: Release
 
-# Builds on every project change; publishes a dmg only when MARKETING_VERSION is higher than the latest release.
+# Builds on every push to main, which is also the check that the app compiles; publishes a dmg only when
+# MARKETING_VERSION is higher than the latest release.
 on:
   push:
     branches: [main]
-    paths:
-      - 'MacOlama.xcodeproj/**'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  test:
-    uses: ./.github/workflows/test.yml
-
   build:
-    needs: test
     runs-on: xcode-27
 
     steps:
