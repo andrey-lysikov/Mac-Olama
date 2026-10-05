@@ -1,7 +1,8 @@
 name: Release
 
 # Builds on every push to main, which is also the check that the app compiles; publishes a dmg only when
-# MARKETING_VERSION is higher than the latest release.
+# MARKETING_VERSION is higher than the latest release. A manual run with the version unchanged rebuilds that release
+# from the current main: its tag moves to this commit, the dmg and the notes are replaced.
 on:
   push:
     branches: [main]
@@ -39,13 +40,19 @@ jobs:
 
           latest=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "previous=$latest" >> "$GITHUB_OUTPUT"
           echo "Project: $version, latest release: ${latest:-none}"
 
           released="${latest:-0.0}"
           highest=$(printf '%s\n%s\n' "$released" "$version" | sort -V | tail -1)
           if [ "$version" != "$released" ] && [ "$highest" = "$version" ]; then
-            echo "release=yes" >> "$GITHUB_OUTPUT"
+            echo "release=new" >> "$GITHUB_OUTPUT"
+            echo "previous=$latest" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "$version" = "$released" ]; then
+            # The comparison link starts from the release before the one being rebuilt.
+            before=$(gh release list --limit 2 --json tagName -q '.[1].tagName' 2>/dev/null || true)
+            echo "release=rebuild" >> "$GITHUB_OUTPUT"
+            echo "previous=$before" >> "$GITHUB_OUTPUT"
+            echo "Manual run — rebuilding release $version"
           else
             echo "release=no" >> "$GITHUB_OUTPUT"
             echo "Version was not raised — skipping publication"
@@ -63,7 +70,7 @@ jobs:
                      -exportPath build -exportOptionsPlist ExportOptions.plist
 
       - name: Package dmg
-        if: steps.version.outputs.release == 'yes'
+        if: steps.version.outputs.release != 'no'
         run: |
           version="${{ steps.version.outputs.version }}"
 
@@ -76,7 +83,7 @@ jobs:
           mv "Mac-Olama $version.dmg" "../Mac-Olama-$version.dmg"
 
       - name: Release notes
-        if: steps.version.outputs.release == 'yes'
+        if: steps.version.outputs.release != 'no'
         env:
           VERSION: ${{ steps.version.outputs.version }}
           PREVIOUS: ${{ steps.version.outputs.previous }}
@@ -97,11 +104,18 @@ jobs:
           fi
 
       - name: Publish
-        if: steps.version.outputs.release == 'yes'
+        if: steps.version.outputs.release != 'no'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${{ steps.version.outputs.version }}"
-          gh release create "$version" "Mac-Olama-$version.dmg" \
-             --title "Version $version" \
-             --notes-file notes.md
+          if [ "${{ steps.version.outputs.release }}" = "rebuild" ]; then
+            git tag -f "$version"
+            git push -f origin "refs/tags/$version"
+            gh release upload "$version" "Mac-Olama-$version.dmg" --clobber
+            gh release edit "$version" --notes-file notes.md
+          else
+            gh release create "$version" "Mac-Olama-$version.dmg" \
+               --title "Version $version" \
+               --notes-file notes.md
+          fi
