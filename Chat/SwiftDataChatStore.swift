@@ -171,6 +171,16 @@ actor SwiftDataChatStore: ModelActor, ChatStore {
         return try modelContext.fetch(d).map(\.value)
     }
 
+    func chatIDs(matching query: String) async throws -> Set<UUID> {
+        let user = MessageRole.user.rawValue
+        let assistant = MessageRole.assistant.rawValue
+        let d = FetchDescriptor<MessageRecord>(
+            predicate: #Predicate {
+                ($0.roleRaw == user || $0.roleRaw == assistant) && $0.text.localizedStandardContains(query)
+            })
+        return Set(try modelContext.fetch(d).map(\.chatID))
+    }
+
     func insert(_ chat: Chat) async throws {
         modelContext.insert(ChatRecord(chat))
         try modelContext.save()

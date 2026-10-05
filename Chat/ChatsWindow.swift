@@ -32,7 +32,12 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
             if selectedChatID != oldValue { Task { await loadMessages() } }
         }
     }
-    var filter = ""
+    var filter = "" {
+        didSet { if filter != oldValue { searchContents() } }
+    }
+    /// Chats whose questions or answers contain the search text; titles are matched on the spot.
+    private var contentMatches: Set<UUID> = []
+    @ObservationIgnored private var searchTask: Task<Void, Never>?
     // Cleanup handles only: `nonisolated(unsafe)` so `deinit`, which is not main-actor isolated, can tear them down.
     @ObservationIgnored nonisolated(unsafe) private var changesTask: Task<Void, Never>?
     @ObservationIgnored nonisolated(unsafe) private var pasteMonitor: Any?
@@ -56,7 +61,9 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
     var selectedChat: Chat? { chats.first { $0.id == selectedChatID } }
     var engineState: EngineState { container.engineState }
     var filteredChats: [Chat] {
-        filter.isEmpty ? chats : chats.filter { $0.title.localizedCaseInsensitiveContains(filter) }
+        filter.isEmpty
+            ? chats
+            : chats.filter { $0.title.localizedCaseInsensitiveContains(filter) || contentMatches.contains($0.id) }
     }
     var activeModel: ModelDescriptor? {
         if let id = selectedChat?.modelID, let m = container.models.first(where: { $0.id == id }) { return m }
@@ -121,6 +128,24 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
     func reload() async {
         chats = (try? await container.chatStore.allChats(includeArchived: false)) ?? []
         if let id = selectedChatID, !chats.contains(where: { $0.id == id }) { selectedChatID = chats.first?.id }
+        if !filter.isEmpty { searchContents() }  // new chats and replies count too
+    }
+
+    /// Looks through the stored messages once typing pauses, so every keystroke does not query the database.
+    private func searchContents() {
+        searchTask?.cancel()
+        let query = filter.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            contentMatches = []
+            return
+        }
+        searchTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(200))
+            guard let self, !Task.isCancelled else { return }
+            let found = (try? await container.chatStore.chatIDs(matching: query)) ?? []
+            guard !Task.isCancelled else { return }
+            contentMatches = found
+        }
     }
 
     private func loadMessages() async {

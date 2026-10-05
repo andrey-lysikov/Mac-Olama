@@ -132,6 +132,8 @@ public protocol ChatStore: Sendable {
     func allChats(includeArchived: Bool) async throws -> [Chat]
     func chat(id: UUID) async throws -> Chat?
     func messages(chatID: UUID) async throws -> [Message]
+    /// Chats with a question or an answer containing `query` (case and diacritics ignored): the sidebar's search.
+    func chatIDs(matching query: String) async throws -> Set<UUID>
     func insert(_ chat: Chat) async throws
     func update(_ chat: Chat) async throws
     func deleteChat(id: UUID) async throws
@@ -195,6 +197,13 @@ public actor InMemoryChatStore: ChatStore {
 
     public func messages(chatID: UUID) async throws -> [Message] {
         (messagesByChat[chatID] ?? []).sorted { $0.createdAt < $1.createdAt }
+    }
+
+    public func chatIDs(matching query: String) async throws -> Set<UUID> {
+        let found = messagesByChat.filter { _, messages in
+            messages.contains { ($0.role == .user || $0.role == .assistant) && $0.text.localizedStandardContains(query) }
+        }
+        return Set(found.keys)
     }
 
     public func insert(_ chat: Chat) async throws {
