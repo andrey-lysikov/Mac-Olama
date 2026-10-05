@@ -537,14 +537,13 @@ private struct ChatsSplitView: View {
                             .help(String(localized: "Delete Chat"))
                         }
                         .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-                        .padding(.horizontal, 8).padding(.vertical, 4)
                         .contentShape(Rectangle())
                         .onTapGesture { viewModel.selectedChatID = chat.id }
-                        .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
+                        .listRowInsets(EdgeInsets(top: 10, leading: 1, bottom: 10, trailing: 1))
                         .listRowBackground(
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
                                 .fill(isChosen ? Color.accentColor : .clear)
-                                .padding(.horizontal, 8).padding(.vertical, 1))
+                                .padding(.horizontal, 2).padding(.vertical, 2))
                         .accessibilityAddTraits(isChosen ? [.isButton, .isSelected] : .isButton)
                         // Rows run one under another; the only lines in the list are the ones between dates.
                         .listRowSeparator(.hidden)
@@ -584,10 +583,10 @@ private struct ChatsSplitView: View {
     /// the two permanent sections of the window, settings above the model library, as Liquid Glass capsules that the
     /// list scrolls under.
     private var modelsEntry: some View {
-        GlassEffectContainer(spacing: 6) {
+        GlassEffectContainer(spacing: 2) {
             VStack(spacing: 6) {
-                sectionEntry(.settings, title: String(localized: "Settings"), symbol: "gearshape")
                 sectionEntry(.models, title: String(localized: "Models"), symbol: "square.stack.3d.up")
+                sectionEntry(.settings, title: String(localized: "Settings"), symbol: "gearshape")
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
@@ -919,21 +918,21 @@ struct ChatMessageView: View {
         }
     }
 
-    /// What is left of the context window: `≈31.8k (ctx)`, the window and the panel alike. No words, like the pace
+    /// What is left of the context window: `≈31.8k`, the window and the panel alike. No words, like the pace
     /// line, so it reads the same in both languages; the tooltip says it is what is left.
-    nonisolated static func contextLeft(_ tokens: Int) -> String { "≈\(compact(tokens)) (ctx)" }
+    nonisolated static func contextLeft(_ tokens: Int) -> String { "≈\(compact(tokens))" }
 
-    /// Token counts are read at a glance, not added up: 1 234 → 1.2k, 32 768 → 33k, 1 200 000 → 1.2M.
+    /// Token counts are read at a glance
     nonisolated static func compact(_ value: Int) -> String {
         switch value {
-        case ..<1000: "\(value)"
-        case ..<1_000_000:
-            Double(value) / 1000 < 10
-                ? String(format: "%.1f", Double(value) / 1000) + thousands : "\(Int((Double(value) / 1000).rounded()))\(thousands)"
+        case ..<1024: "\(value)"
+        case ..<1048576:
+            Double(value) / 1024 < 10
+                ? String(format: "%.1f", Double(value) / 1024) + thousands : "\(Int((Double(value) / 1024).rounded()))\(thousands)"
         default:
-            Double(value) / 1_000_000 < 10
-                ? String(format: "%.1f", Double(value) / 1_000_000) + millions
-                : "\(Int((Double(value) / 1_000_000).rounded()))\(millions)"
+            Double(value) / 1048576 < 10
+                ? String(format: "%.1f", Double(value) / 1048576) + millions
+                : "\(Int((Double(value) / 1048576).rounded()))\(millions)"
         }
     }
 
