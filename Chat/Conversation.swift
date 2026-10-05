@@ -542,7 +542,8 @@ public actor ConversationService {
     static func makeTitle(from text: String) -> String {
         let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.count > 60 ? String(trimmed.prefix(57)) + "…" : trimmed
+        // Enough for the three lines a chat row shows in the sidebar at its narrowest; the row cuts what is longer.
+        return trimmed.count > 120 ? String(trimmed.prefix(117)) + "…" : trimmed
     }
 
     // Attachments

@@ -135,11 +135,25 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
         let opened = loadedChatID != id
         stream.setMessages(loaded)
         loadedChatID = id
+        if opened { upgradeShortTitle(chatID: id, messages: loaded) }
         let wasRemote = remoteGenerating
         remoteGenerating = await container.conversation.isGenerating(chatID: id) && stream.streamingChatID != id
         // A reply that ran on another surface just ended: questions queued here may go out now.
         if wasRemote, !remoteGenerating { stream.drainQueue() }
         if opened { transcriptToken += 1 }
+    }
+
+    /// Titles made before the limit grew were cut at 60 characters; once such a chat is opened, its first question gives
+    /// the longer title. Only a title that is still that cut question is replaced, never one the user renamed.
+    private func upgradeShortTitle(chatID: UUID, messages: [Message]) {
+        guard var chat = chats.first(where: { $0.id == chatID }), chat.title.hasSuffix("…"),
+            let question = messages.first(where: { $0.role == .user })?.text
+        else { return }
+        let longer = ConversationService.makeTitle(from: question)
+        guard longer.count > chat.title.count, longer.hasPrefix(chat.title.dropLast()) else { return }
+        chat.title = longer
+        if let i = chats.firstIndex(where: { $0.id == chatID }) { chats[i].title = longer }
+        Task { try? await container.chatStore.update(chat) }
     }
 
     /// The chat whose messages are on screen; until it matches the selection the transcript is still loading.
@@ -344,24 +358,42 @@ private struct ChatsSplitView: View {
     @FocusState private var composerFocused: Bool
     /// The models section keeps its state (search, drafts) while the window shows a chat.
     @State private var models: DownloadViewModel?
-    @State private var sidebarWidth: CGFloat = 260
-    @State private var sidebarDragStart: CGFloat?
-    @State private var showsSidebar = true
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        // Two columns split by a line that runs the whole height of the window, as in the stock apps: the list column
-        // carries the window buttons and the two round ones, the right column its own header. No window toolbar is used,
-        // so nothing of it can drift or fold away into a "»" menu.
-        HStack(spacing: 0) {
-            if showsSidebar {
-                sidebar.frame(width: sidebarWidth)
-                sidebarHandle
-            }
+        // The system's own sidebar window, as Finder and Mail draw it: the floating glass sidebar, the window buttons,
+        // the sidebar toggle and the toolbar buttons all come from AppKit, nothing is drawn by hand.
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            sidebar
+                .navigationSplitViewColumnWidth(
+                    min: 250, ideal: min(max(CGFloat(container.settings.sidebarWidth), 250), 420), max: 420)
+                // The width the user dragged the sidebar to is remembered and restored when the window is made.
+                .background(
+                    SidebarWidthKeeper(
+                        initial: min(max(CGFloat(container.settings.sidebarWidth), 250), 420),
+                        save: { width in
+                            if Double(width) != container.settings.sidebarWidth { container.settings.sidebarWidth = Double(width) }
+                        }))
+                // In the sidebar's part of the toolbar, beside the system's toggle, as Mail's compose button. The sidebar's
+                // minimum width leaves room for it next to the window buttons.
+                .toolbar {
+                    ToolbarItem {
+                        Button {
+                            viewModel.newChat()
+                        } label: {
+                            Label(String(localized: "New Chat"), systemImage: "square.and.pencil")
+                        }
+                        .keyboardShortcut("n", modifiers: .command)
+                        .help(String(localized: "New Chat"))
+                    }
+                }
+        } detail: {
             detailColumn
         }
+        // The system search field at the top of the sidebar, as in Mail.
+        .searchable(text: $viewModel.filter, placement: .sidebar, prompt: Text(String(localized: "Search chats")))
         .onAppear {
             if models == nil { models = DownloadViewModel(container: container) }
-            sidebarWidth = min(max(CGFloat(container.settings.sidebarWidth), 200), 420)
         }
         // "Open in Chats" from the panel: that chat, selected before the window's own choice can show another one.
         .onChange(of: container.requestedWindowChatID, initial: true) { _, id in
@@ -384,87 +416,21 @@ private struct ChatsSplitView: View {
         .frame(minWidth: 560, minHeight: 400)
     }
 
-    // Top strips: on the left the window buttons and the two round ones, on the right the section's own controls.
-
-    private var sidebarStrip: some View {
-        HStack(spacing: 10) {
-            Color.clear.frame(width: 72, height: 1)  // the red/yellow/green buttons live here
-            Spacer(minLength: 0)
-            roundButton("square.and.pencil", String(localized: "New Chat")) { viewModel.newChat() }
-                .keyboardShortcut("n", modifiers: .command)
-                .keyboardShortcut("n", modifiers: .command)
-            roundButton("sidebar.left", String(localized: "Hide the chat list")) { showsSidebar.toggle() }
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 52)
-    }
-
-    @ViewBuilder private var detailStrip: some View {
-        HStack(spacing: 10) {
-            if !showsSidebar {
-                Color.clear.frame(width: 72, height: 1)
-                roundButton("sidebar.left", String(localized: "Show the chat list")) { showsSidebar.toggle() }
-            }
-            if container.section == .models, let models {
-                ModelLibraryHeader(viewModel: models)
-            } else {
-                Text(verbatim: windowTitle).font(.headline).lineLimit(1).truncationMode(.middle)
-                Spacer(minLength: 8)
-            }
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 52)
-    }
-
-    /// Round glass buttons of the size the system apps use in this strip (Mail, Xcode).
-    private func roundButton(_ symbol: String, _ help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 16, weight: .regular)).frame(width: 30, height: 30)
-        }
-        .buttonStyle(.glass)
-        .buttonBorderShape(.circle)
-        .help(help)
-        .accessibilityLabel(help)
-    }
-
-    /// Drag the line between the columns to set the list's width; it is remembered.
-    private var sidebarHandle: some View {
-        // A hairline translucent line that is also the grip for the sidebar width: the drag area around it is wide,
-        // the line itself is as thin as possible. The window is transparent behind its content, hence the material.
-        Rectangle()
-            .fill(.separator)
-            .frame(width: 1)
-            .background(SidebarBackground())
-            .overlay(
-                Rectangle().fill(.clear).frame(width: 10).contentShape(Rectangle())
-                    .pointerStyle(.columnResize)
-                    .gesture(
-                        // Measured in the window, not in the handle: the handle moves with every change, so its own
-                        // coordinate space would feed the movement back into the next translation and the drag jitters.
-                        DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                            .onChanged { value in
-                                let start = sidebarDragStart ?? sidebarWidth
-                                sidebarDragStart = start
-                                sidebarWidth = (min(max(start + value.translation.width, 200), 420)).rounded()
-                            }
-                            .onEnded { _ in
-                                sidebarDragStart = nil
-                                container.settings.sidebarWidth = Double(sidebarWidth)
-                            })
-            )
-    }
-
     private var detailColumn: some View {
+        // The section's name is the window's title, shown by the system in the toolbar as Finder shows "Recents".
         VStack(spacing: 0) {
-            detailStrip
             switch container.section {
-            case .models: if let models { ModelLibraryView(viewModel: models) }
+            case .models:
+                if let models {
+                    ModelLibraryHeader(viewModel: models).padding(.horizontal, 12).padding(.vertical, 8)
+                    ModelLibraryView(viewModel: models)
+                }
             case .settings: SettingsSectionView()
             case .about: AboutSectionView()
             case .chat: detail
             }
         }
-        // The window itself is transparent for the sidebar's sake, so this column brings its own reading background.
+        // The reading background of the content column; the sidebar floats over the window's own.
         .background(Color(nsColor: .textBackgroundColor))
     }
 
@@ -479,32 +445,7 @@ private struct ChatsSplitView: View {
     // Sidebar
 
     private var sidebar: some View {
-        VStack(spacing: 0) {
-            sidebarStrip
-            chatSearchField
-            chatList
-        }
-        // The sidebar material of macOS: translucent, vibrant, and it lets the desktop through like the stock apps.
-        .background(SidebarBackground())
-    }
-
-    private var chatSearchField: some View {
-        @Bindable var viewModel = viewModel
-        return HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").font(.system(size: 13)).foregroundStyle(.secondary)
-            TextField(String(localized: "Search chats"), text: $viewModel.filter).textFieldStyle(.plain)
-            if !viewModel.filter.isEmpty {
-                Button {
-                    viewModel.filter = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(String(localized: "Clear"))
-            }
-        }
-        .searchCapsule()
-        .padding(.horizontal, 12).padding(.bottom, 8)
+        chatList
     }
 
     private var chatList: some View {
@@ -512,12 +453,18 @@ private struct ChatsSplitView: View {
         // No `List` selection: it was cleared by a click on the empty area below the rows and fought back into place
         // (blue, then grey), and its highlight faded whenever the composer held the keyboard. A click opens the chat,
         // and the open chat is tinted like the chosen section below, whatever has the focus.
-        return List {
+        return ScrollViewReader { proxy in
+        List {
             ForEach(groupedChats, id: \.0) { section, chats in
-                Section(section) {
+                // Each date folds away like Finder's sidebar sections; the folded ones are kept for the session.
+                Section(isExpanded: expansion(of: section)) {
                     ForEach(chats) { chat in
                         let isChosen = chat.id == viewModel.selectedChatID
-                        HStack(spacing: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Image(systemName: "bubble.left")
+                                .font(.system(size: 14))
+                                .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(Color.accentColor))
+                                .frame(width: 20)
                             VStack(alignment: .leading, spacing: 2) {
                                 // Titles come from the first question: three lines tell chats apart better than one.
                                 Text(chat.title.isEmpty ? String(localized: "Untitled chat") : chat.title).lineLimit(3)
@@ -541,11 +488,11 @@ private struct ChatsSplitView: View {
                         .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
                         .contentShape(Rectangle())
                         .onTapGesture { viewModel.selectedChatID = chat.id }
-                        .listRowInsets(EdgeInsets(top: 10, leading: 1, bottom: 10, trailing: 1))
-                        .listRowBackground(
+                        .padding(.horizontal, 8).padding(.vertical, 10)
+                        .background(
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(isChosen ? Color.accentColor : .clear)
-                                .padding(.horizontal, 2).padding(.vertical, 2))
+                                .fill(isChosen ? Color.accentColor : .clear))
+                        .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
                         .accessibilityAddTraits(isChosen ? [.isButton, .isSelected] : .isButton)
                         // Rows run one under another; the only lines in the list are the ones between dates.
                         .listRowSeparator(.hidden)
@@ -564,14 +511,18 @@ private struct ChatsSplitView: View {
                             Button(String(localized: "Delete"), role: .destructive) { viewModel.delete(chat) }
                         }
                     }
+                } header: {
+                    Text(section)
                 }
             }
         }
-        // A list draws an opaque background of its own, which hid the sidebar material underneath.
-        .scrollContentBackground(.hidden)
+        // Finder's sidebar look: small grey section titles that fold their rows, no bands or lines between them.
+        .listStyle(.sidebar)
         // Picking a chat always leaves the model library.
         .onChange(of: viewModel.selectedChatID) { _, id in if id != nil { container.section = .chat } }
-        .safeAreaInset(edge: .bottom, spacing: 0) { modelsEntry }
+        // Rows scroll under the pinned sections with the system's soft edge, not under a hard line.
+        .safeAreaBar(edge: .bottom, spacing: 0) { modelsEntry }
+        .scrollEdgeEffectStyle(.soft, for: .bottom)
         .alert(String(localized: "Rename Chat"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField(String(localized: "Title"), text: $renameText)
             Button(String(localized: "Save")) {
@@ -579,20 +530,30 @@ private struct ChatsSplitView: View {
             }
             Button(String(localized: "Cancel"), role: .cancel) { renaming = nil }
         }
+        // The open chat is always in sight: when the window comes up (the first load included) and when another
+        // surface opens a chat here. The smallest scroll that shows the row, so a click on a visible row moves nothing.
+        .onChange(of: viewModel.selectedChatID, initial: true) { _, _ in reveal(viewModel.selectedChatID, with: proxy) }
+        .onChange(of: viewModel.focusToken) { _, _ in reveal(viewModel.selectedChatID, with: proxy) }
+        }
     }
 
-    /// Pinned at the very bottom of the sidebar (a safe-area inset, so the list stays the sidebar column itself):
-    /// the two permanent sections of the window, settings above the model library, as Liquid Glass capsules that the
-    /// list scrolls under.
+    /// Opens the date section holding the chat if it was folded, then scrolls its row into view.
+    private func reveal(_ chatID: UUID?, with proxy: ScrollViewProxy) {
+        guard let chatID, let section = groupedChats.first(where: { $0.1.contains { $0.id == chatID } })?.0 else { return }
+        collapsedSections.remove(section)
+        // After the unfolded rows are laid out, or there is nothing to scroll to yet.
+        DispatchQueue.main.async { withAnimation { proxy.scrollTo(chatID) } }
+    }
+
+    /// Pinned at the very bottom of the sidebar (a safe-area bar, so the list stays the sidebar column itself): the
+    /// window's permanent sections, as plain sidebar items like Finder's "Recents" — no title, nothing to fold.
     private var modelsEntry: some View {
-        GlassEffectContainer(spacing: 2) {
-            VStack(spacing: 6) {
-                sectionEntry(.models, title: String(localized: "Models"), symbol: "square.stack.3d.up")
-                sectionEntry(.settings, title: String(localized: "Settings"), symbol: "gearshape")
-                sectionEntry(.about, title: String(localized: "About"), symbol: "info.circle")
-            }
+        VStack(spacing: 2) {
+            sectionEntry(.models, title: String(localized: "Models"), symbol: "square.stack.3d.up")
+            sectionEntry(.settings, title: String(localized: "Settings"), symbol: "gearshape")
+            sectionEntry(.about, title: String(localized: "About"), symbol: "info.circle")
         }
-        .padding(.horizontal, 12).padding(.vertical, 10)
+        .padding(.horizontal, 10).padding(.vertical, 8)
     }
 
     private func sectionEntry(_ section: AppContainer.Section, title: String, symbol: String) -> some View {
@@ -601,17 +562,35 @@ private struct ChatsSplitView: View {
             container.section = section
             viewModel.selectedChatID = nil
         } label: {
-            Label(title, systemImage: symbol)
-                // Heavier than a chat row: these are the sidebar's permanent sections, not items of the list.
-                .font(.system(size: 14, weight: .semibold))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 12).frame(height: 34)
-                .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-                .contentShape(Capsule())
+            HStack(spacing: 8) {
+                Image(systemName: symbol)
+                    .font(.system(size: 14))
+                    .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(Color.accentColor))
+                    .frame(width: 20)
+                Text(title)
+                    .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8).frame(height: 30)
+            // Chosen like a chat row: the same accent-filled rounded rectangle.
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(isChosen ? Color.accentColor : .clear))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        // The chosen section is glass tinted with the accent colour, the other one plain glass.
-        .glassEffect(isChosen ? .regular.tint(.accentColor).interactive() : .regular.interactive(), in: Capsule())
+        .accessibilityAddTraits(isChosen ? [.isSelected] : [])
+    }
+
+    /// Date sections folded by the user; all are open at first.
+    @State private var collapsedSections: Set<String> = []
+
+    private func expansion(of section: String) -> Binding<Bool> {
+        Binding(
+            get: { !collapsedSections.contains(section) },
+            set: { open in
+                if open { collapsedSections.remove(section) } else { collapsedSections.insert(section) }
+            })
     }
 
     private var groupedChats: [(String, [Chat])] {
@@ -621,6 +600,9 @@ private struct ChatsSplitView: View {
             if cal.isDateInToday(c.updatedAt) { return String(localized: "Today") }
             if cal.isDateInYesterday(c.updatedAt) { return String(localized: "Yesterday") }
             if let week = cal.date(byAdding: .day, value: -7, to: .now), c.updatedAt > week { return String(localized: "Previous 7 days") }
+            if let month = cal.date(byAdding: .day, value: -30, to: .now), c.updatedAt > month {
+                return String(localized: "Previous 30 days")
+            }
             return String(localized: "Older")
         }
         for chat in viewModel.filteredChats {
@@ -985,17 +967,84 @@ struct ChatMessageView: View {
     }
 }
 
-// SidebarBackground
+// SidebarWidthKeeper
 
-/// The system's sidebar material; SwiftUI's materials do not include the vibrant, behind-window variant the stock apps use.
-private struct SidebarBackground: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .sidebar
-        view.blendingMode = .behindWindow
-        view.state = .followsWindowActiveState
-        return view
+/// `NavigationSplitView` keeps no width of its own between launches, and its `ideal` width is not applied to a
+/// window built by hand. So the split view behind it is found and asked directly: the divider is put at the saved
+/// width once, then every width the user drags it to is saved.
+private struct SidebarWidthKeeper: NSViewRepresentable {
+    let initial: CGFloat
+    let save: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> KeeperView { KeeperView(initial: initial, save: save) }
+
+    func updateNSView(_ view: KeeperView, context: Context) { view.save = save }
+
+    final class KeeperView: NSView {
+        private let initial: CGFloat
+        var save: (CGFloat) -> Void
+        private weak var splitView: NSSplitView?
+        private var observer: Any?
+        private var pendingSave: Task<Void, Never>?
+
+        init(initial: CGFloat, save: @escaping (CGFloat) -> Void) {
+            self.initial = initial
+            self.save = save
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard window != nil else {
+                if let observer { NotificationCenter.default.removeObserver(observer) }
+                observer = nil
+                return
+            }
+            guard splitView == nil else { return }
+            // After the first layout pass: before it the split view has no size and ignores the position.
+            DispatchQueue.main.async { [weak self] in self?.attach() }
+        }
+
+        private func attach() {
+            guard splitView == nil, let split = findSplitView() else { return }
+            splitView = split
+            split.setPosition(initial, ofDividerAt: 0)
+            // Added after the restore, so the width the system started with is not saved over the user's.
+            observer = NotificationCenter.default.addObserver(
+                forName: NSSplitView.didResizeSubviewsNotification, object: split, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let split = self.splitView, let sidebar = split.arrangedSubviews.first,
+                        !split.isSubviewCollapsed(sidebar)
+                    else { return }
+                    let width = sidebar.frame.width.rounded()
+                    guard (250...420).contains(width) else { return }
+                    // Saved once the drag settles: every write wakes all the settings' observers.
+                    self.pendingSave?.cancel()
+                    self.pendingSave = Task { [weak self] in
+                        try? await Task.sleep(for: .milliseconds(300))
+                        guard !Task.isCancelled else { return }
+                        self?.save(width)
+                    }
+                }
+            }
+        }
+
+        /// The vertical split view this sidebar sits in: up the superviews, otherwise the first one in the window.
+        private func findSplitView() -> NSSplitView? {
+            var view = superview
+            while let current = view {
+                if let split = current as? NSSplitView, split.isVertical { return split }
+                view = current.superview
+            }
+            func search(_ view: NSView) -> NSSplitView? {
+                if let split = view as? NSSplitView, split.isVertical { return split }
+                for sub in view.subviews { if let found = search(sub) { return found } }
+                return nil
+            }
+            return window?.contentView.flatMap(search)
+        }
     }
-
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }

@@ -15,7 +15,6 @@ final class WindowManager: NSObject, NSWindowDelegate {
     private var container: AppContainer?
     /// Hides the quick panel: it floats above everything and would cover the window being opened.
     var hidePanel: (() -> Void)?
-    private var keyChase: Task<Void, Never>?
 
     func configure(container: AppContainer) {
         self.container = container
@@ -55,7 +54,6 @@ final class WindowManager: NSObject, NSWindowDelegate {
     }
 
     func open(_ id: ID) {
-        let wasAccessory = NSApp.activationPolicy() != .regular
         NSApp.setActivationPolicy(.regular)
         let window: NSWindow
         if let existing = windows[id] {
@@ -72,82 +70,18 @@ final class WindowManager: NSObject, NSWindowDelegate {
             windows[id] = window
         }
         hidePanel?()
-        raise(window)
-        // Two things land after this call returns: leaving accessory mode takes a turn of the run loop, and a status
-        // menu item only dismisses its menu afterwards — both leave the window behind the previously active app.
-        Task { @MainActor in
-            raise(window)
-            if wasAccessory {
-                try? await Task.sleep(for: .milliseconds(150))
-                raise(window)
-            }
-        }
-    }
-
-    private func raise(_ window: NSWindow) {
         if window.isMiniaturized { window.deminiaturize(nil) }
-        if !window.isVisible { window.orderFrontRegardless() }  // a window number the WindowServer knows
-        if !Self.bringToFront(window) {
-            // Cooperative activation (macOS 14+) may be refused, so the window is raised without waiting for it. A
-            // window on another Space follows only an active app, so there the activation has to come first.
-            if window.isOnActiveSpace { window.orderFrontRegardless() } else { NSApp.activate() }
-        }
-        window.makeKeyAndOrderFront(nil)
         NSApp.activate()
-        takeKeyboard(window)
+        window.makeKeyAndOrderFront(nil)
     }
-
-    /// Ordering a window front before the activation lands leaves it frontmost but not key: it looks inactive and the
-    /// text field keeps no caret. A click on the status item makes this worse — the status bar window is the app's key
-    /// window while the click is handled. So key status is asked for again, for a second, until the window holds it.
-    private func takeKeyboard(_ window: NSWindow) {
-        keyChase?.cancel()
-        keyChase = Task { [weak window] in
-            for _ in 0..<20 {
-                try? await Task.sleep(for: .milliseconds(50))
-                guard !Task.isCancelled, let window, window.isVisible else { return }
-                if window.isKeyWindow && NSApp.isActive { return }
-                // Not `activate(ignoringOtherApps:)` (deprecated): activating our own running application is allowed
-                // and is not refused the way the cooperative `NSApp.activate()` can be.
-                if !NSApp.isActive { NSRunningApplication.current.activate(options: [.activateAllWindows]) }
-                window.makeKeyAndOrderFront(nil)
-            }
-        }
-    }
-
-    /// Makes this process frontmost with `window` in front, the way the Dock does, switching to the window's desktop.
-    /// Public activation is cooperative (may be refused) and never switches desktops for a menu bar app: its status item is
-    /// a window on every desktop, so the app always "has a window here". So this uses SkyLight's private
-    /// `_SLPSSetFrontProcessWithOptions` (as AltTab does), looked up at run time: without it the public path below is used.
-    private static func bringToFront(_ window: NSWindow) -> Bool {
-        guard let setFront = privateSetFrontProcess, window.windowNumber > 0 else { return false }
-        // The "current process" serial number: no deprecated Process Manager call is needed to name ourselves.
-        var psn = ProcessSerialNumber(highLongOfPSN: 0, lowLongOfPSN: UInt32(kCurrentProcess))
-        return setFront(&psn, UInt32(window.windowNumber), 0x200) == 0  // 0x200: kCPSUserGenerated, as a user click
-    }
-
-    private typealias SetFrontProcess = @convention(c) (UnsafeMutablePointer<ProcessSerialNumber>, UInt32, UInt32) -> Int32
-
-    private static let privateSetFrontProcess: SetFrontProcess? = {
-        guard let handle = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY),
-            let symbol = dlsym(handle, "_SLPSSetFrontProcessWithOptions")
-        else { return nil }
-        return unsafeBitCast(symbol, to: SetFrontProcess.self)
-    }()
 
     private func makeWindow(id: ID, title: String, size: NSSize, root: AnyView) -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
-            // The app draws the title row itself (the window buttons keep their space in it), so the content reaches
-            // the top of the window.
+            // A stock sidebar window: the content runs under the toolbar and the sidebar floats over it, as in Finder.
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
-        window.title = title
-        window.titlebarAppearsTransparent = true
-        // Without this the window's own opaque fill sits under the sidebar material and nothing shows through it.
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.titleVisibility = .hidden  // the name is drawn in the app's own title row
+        window.title = title  // shown by the system in the toolbar, as Finder shows the folder's name
         // SwiftUI's minimum frame does not stop AppKit from shrinking the window; below this size the content would be clipped.
         window.contentMinSize = NSSize(width: 560, height: 400)
         window.isReleasedWhenClosed = false
@@ -157,8 +91,6 @@ final class WindowManager: NSObject, NSWindowDelegate {
         let hosting = NSHostingView(rootView: root)
         hosting.sceneBridgingOptions = [.toolbars]  // SwiftUI .toolbar content goes into this window's toolbar
         hosting.sizingOptions = []  // the window's size is the saved one, not the size SwiftUI would like
-        // The title bar is not a safe area here: the app's own title row fills it, level with the window buttons.
-        hosting.safeAreaRegions = []
         window.contentView = hosting
         window.toolbarStyle = .unified
         window.delegate = self

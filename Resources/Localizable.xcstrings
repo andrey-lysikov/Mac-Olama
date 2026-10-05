@@ -1343,6 +1343,7 @@
       }
     },
     "Hide the chat list" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -2474,6 +2475,16 @@
         }
       }
     },
+    "Previous 30 days" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Последние 30 дней"
+          }
+        }
+      }
+    },
     "Queued" : {
       "localizations" : {
         "ru" : {
@@ -2997,6 +3008,7 @@
       }
     },
     "Show the chat list" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
