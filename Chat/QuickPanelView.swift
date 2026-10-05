@@ -96,13 +96,15 @@ struct QuickPanelView: View {
     // The model is the one picked in the status menu; the row holds only the field and its pictograms.
     private var inputRow: some View {
         HStack(alignment: .center, spacing: 10) {
-            // Attaching comes before the question, so it sits in front of the field; documents work with any model,
-            // images only with a VLM (the dialog offers them then).
-            Button(action: onChooseFiles) {
-                Image(systemName: "paperclip")
+            // It starts a new chat and leaves the old one in the list, so it is drawn as the chats window's
+            // new-chat button, not as an eraser.
+            Button(action: viewModel.clear) {
+                Image(systemName: "square.and.pencil")
             }
             .buttonStyle(.plain).font(.system(size: 16)).foregroundStyle(.secondary)
-            .help(String(localized: "Attach file"))
+            .keyboardShortcut("k", modifiers: .command)
+            .help(String(localized: "New Chat"))
+            .disabled(viewModel.messages.isEmpty && viewModel.streamingText.isEmpty && viewModel.input.isEmpty)
             if container.settings.voiceInputEnabled {
                 VoiceInputButton(text: $viewModel.input, disabled: viewModel.isGenerating) { viewModel.send() }
                     .buttonStyle(.plain).font(.system(size: 16)).foregroundStyle(.secondary)
@@ -122,28 +124,25 @@ struct QuickPanelView: View {
             HStack(spacing: 12) {
                 EngineActivityControl(state: viewModel.engineState, onStop: viewModel.stop)
                 contextUsage
+                // Documents work with any model, images only with a VLM (the dialog offers them then).
+                Button(action: onChooseFiles) {
+                    Image(systemName: "paperclip")
+                }
+                .help(String(localized: "Attach file"))
+                // Pin: the panel stays open when you click elsewhere; crossed out, it closes.
+                Button(action: onToggleAutoClose) {
+                    Image(systemName: container.settings.panelClosesOnFocusLoss ? "pin.slash" : "pin")
+                }
+                .help(
+                    container.settings.panelClosesOnFocusLoss
+                        ? String(localized: "Keep the panel open when you click outside it")
+                        : String(localized: "Close the panel when you click outside it"))
                 Button {
                     container.openInChats(viewModel.chat?.id)
                 } label: {
                     Image(systemName: "bubble.left.and.bubble.right")
                 }
                 .help(String(localized: "Open in Chats"))
-                // Closed lock: the panel stays open when you click elsewhere.
-                Button(action: onToggleAutoClose) {
-                    Image(systemName: container.settings.panelClosesOnFocusLoss ? "lock.open" : "lock")
-                }
-                .help(
-                    container.settings.panelClosesOnFocusLoss
-                        ? String(localized: "Keep the panel open when you click outside it")
-                        : String(localized: "Close the panel when you click outside it"))
-                // It starts a new chat and leaves the old one in the list, so it is drawn as the chats window's
-                // new-chat button, not as an eraser.
-                Button(action: viewModel.clear) {
-                    Image(systemName: "square.and.pencil")
-                }
-                .keyboardShortcut("k", modifiers: .command)
-                .help(String(localized: "New Chat"))
-                .disabled(viewModel.messages.isEmpty && viewModel.streamingText.isEmpty && viewModel.input.isEmpty)
             }
             .buttonStyle(.plain)
             .font(.system(size: 16))
