@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6
+
+- Benhavior fixes in chats
+- Update dependencies
+- About page
+- Maps navigator plugin
+
+
 ## 0.5
 
 - Model search lists only MLX builds for Apple Silicon
