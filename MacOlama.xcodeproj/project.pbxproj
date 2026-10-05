@@ -19,16 +19,6 @@
 		A100000000000000000000B7 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = D100000000000000000000E7 /* SwiftMath */; };
 /* End PBXBuildFile section */
 
-/* Begin PBXContainerItemProxy section */
-		6100000000000000000000A1 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 8100000000000000000000A1 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = E100000000000000000000E1;
-			remoteInfo = MacOlama;
-		};
-/* End PBXContainerItemProxy section */
-
 /* Begin PBXFileReference section */
 		7F4261FD305DCD5100005A57 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		7F4261FE305DCD5100005A57 /* MacOlama.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MacOlama.entitlements; sourceTree = "<group>"; };
@@ -39,7 +29,6 @@
 		7FAB000000000000000000B2 /* AppContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppContainer.swift; sourceTree = "<group>"; };
 		7FAB000000000000000000B3 /* StatusItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusItem.swift; sourceTree = "<group>"; };
 		B100000000000000000000B1 /* Mac-Olama.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Mac-Olama.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		B100000000000000000000B2 /* MacOlamaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MacOlamaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -185,11 +174,6 @@
 			path = "Models-plugins";
 			sourceTree = "<group>";
 		};
-		C100000000000000000000C3 /* MacOlamaTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = MacOlamaTests;
-			sourceTree = "<group>";
-		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -204,13 +188,6 @@
 				A100000000000000000000B4 /* Tokenizers in Frameworks */,
 				A100000000000000000000B6 /* SwiftSoup in Frameworks */,
 				A100000000000000000000B7 /* SwiftMath in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		E200000000000000000000E3 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -234,7 +211,6 @@
 				7F42628C305DD11C00005A57 /* README.md */,
 				7F4261FD305DCD5100005A57 /* Info.plist */,
 				7F4261FE305DCD5100005A57 /* MacOlama.entitlements */,
-				C100000000000000000000C3 /* MacOlamaTests */,
 				F100000000000000000000F2 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -243,7 +219,6 @@
 			isa = PBXGroup;
 			children = (
 				B100000000000000000000B1 /* Mac-Olama.app */,
-				B100000000000000000000B2 /* MacOlamaTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -277,29 +252,6 @@
 			productReference = B100000000000000000000B1 /* Mac-Olama.app */;
 			productType = "com.apple.product-type.application";
 		};
-		E200000000000000000000E1 /* MacOlamaTests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 9100000000000000000000A2 /* Build configuration list for PBXNativeTarget "MacOlamaTests" */;
-			buildPhases = (
-				E200000000000000000000E2 /* Sources */,
-				E200000000000000000000E3 /* Frameworks */,
-				E200000000000000000000E4 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				6100000000000000000000A2 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				C100000000000000000000C3 /* MacOlamaTests */,
-			);
-			name = MacOlamaTests;
-			packageProductDependencies = (
-			);
-			productName = MacOlamaTests;
-			productReference = B100000000000000000000B2 /* MacOlamaTests.xctest */;
-			productType = "com.apple.product-type.bundle.unit-test";
-		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -312,10 +264,6 @@
 				TargetAttributes = {
 					E100000000000000000000E1 = {
 						CreatedOnToolsVersion = 26.0;
-					};
-					E200000000000000000000E1 = {
-						CreatedOnToolsVersion = 26.0;
-						TestTargetID = E100000000000000000000E1;
 					};
 				};
 			};
@@ -343,20 +291,12 @@
 			projectRoot = "";
 			targets = (
 				E100000000000000000000E1 /* MacOlama */,
-				E200000000000000000000E1 /* MacOlamaTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		E100000000000000000000E4 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		E200000000000000000000E4 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -376,22 +316,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		E200000000000000000000E2 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXSourcesBuildPhase section */
-
-/* Begin PBXTargetDependency section */
-		6100000000000000000000A2 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = E100000000000000000000E1 /* MacOlama */;
-			targetProxy = 6100000000000000000000A1 /* PBXContainerItemProxy */;
-		};
-/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		9100000000000000000000B1 /* Debug */ = {
@@ -592,40 +517,6 @@
 			};
 			name = Release;
 		};
-		9100000000000000000000D1 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEAD_CODE_STRIPPING = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = ru.lysnet.macolama.tests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mac-Olama.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mac-Olama";
-			};
-			name = Debug;
-		};
-		9100000000000000000000D2 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEAD_CODE_STRIPPING = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = ru.lysnet.macolama.tests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mac-Olama.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Mac-Olama";
-			};
-			name = Release;
-		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -643,15 +534,6 @@
 			buildConfigurations = (
 				9100000000000000000000C1 /* Debug */,
 				9100000000000000000000C2 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		9100000000000000000000A2 /* Build configuration list for PBXNativeTarget "MacOlamaTests" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				9100000000000000000000D1 /* Debug */,
-				9100000000000000000000D2 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -674,15 +556,13 @@
 				kind = upToNextMajorVersion;
 				minimumVersion = 1.3.4;
 			};
-			traits = (
-			);
 		};
 		7100000000000000000000B3 /* XCRemoteSwiftPackageReference "swift-markdown" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/swiftlang/swift-markdown.git";
 			requirement = {
 				kind = upToNextMinorVersion;
-				minimumVersion = 0.8.0;
+				minimumVersion = 0.9.0;
 			};
 		};
 		7100000000000000000000B4 /* XCRemoteSwiftPackageReference "SwiftSoup" */ = {
