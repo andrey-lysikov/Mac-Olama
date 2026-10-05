@@ -460,6 +460,7 @@ private struct ChatsSplitView: View {
             switch container.section {
             case .models: if let models { ModelLibraryView(viewModel: models) }
             case .settings: SettingsSectionView()
+            case .about: AboutSectionView()
             case .chat: detail
             }
         }
@@ -470,6 +471,7 @@ private struct ChatsSplitView: View {
     private var windowTitle: String {
         if container.section == .models { return String(localized: "Models") }
         if container.section == .settings { return String(localized: "Settings") }
+        if container.section == .about { return String(localized: "About") }
         return viewModel.selectedChat.map { $0.title.isEmpty ? String(localized: "Untitled chat") : $0.title }
             ?? String(localized: "New Chat")
     }
@@ -587,6 +589,7 @@ private struct ChatsSplitView: View {
             VStack(spacing: 6) {
                 sectionEntry(.models, title: String(localized: "Models"), symbol: "square.stack.3d.up")
                 sectionEntry(.settings, title: String(localized: "Settings"), symbol: "gearshape")
+                sectionEntry(.about, title: String(localized: "About"), symbol: "info.circle")
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 10)

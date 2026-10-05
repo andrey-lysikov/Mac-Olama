@@ -34,7 +34,7 @@ final class AppContainer {
     private(set) var downloads: [ActiveDownload] = [] { didSet { persistDownloads() } }
     /// The chats window shows the model library instead of a chat (set from the menu, notifications and the sidebar).
     /// What the chats window shows on the right: the chat, the model library or the settings.
-    enum Section: Equatable { case chat, models, settings }
+    enum Section: Equatable { case chat, models, settings, about }
     var section: Section = .chat
     /// Raised whenever an action turns out to need a Hugging Face token; the model library answers by opening the token popover.
     var tokenPromptRequested = false

@@ -252,6 +252,9 @@ final class UpdateChecker {
         }
     }
 
+    /// A check of the app is in flight; the About section's button waits for it.
+    var isCheckingApp: Bool { appTask != nil }
+
     func stop() {
         timer?.invalidate()
         timer = nil

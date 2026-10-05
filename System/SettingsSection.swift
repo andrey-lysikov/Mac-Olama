@@ -586,3 +586,75 @@ private struct ShortcutField: NSViewRepresentable {
         }
     }
 }
+
+// AboutSectionView
+
+/// The last permanent section of the chats window: what the app is, its version with a way to ask for a newer one
+/// right now instead of waiting for the daily check, the copyright line and where the code lives.
+struct AboutSectionView: View {
+    @Environment(AppContainer.self) private var container
+
+    private static let repositoryURL = URL(string: "https://github.com/andrey-lysikov/Mac-Olama")!
+
+    private var appName: String {
+        Bundle.main.infoDictionary?["CFBundleDisplayName"] as? String
+            ?? Bundle.main.infoDictionary?["CFBundleName"] as? String ?? "Mac-Olama"
+    }
+
+    private var build: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 8) {
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable()
+                    .frame(width: 128, height: 128)
+                    .accessibilityHidden(true)
+                Text(verbatim: appName).font(.largeTitle.weight(.semibold))
+                // The same pitch as the README opens with.
+                Text(String(localized: "A local LLM assistant for the Mac: a menu bar app that runs MLX models on your machine and answers from a quick panel, a chat window. Nothing leaves the computer unless you turn web search on."))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 4)
+                Text(versionLine).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                    .padding(.top, 10)
+                // The answer arrives as a notification, the same way the menu's "Check for Updates" reports it.
+                Button {
+                    container.updates.checkApp(force: true)
+                } label: {
+                    HStack(spacing: 6) {
+                        if container.updates.isCheckingApp { ProgressView().controlSize(.small) }
+                        Text(String(localized: "Check for Updates"))
+                    }
+                }
+                .buttonStyle(.glass)
+                .controlSize(.large)
+                .disabled(container.updates.isCheckingApp)
+                .padding(.top, 2)
+                // Word for word the header every source file carries.
+                Text(verbatim: "Copyright © AndreyLysikov, SPDX-License-Identifier: Apache-2.0")
+                    .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                    .padding(.top, 14)
+                Link(destination: Self.repositoryURL) {
+                    Text(verbatim: "github.com/andrey-lysikov/Mac-Olama")
+                }
+                .font(.caption)
+            }
+            .frame(maxWidth: 520)
+            .padding(.horizontal, 16).padding(.vertical, 24)
+            .frame(maxWidth: .infinity)
+        }
+        // Shorter than the window, the page sits in its middle; taller, it scrolls from the top as usual.
+        .defaultScrollAnchor(.center, for: .alignment)
+        .scrollContentBackground(.hidden)
+    }
+
+    private var versionLine: String {
+        let version = container.updates.installedVersion
+        return build.isEmpty || build == version
+            ? String(localized: "Version \(version)")
+            : String(localized: "Version \(version) (\(build))")
+    }
+}

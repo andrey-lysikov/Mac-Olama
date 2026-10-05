@@ -187,6 +187,7 @@ struct StatusMenuBuilder {
         // Everything with a value to pick or a list to edit lives in the window's settings section, not here.
         menu.addItem(item(String(localized: "Settings"), "gearshape", #selector(MenuActions.openSettings), actions))
         menu.addItem(.separator())
+        menu.addItem(item(String(localized: "About"), "info.circle", #selector(MenuActions.openAbout), actions))
         menu.addItem(item(String(localized: "Quit"), "xmark.circle", #selector(MenuActions.quit), actions, key: "q"))
         menu.items.forEach { $0.representedObject = actions }  // keep `actions` alive while the menu is open
         return menu
@@ -324,6 +325,7 @@ final class MenuActions: NSObject {
         container.chooseModel(model)
     }
     @objc func openSettings() { WindowManager.shared.openSettings() }
+    @objc func openAbout() { WindowManager.shared.openAbout() }
     @objc func checkUpdates() { container.updates.checkAll(force: true) }
     @objc func quit() { NSApp.terminate(nil) }
 }

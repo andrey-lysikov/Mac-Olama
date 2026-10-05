@@ -32,6 +32,11 @@ final class WindowManager: NSObject, NSWindowDelegate {
         open(.chats)
     }
 
+    func openAbout() {
+        container?.section = .about
+        open(.chats)
+    }
+
     /// On screen right now, so a menu bar click can raise this window instead of opening the panel over it.
     func isOpen(_ id: ID) -> Bool {
         guard let window = windows[id] else { return false }

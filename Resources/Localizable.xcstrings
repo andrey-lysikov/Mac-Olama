@@ -125,6 +125,16 @@
         }
       }
     },
+    "A local LLM assistant for the Mac: a menu bar app that runs MLX models on your machine and answers from a quick panel, a chat window. Nothing leaves the computer unless you turn web search on." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "Локальный LLM-ассистент для Mac: приложение в строке меню, которое запускает MLX-модели прямо на компьютере и отвечает в быстрой панели и в окне чатов. Данные не покидают компьютер, пока не включен веб-поиск."
+          }
+        }
+      }
+    },
     "A longer page is cut to this many characters" : {
       "localizations" : {
         "ru" : {
@@ -141,6 +151,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Он нужен модели для ответа. «Разрешить» откроет Системные настройки, где включается доступ."
+          }
+        }
+      }
+    },
+    "About" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "О программе"
           }
         }
       }
@@ -3954,6 +3974,32 @@
         }
       }
     },
+    "Version %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "Версия %@"
+          }
+        }
+      }
+    },
+    "Version %@ (%@)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Version %1$@ (%2$@)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "machine_translated",
+            "value" : "Версия %1$@ (%2$@)"
+          }
+        }
+      }
+    },
     "Version %@ is available. You have %@." : {
       "localizations" : {
         "ru" : {
@@ -4121,5 +4167,5 @@
       }
     }
   },
-  "version" : "1.0"
+  "version" : "1.3"
 }
