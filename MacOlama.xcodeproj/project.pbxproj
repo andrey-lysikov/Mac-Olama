@@ -335,6 +335,7 @@
 				7100000000000000000000B3 /* XCRemoteSwiftPackageReference "swift-markdown" */,
 				7100000000000000000000B4 /* XCRemoteSwiftPackageReference "SwiftSoup" */,
 				7100000000000000000000B5 /* XCRemoteSwiftPackageReference "SwiftMath" */,
+				7F9572353073EE750032A1B8 /* XCRemoteSwiftPackageReference "mlx-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F100000000000000000000F2 /* Products */;
@@ -673,6 +674,8 @@
 				kind = upToNextMajorVersion;
 				minimumVersion = 1.3.4;
 			};
+			traits = (
+			);
 		};
 		7100000000000000000000B3 /* XCRemoteSwiftPackageReference "swift-markdown" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -696,6 +699,14 @@
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 1.7.3;
+			};
+		};
+		7F9572353073EE750032A1B8 /* XCRemoteSwiftPackageReference "mlx-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift";
+			requirement = {
+				branch = main;
+				kind = branch;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
