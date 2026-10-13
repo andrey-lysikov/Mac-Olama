@@ -3378,16 +3378,6 @@
         }
       }
     },
-    "Rename Chat" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Переименовать чат"
-          }
-        }
-      }
-    },
     "Replace" : {
       "localizations" : {
         "ru" : {
@@ -3494,16 +3484,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Температура сэмплирования для этой модели"
-          }
-        }
-      }
-    },
-    "Save" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сохранить"
           }
         }
       }
@@ -3885,16 +3865,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Управление системой"
-          }
-        }
-      }
-    },
-    "System prompt for this chat" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Системный промпт для этого чата"
           }
         }
       }
@@ -4572,16 +4542,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Таймеры"
-          }
-        }
-      }
-    },
-    "Title" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Название"
           }
         }
       }

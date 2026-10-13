@@ -138,8 +138,7 @@ struct QuickPanelView: View {
                         ? String(localized: "Keep the panel open when you click outside it")
                         : String(localized: "Close the panel when you click outside it"))
                 Button {
-                    // What is typed and attached here goes along, so the question is finished there.
-                    container.openInChats(viewModel.chat?.id, draft: viewModel.stream.takeDraft())
+                    container.openInChats(viewModel.chat?.id)
                 } label: {
                     Image(systemName: "bubble.left.and.bubble.right")
                 }

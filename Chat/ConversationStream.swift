@@ -62,6 +62,15 @@ extension ConversationStreamHosting {
     func removeDocument(_ name: String) { stream.removeDocument(name) }
 }
 
+/// The question being written: its text and attachments, before it is sent.
+@MainActor
+@Observable
+final class ComposerDraft {
+    var input = ""
+    var images: [ConversationStreamCoordinator.PendingImage] = []
+    var documents: [DocumentInput] = []
+}
+
 @MainActor
 @Observable
 final class ConversationStreamCoordinator {
@@ -75,9 +84,20 @@ final class ConversationStreamCoordinator {
     let container: AppContainer
     weak var delegate: (any ConversationStreamDelegate)?
 
-    var input = ""
-    var pendingImages: [PendingImage] = []
-    var pendingDocuments: [DocumentInput] = []
+    // What is typed and attached but not sent is one draft, kept by the container: the panel and the chats window
+    // show the same chat, so what was begun in one is there to finish in the other.
+    var input: String {
+        get { container.draft.input }
+        set { container.draft.input = newValue }
+    }
+    var pendingImages: [PendingImage] {
+        get { container.draft.images }
+        set { container.draft.images = newValue }
+    }
+    var pendingDocuments: [DocumentInput] {
+        get { container.draft.documents }
+        set { container.draft.documents = newValue }
+    }
     var errorMessage: String?
     private(set) var messages: [Message] = []
     private(set) var streamingText = ""
@@ -217,33 +237,6 @@ final class ConversationStreamCoordinator {
         isGenerating = false
         answerStarted = false
         streamingChatID = nil
-    }
-
-    // The draft moves with the user
-
-    /// What is in the composer and not sent yet: the text and the attachments.
-    struct Draft {
-        var input = ""
-        var images: [PendingImage] = []
-        var documents: [DocumentInput] = []
-        var isEmpty: Bool { input.isEmpty && images.isEmpty && documents.isEmpty }
-    }
-
-    /// Takes the draft out of this composer, for the surface the user is moving to.
-    func takeDraft() -> Draft {
-        let draft = Draft(input: input, images: pendingImages, documents: pendingDocuments)
-        input = ""
-        pendingImages = []
-        pendingDocuments = []
-        return draft
-    }
-
-    /// Puts a draft brought from the other surface into this composer, after whatever was already being written here.
-    func adopt(_ draft: Draft) {
-        guard !draft.isEmpty else { return }
-        if !draft.input.isEmpty { input = input.isEmpty ? draft.input : input + "\n" + draft.input }
-        pendingImages += draft.images
-        pendingDocuments += draft.documents.filter { document in !pendingDocuments.contains { $0.name == document.name } }
     }
 
     // Attachments

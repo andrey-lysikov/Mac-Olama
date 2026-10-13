@@ -125,10 +125,6 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
 
     func show(prefill: String? = nil) {
         if let prefill { viewModel.input = prefill }
-        // Called from the chats window: what is being written there comes to the panel, as it goes the other way.
-        if WindowManager.shared.window(.chats)?.isKeyWindow == true, let draft = container.takeWindowDraft?() {
-            viewModel.stream.adopt(draft)
-        }
         // Already on screen: stay where it is, just take the keyboard again (no hide-and-show).
         if panel.isVisible {
             panel.orderFrontRegardless()
@@ -225,6 +221,12 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
     }
 
     /// Dragging an edge: the width is kept as is, the height the user chose becomes the limit for answers.
+    /// A panel left open while another chat was picked in the chats window shows that chat once it has the keyboard.
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard panel.isVisible, opening == nil, let id = container.settings.activeChatID, id != viewModel.chat?.id else { return }
+        Task { await viewModel.loadActiveChat() }
+    }
+
     func windowDidEndLiveResize(_ notification: Notification) {
         viewModel.maxPanelHeight = max(panel.frame.height, 160)
         saveGeometry()

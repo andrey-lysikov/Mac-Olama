@@ -29,7 +29,10 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
     var selectedChatID: UUID? {
         didSet {
             container.windowChatID = selectedChatID
-            if selectedChatID != oldValue { Task { await loadMessages() } }
+            guard selectedChatID != oldValue else { return }
+            // The chat open here is the one the panel opens too: one chat for both.
+            if let selectedChatID { container.setActiveChat(selectedChatID) }
+            Task { await loadMessages() }
         }
     }
     var filter = "" {
@@ -74,7 +77,6 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
         self.container = container
         self.stream = ConversationStreamCoordinator(container: container)
         stream.delegate = self
-        container.takeWindowDraft = { [weak self] in self?.stream.takeDraft() ?? .init() }
         observe()
         installPasteMonitor()
         observeWindowActivation()
@@ -214,8 +216,16 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
                 guard WindowManager.shared.window(.chats)?.isKeyWindow == true else { return }
                 self?.transcriptToken += 1
                 self?.focusToken += 1
+                Task { await self?.followActiveChat() }
             }
         }
+    }
+
+    /// The window comes forward on the chat the panel had: a new one started there, or another one opened.
+    private func followActiveChat() async {
+        guard container.section == .chat, let id = container.settings.activeChatID, id != selectedChatID else { return }
+        if !chats.contains(where: { $0.id == id }) { await reload() }
+        if chats.contains(where: { $0.id == id }) { selectedChatID = id }
     }
 
     private func observe() {
@@ -269,18 +279,6 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
             try? await container.conversation.deleteChat(id: chat.id)
             await reload()
         }
-    }
-
-    func rename(_ chat: Chat, to title: String) {
-        var updated = chat
-        updated.title = title
-        Task { try? await container.chatStore.update(updated) }
-    }
-
-    func setSystemPrompt(_ text: String) {
-        guard var chat = selectedChat else { return }
-        chat.systemPrompt = text.isEmpty ? nil : text
-        Task { try? await container.chatStore.update(chat) }
     }
 
     /// Same as picking the model in the status menu: it becomes the app-wide model (checked there) and this chat and the
@@ -394,10 +392,6 @@ private struct ChatsSplitView: View {
     @ScaledMetric(relativeTo: .body) private var scaledText: CGFloat = ChatMessageView.textSize
     @Bindable var viewModel: ChatsViewModel
     @Environment(AppContainer.self) private var container
-    @State private var renaming: Chat?
-    @State private var renameText = ""
-    @State private var showSystemPrompt = false
-    @State private var systemPromptText = ""
     @FocusState private var composerFocused: Bool
     /// The models section keeps its state (search, drafts) while the window shows a chat.
     @State private var models: DownloadViewModel?
@@ -443,12 +437,6 @@ private struct ChatsSplitView: View {
             guard let id else { return }
             viewModel.selectedChatID = id
             container.requestedWindowChatID = nil
-        }
-        // And what was being written in the panel: it lands in this composer.
-        .onChange(of: container.draftForWindow != nil, initial: true) { _, waiting in
-            guard waiting, let draft = container.draftForWindow else { return }
-            container.draftForWindow = nil
-            viewModel.stream.adopt(draft)
         }
         // The window is named after what it shows: the chat's short title, as in the sidebar, or the models section.
         .onChange(of: windowTitle, initial: true) { _, title in WindowManager.shared.window(.chats)?.title = title }
@@ -552,13 +540,6 @@ private struct ChatsSplitView: View {
         // The hard edge backs the pinned sections: under the soft one the rows showed through three lines of entries.
         .safeAreaBar(edge: .bottom, spacing: 0) { modelsEntry }
         .scrollEdgeEffectStyle(.hard, for: .bottom)
-        .alert(String(localized: "Rename Chat"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-            TextField(String(localized: "Title"), text: $renameText)
-            Button(String(localized: "Save")) {
-                if let c = renaming { viewModel.rename(c, to: renameText) }; renaming = nil
-            }
-            Button(String(localized: "Cancel"), role: .cancel) { renaming = nil }
-        }
         // The open chat is always in sight: when the window comes up (the first load included) and when another
         // surface opens a chat here. The smallest scroll that shows the row, so a click on a visible row moves nothing.
         .onChange(of: viewModel.selectedChatID, initial: true) { _, _ in reveal(viewModel.selectedChatID, with: proxy) }
@@ -568,10 +549,19 @@ private struct ChatsSplitView: View {
 
     /// One chat in the sidebar.
     private func chatRow(_ chat: Chat, isChosen: Bool) -> some View {
-        HStack(alignment: .top, spacing: 6) {
+        let isAnswering = viewModel.generatingChatIDs.contains(chat.id)
+        return HStack(alignment: .top, spacing: 6) {
+            // While the model answers in the chat, a spinner stands in the bubble's place, at its size.
             Image(systemName: "bubble.left")
                 .font(.system(size: 14))
                 .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(Color.accentColor))
+                .opacity(isAnswering ? 0 : 1)
+                .overlay {
+                    if isAnswering {
+                        ProgressView().controlSize(.small).tint(isChosen ? .white : nil)
+                            .help(String(localized: "The model is answering in this chat"))
+                    }
+                }
                 // The bubble sits on the title's first line.
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
@@ -596,10 +586,6 @@ private struct ChatsSplitView: View {
             }
             // The title takes all the width there is: a spacer here kept a strip at the right edge empty.
             .frame(maxWidth: .infinity, alignment: .leading)
-            if viewModel.generatingChatIDs.contains(chat.id) {
-                ProgressView().controlSize(.small)
-                    .help(String(localized: "The model is answering in this chat"))
-            }
         }
     }
 
@@ -634,10 +620,11 @@ private struct ChatsSplitView: View {
                     .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(Color.accentColor))
                     .frame(width: 20)
                 Text(title)
+                    .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 8).frame(height: 30)
+            .padding(.horizontal, 8).frame(height: 32)
             // Chosen like a chat row: the same accent-filled rounded rectangle.
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -697,21 +684,6 @@ private struct ChatsSplitView: View {
                     .padding(.horizontal, 16).padding(.bottom, 8)
             }
             composer
-        }
-        .popover(isPresented: $showSystemPrompt, attachmentAnchor: .point(.top), arrowEdge: .top) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("System prompt for this chat").font(.headline)
-                TextEditor(text: $systemPromptText).frame(width: 360, height: 140).font(.body)
-                HStack {
-                    Spacer()
-                    Button(String(localized: "Save")) {
-                        viewModel.setSystemPrompt(systemPromptText)
-                        showSystemPrompt = false
-                    }
-                    .buttonStyle(.glass)
-                }
-            }
-            .padding(12)
         }
     }
 
