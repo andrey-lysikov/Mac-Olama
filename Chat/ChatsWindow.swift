@@ -524,12 +524,10 @@ private struct ChatsSplitView: View {
                         .contentShape(Rectangle())
                         .onTapGesture { viewModel.selectedChatID = chat.id }
                         .padding(.leading, 8).padding(.trailing, 4).padding(.vertical, 10)
-                        .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
-                        // The tint fills the row itself, not the content inside it: the ring the system draws around
-                        // a row whose menu is open runs along the row's edge, and the two now coincide.
-                        .listRowBackground(
+                        .background(
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
                                 .fill(isChosen ? Color.accentColor : .clear))
+                        .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
                         .accessibilityAddTraits(isChosen ? [.isButton, .isSelected] : .isButton)
                         // Rows run one under another; the only lines in the list are the ones between dates.
                         .listRowSeparator(.hidden)
@@ -537,38 +535,6 @@ private struct ChatsSplitView: View {
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
                                 viewModel.delete(chat)
-                            } label: {
-                                Label(String(localized: "Delete"), systemImage: "trash")
-                            }
-                        }
-                        .contextMenu {
-                            Button {
-                                renaming = chat; renameText = chat.title
-                            } label: {
-                                Label(String(localized: "Rename…"), systemImage: "pencil")
-                            }
-                            Button {
-                                container.setActiveChat(chat.id)
-                            } label: {
-                                Label(String(localized: "Open in Panel"), systemImage: "menubar.rectangle")
-                            }
-                            Button {
-                                container.section = .chat
-                                viewModel.selectedChatID = chat.id
-                                systemPromptText = chat.systemPrompt ?? ""
-                                showSystemPrompt = true
-                            } label: {
-                                Label(String(localized: "System Prompt…"), systemImage: "text.bubble")
-                            }
-                            Divider()
-                            Button {
-                                ChatExport.run(chat: chat, container: container, window: WindowManager.shared.window(.chats))
-                            } label: {
-                                Label(String(localized: "Export…"), systemImage: "square.and.arrow.up")
-                            }
-                            Divider()
-                            Button(role: .destructive) {
-                                confirmDelete(chat)
                             } label: {
                                 Label(String(localized: "Delete"), systemImage: "trash")
                             }
@@ -634,22 +600,6 @@ private struct ChatsSplitView: View {
                 ProgressView().controlSize(.small)
                     .help(String(localized: "The model is answering in this chat"))
             }
-        }
-    }
-
-    /// The system's own question before a chat is gone for good.
-    private func confirmDelete(_ chat: Chat) {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = String(localized: "Delete the chat “\(ChatExport.fileName(for: chat))”?")
-        alert.informativeText = String(localized: "The chat and everything in it will be deleted. This cannot be undone.")
-        alert.addButton(withTitle: String(localized: "Delete")).hasDestructiveAction = true
-        alert.addButton(withTitle: String(localized: "Cancel"))
-        let answer: (NSApplication.ModalResponse) -> Void = { if $0 == .alertFirstButtonReturn { viewModel.delete(chat) } }
-        if let window = WindowManager.shared.window(.chats) {
-            alert.beginSheetModal(for: window, completionHandler: answer)
-        } else {
-            answer(alert.runModal())
         }
     }
 

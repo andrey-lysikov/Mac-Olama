@@ -1232,16 +1232,6 @@
         }
       }
     },
-    "Delete the chat “%@”?" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Удалить чат «%@»?"
-          }
-        }
-      }
-    },
     "Deny" : {
       "localizations" : {
         "ru" : {
@@ -2775,16 +2765,6 @@
         }
       }
     },
-    "Open in Panel" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Открыть в панели"
-          }
-        }
-      }
-    },
     "Open in Yandex Maps" : {
       "localizations" : {
         "ru" : {
@@ -3408,16 +3388,6 @@
         }
       }
     },
-    "Rename…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Переименовать…"
-          }
-        }
-      }
-    },
     "Replace" : {
       "localizations" : {
         "ru" : {
@@ -3929,16 +3899,6 @@
         }
       }
     },
-    "System Prompt…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Системный промпт…"
-          }
-        }
-      }
-    },
     "t/s" : {
       "comment" : "tokens per second, after the number",
       "localizations" : {
@@ -4028,16 +3988,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ответ остановлен."
-          }
-        }
-      }
-    },
-    "The chat and everything in it will be deleted. This cannot be undone." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Чат и всё его содержимое будут удалены. Это действие нельзя отменить."
           }
         }
       }
