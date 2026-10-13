@@ -47,6 +47,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Chat.swift,
+				ChatExport.swift,
 				ChatsWindow.swift,
 				CodeHighlighter.swift,
 				Conversation.swift,

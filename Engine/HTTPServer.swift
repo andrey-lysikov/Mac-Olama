@@ -155,8 +155,7 @@ public final class HTTPServer: Sendable {
 
     /// Binds and starts the accept loop on a dedicated thread. Throws when the port is taken.
     public func start() throws {
-        let streamType = SOCK_STREAM
-        let fd = socket(AF_INET, streamType, 0)
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { throw ServerError.socket("socket() failed: \(errno)") }
         var yes: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
@@ -302,8 +301,7 @@ public final class HTTPServer: Sendable {
             if let allowedOrigin { headers["Access-Control-Allow-Origin"] = allowedOrigin }
             headers["Connection"] = wantsClose ? "close" : "keep-alive"
             response.headers = headers
-            let ok = connection.write(response, isHead: request.request.method == "HEAD")
-            if !ok || wantsClose { return }
+            if !connection.write(response, isHead: request.request.method == "HEAD") || wantsClose { return }
         }
     }
 
@@ -401,8 +399,7 @@ private final class Connection {
             guard let colon = line.firstIndex(of: ":") else { continue }
             headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
         }
-        let target = requestLine[1]
-        let (path, query) = Self.splitTarget(target)
+        let (path, query) = Self.splitTarget(requestLine[1])
 
         if headers["expect"]?.lowercased() == "100-continue" { _ = writeRaw(Data("HTTP/1.1 100 Continue\r\n\r\n".utf8)) }
         var body = Data()
@@ -568,8 +565,7 @@ private final class Connection {
                 }
             }
             if !chunks.isEmpty {
-                let first = chunks.removeFirst()
-                return .chunk(first)
+                return .chunk(chunks.removeFirst())
             }
             return failed || cancelled ? .failed : .finished
         }

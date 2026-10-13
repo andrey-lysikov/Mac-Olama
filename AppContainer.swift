@@ -46,10 +46,16 @@ final class AppContainer {
     /// A chat the chats window should show when it comes up (the panel's "Open in Chats"); the window clears it.
     var requestedWindowChatID: UUID?
 
-    /// Opens the chats window on this chat instead of whichever it showed last.
-    func openInChats(_ chatID: UUID?) {
+    /// What was being written in the panel when the user moved to the chats window; the window takes it into its composer.
+    var draftForWindow: ConversationStreamCoordinator.Draft?
+    /// Set by the chats window: hands over what is being written there, when the user moves from it to the panel.
+    @ObservationIgnored var takeWindowDraft: (() -> ConversationStreamCoordinator.Draft)?
+
+    /// Opens the chats window on this chat instead of whichever it showed last; a draft from the panel comes along.
+    func openInChats(_ chatID: UUID?, draft: ConversationStreamCoordinator.Draft? = nil) {
         section = .chat
         requestedWindowChatID = chatID
+        if let draft, !draft.isEmpty { draftForWindow = draft }
         WindowManager.shared.open(.chats)
     }
     /// Models connected by API whose server did not answer the last check; menus and pickers show them disabled.
@@ -1145,7 +1151,7 @@ final class AppContainer {
             case .currency: providers.append(CurrencyToolProvider())
             case .contacts: providers.append(ContactsToolProvider())
             case .notes: providers.append(NotesToolProvider())
-            case .mail: providers.append(MailDraftToolProvider())
+            case .mail: providers.append(MailToolProvider())
             case .spotlight: providers.append(SpotlightToolProvider())
             case .macControl: providers.append(MacControlToolProvider())
             case .music: providers.append(MusicToolProvider())

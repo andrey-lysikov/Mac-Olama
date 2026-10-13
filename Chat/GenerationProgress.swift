@@ -45,8 +45,12 @@ struct GenerationProgress: Equatable {
         steps.append(Step(id: steps.count, activity: activity))
     }
 
-    mutating func toolFinished() {
-        if let last = steps.indices.last { steps[last].done = true }
+    /// `detail`: what the step turned out to be about, when only the tool's answer says it.
+    mutating func toolFinished(detail: String? = nil) {
+        if let last = steps.indices.last {
+            steps[last].done = true
+            if let detail { steps[last].activity.text = detail }
+        }
         thinkingSince = .now
         thinkingTokens = 0
         firstThinkingToken = nil
@@ -139,12 +143,15 @@ struct GenerationProgressView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(progress.steps) { step in
-                HStack(spacing: 8) {
-                    if step.done { Image(systemName: "checkmark").frame(width: 16) } else { ProgressView().controlSize(.small) }
-                    // A finished step keeps its wording, without the ellipsis that says it is still running.
-                    Text(step.done ? step.activity.text.replacingOccurrences(of: "…", with: "") : step.activity.text)
-                        .lineLimit(2).truncationMode(.middle)
+            // Once the answer is being written the steps are behind it: they go, and only the speed stays under the text.
+            if progress.answeringSince == nil {
+                ForEach(progress.steps) { step in
+                    HStack(spacing: 8) {
+                        if step.done { Image(systemName: "checkmark").frame(width: 16) } else { ProgressView().controlSize(.small) }
+                        // A finished step keeps its wording, without the ellipsis that says it is still running.
+                        Text(step.done ? step.activity.text.replacingOccurrences(of: "…", with: "") : step.activity.text)
+                            .lineLimit(2).truncationMode(.middle)
+                    }
                 }
             }
             if case .loading(_, let fraction) = engineState {

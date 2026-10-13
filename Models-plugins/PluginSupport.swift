@@ -160,11 +160,6 @@ enum ToolDate {
 
     /// The first line of a result: the model needs "now" to turn "tomorrow" into a date.
     static var now: String { "Now: " + string(.now) + " (" + TimeZone.current.identifier + ")" }
-
-    /// How the user reads a date in a confirmation: in their own language and format.
-    static func forUser(_ date: Date, allDay: Bool = false) -> String {
-        allDay ? date.formatted(date: .complete, time: .omitted) : date.formatted(date: .complete, time: .shortened)
-    }
 }
 
 // Processes

@@ -118,17 +118,6 @@ final class ModelIcons {
         }
     }
 
-    /// Greyscale copy of a cached colour avatar.
-    nonisolated private static func monochrome(_ image: NSImage) -> NSImage? {
-        guard let tiff = image.tiffRepresentation, let input = CIImage(data: tiff), let filter = CIFilter(name: "CIPhotoEffectMono")
-        else { return nil }
-        filter.setValue(input, forKey: kCIInputImageKey)
-        guard let output = filter.outputImage else { return nil }
-        let result = NSImage(size: image.size)
-        result.addRepresentation(NSCIImageRep(ciImage: output))
-        return result
-    }
-
     /// An account is either an organisation or a user; Hugging Face answers `{"avatarUrl": …}` for the right one.
     nonisolated private static func fetchPNG(owner: String) async -> Data? {
         for kind in ["organizations", "users"] {

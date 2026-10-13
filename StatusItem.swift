@@ -207,8 +207,7 @@ struct StatusMenuBuilder {
                 // An unknown size (a model served over the API) is left out, and so is the fit estimate built on it.
                 var title = model.name
                 if model.sizeBytes > 0 {
-                    let size = model.sizeBytes.fileSizeText
-                    title += "  —  \(size)  " + String(repeating: "★", count: fit.stars)
+                    title += "  —  \(model.sizeBytes.fileSizeText)  " + String(repeating: "★", count: fit.stars)
                 }
                 if container.updates.pendingModelUpdates[model.repoID] != nil { title += " ↑" }
                 let mi = NSMenuItem(title: title, action: #selector(MenuActions.selectModel(_:)), keyEquivalent: "")

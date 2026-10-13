@@ -128,8 +128,7 @@ enum MathText {
     /// LaTeX math → Unicode text.
     static func unicode(_ latex: String) -> String {
         var parser = Parser(c: Array(latex))
-        let text = parser.sequence(closing: nil)
-        return text.split(separator: "\n", omittingEmptySubsequences: false)
+        return parser.sequence(closing: nil).split(separator: "\n", omittingEmptySubsequences: false)
             .map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }

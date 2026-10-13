@@ -219,6 +219,33 @@ final class ConversationStreamCoordinator {
         streamingChatID = nil
     }
 
+    // The draft moves with the user
+
+    /// What is in the composer and not sent yet: the text and the attachments.
+    struct Draft {
+        var input = ""
+        var images: [PendingImage] = []
+        var documents: [DocumentInput] = []
+        var isEmpty: Bool { input.isEmpty && images.isEmpty && documents.isEmpty }
+    }
+
+    /// Takes the draft out of this composer, for the surface the user is moving to.
+    func takeDraft() -> Draft {
+        let draft = Draft(input: input, images: pendingImages, documents: pendingDocuments)
+        input = ""
+        pendingImages = []
+        pendingDocuments = []
+        return draft
+    }
+
+    /// Puts a draft brought from the other surface into this composer, after whatever was already being written here.
+    func adopt(_ draft: Draft) {
+        guard !draft.isEmpty else { return }
+        if !draft.input.isEmpty { input = input.isEmpty ? draft.input : input + "\n" + draft.input }
+        pendingImages += draft.images
+        pendingDocuments += draft.documents.filter { document in !pendingDocuments.contains { $0.name == document.name } }
+    }
+
     // Attachments
 
     func attach(image: NSImage) {
@@ -319,8 +346,8 @@ final class ConversationStreamCoordinator {
                         progress?.toolStarted(AnswerText.activity(for: call, searchProvider: container.settings.searchProvider))
                         streamingText = ""
                         answerStarted = false
-                    case .toolCallFinished:
-                        progress?.toolFinished()
+                    case .toolCallFinished(let call, let result):
+                        progress?.toolFinished(detail: AnswerText.detail(for: call, result: result))
                     case .retrying:
                         dropUnshown()
                         streamingText = ""

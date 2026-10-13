@@ -481,8 +481,7 @@ actor DownloadThrottle {
         available -= Double(bytes)
         // Re-check the limit each turn: switching to unlimited mid-wait must release the waiters.
         while available < 0, limit > 0, !Task.isCancelled {
-            let wait = min(-available / Double(limit), 0.5)
-            try? await Task.sleep(for: .seconds(wait))
+            try? await Task.sleep(for: .seconds(min(-available / Double(limit), 0.5)))
             refill()
         }
     }
