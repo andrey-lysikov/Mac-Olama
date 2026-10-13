@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7
+
+- Mail plugin: search and read emails and the text of their attachments
+- Video transcripts for YouTube, VK Video and Rutube
+- Chat export to PDF, Markdown and HTML
+- Update dependencies
+- Chat benhavior update
+- Bugfix
+
+
 ## 0.6
 
 - Benhavior fixes in chats
