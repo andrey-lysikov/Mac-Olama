@@ -1183,7 +1183,7 @@ final class AppContainer {
             configuration: .init(
                 host: settings.apiBindHost, port: port,
                 version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1"),
-            catalog: catalog, engine: engineManager
+            catalog: catalog, engine: engineManager, fallbackModel: { [weak self] in await self?.activeModel }
         ) { [weak self] model in await self?.apiDefaults(for: model) ?? APIModelDefaults(contextTokens: model.contextLength) }
         server.setCORSPolicy(corsPolicy)
         do {

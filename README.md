@@ -16,8 +16,10 @@ a chat window. Nothing leaves the computer unless you turn web search on.
   OpenAI-compatible API.
 - Drop images (vision models), PDF and text files into a question.
 - Multiple plugins in system for models (like search, maps, task, safari control etc)
-- API: Ollama-compatible and OpenAI-compatible server on `localhost:11434`; the port, the interface and whether it
-  answers at all are in the settings.
+- API: Ollama-compatible, OpenAI-compatible and Anthropic-compatible server on `localhost:11434`; the port, the
+  interface and whether it answers at all are in the settings.
+- Claude Code on a local model: `ANTHROPIC_BASE_URL=http://localhost:11434 ANTHROPIC_AUTH_TOKEN=local claude` runs it
+  with the model chosen in the app.
 - The models is unloaded after an idle timeout, or kept resident if you choose "Never".
 - English and Russian interface.
 - Liquid Glass support.

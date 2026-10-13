@@ -20,7 +20,8 @@ public struct APIModelDefaults: Sendable, Equatable {
     }
 }
 
-/// Local HTTP server exposing Ollama (`/api/*`, primary) and OpenAI (`/v1/*`) compatible endpoints.
+/// Local HTTP server exposing Ollama (`/api/*`, primary), OpenAI (`/v1/*`) and Anthropic (`/v1/messages`) compatible
+/// endpoints.
 /// Stateless: clients send full history; tool calls are returned to the client, not executed here.
 /// Models are downloaded and removed in the app only: `pull` and `delete` are refused.
 public final class APIServer: Sendable {
@@ -48,17 +49,21 @@ public final class APIServer: Sendable {
     private let catalog: ModelCatalog
     private let engine: EngineManager
     private let defaults: @Sendable (ModelDescriptor) async -> APIModelDefaults
+    /// The model chosen in the app: what an Anthropic client gets when it names a model that is not installed.
+    private let fallbackModel: @Sendable () async -> ModelDescriptor?
     private let server: HTTPServer
     private let pending = Mutex(0)
 
     public init(
         configuration: Configuration, catalog: ModelCatalog, engine: EngineManager,
+        fallbackModel: @escaping @Sendable () async -> ModelDescriptor? = { nil },
         defaults: @escaping @Sendable (ModelDescriptor) async -> APIModelDefaults = { APIModelDefaults(contextTokens: $0.contextLength) }
     ) {
         self.configuration = configuration
         self.catalog = catalog
         self.engine = engine
         self.defaults = defaults
+        self.fallbackModel = fallbackModel
         self.server = HTTPServer(configuration: .init(host: configuration.host, port: configuration.port, log: configuration.log))
         registerRoutes()
     }
@@ -118,6 +123,10 @@ public final class APIServer: Sendable {
         server.route("POST", "/v1/chat/completions") { [self] req in try await openAIChat(req) }
         server.route("POST", "/v1/completions") { [self] req in try await openAICompletions(req) }
         server.route("POST", "/v1/embeddings") { _ in Self.openAIError(501, "embeddings are not supported yet") }
+
+        // Anthropic
+        server.route("POST", "/v1/messages") { [self] req in try await anthropicMessages(req) }
+        server.route("POST", "/v1/messages/count_tokens") { [self] req in try await anthropicCountTokens(req) }
     }
 
     // Model listing
@@ -485,6 +494,188 @@ public final class APIServer: Sendable {
         }
     }
 
+    // Messages (Anthropic)
+
+    /// Clients of this API (Claude Code) name Claude models, for the main work and for side tasks alike: a name that
+    /// is not installed means the model chosen in the app, so both go to the one model the engine holds.
+    private func anthropicModel(_ ref: String) async -> ModelDescriptor? {
+        if let model = await catalog.resolve(ref) { return model }
+        return await fallbackModel()
+    }
+
+    private func anthropicMessages(_ req: HTTPRequest) async throws -> HTTPResponse {
+        let body: AnthropicRequest
+        do { body = try req.decode(AnthropicRequest.self) } catch {
+            return Self.anthropicError(400, "invalid request: \(error)")
+        }
+        guard let model = await anthropicModel(body.model) else {
+            return Self.anthropicError(404, "model '\(body.model)' not found, and no model is chosen in the app")
+        }
+        let messages: [EngineMessage]
+        // Refusing an image would end the session for good: the client resends it with the history on every turn.
+        do { messages = try model.kind == .llm ? Self.withoutImages(Self.convert(body)) : Self.convert(body) } catch {
+            return Self.anthropicError(error)
+        }
+        // Reasoning is the app's choice for the model; a client may only do without it, as its side tasks do.
+        let thinks = await defaults(model).thinks && body.thinks
+        let request = await generationRequest(
+            model: model, messages: messages, tools: Self.toolSpecs(body.tools), sampling: { body.sampling(default: $0) },
+            thinks: thinks, contextTokens: nil, jsonFormat: nil)
+        let reply = Reply(stops: body.stop_sequences ?? [], json: false)
+        let id = "msg_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
+        let modelName = body.model
+        try admit()
+
+        if body.stream != true {
+            defer { release() }
+            let result: Collected
+            do { result = try await generate(model: model, request: request, reply: reply) } catch {
+                return Self.anthropicError(error)
+            }
+            var content: [JSON] = []
+            if !result.reasoning.isEmpty {
+                content.append(.object(["type": .string("thinking"), "thinking": .string(result.reasoning), "signature": .string("")]))
+            }
+            if !result.content.isEmpty { content.append(.object(["type": .string("text"), "text": .string(result.content)])) }
+            content += result.toolCalls.map {
+                JSON.object(["type": .string("tool_use"), "id": .string($0.id), "name": .string($0.name), "input": JSON.parse($0.argumentsJSON)])
+            }
+            return try Self.json(
+                Self.anthropicMessage(id: id, model: modelName, content: content, stop: Self.anthropicStop(result), usage: result.usage))
+        }
+        return Self.anthropicSSE { [self] write in
+            defer { release() }
+            write("message_start", ["message": Self.anthropicMessage(id: id, model: modelName, content: [], stop: nil, usage: nil)])
+            var blocks = AnthropicBlocks(write: write)
+            let result: Collected
+            do {
+                result = try await generate(model: model, request: request, reply: reply) { delta in
+                    blocks.extend("thinking", with: delta.reasoning)
+                    blocks.extend("text", with: delta.content)
+                }
+            } catch {
+                write("error", ["error": Self.anthropicErrorDetail(Self.status(for: error), Self.anthropicText(of: error))])
+                return
+            }
+            for call in result.toolCalls { blocks.toolUse(call) }
+            blocks.close()
+            write(
+                "message_delta",
+                [
+                    "delta": .object(["stop_reason": .string(Self.anthropicStop(result)), "stop_sequence": .null]),
+                    "usage": Self.anthropicUsage(result.usage),
+                ])
+            write("message_stop", [:])
+        }
+    }
+
+    /// An estimate, as the chat makes it: the tokenizer belongs to the engine, and a client asks only to see how full
+    /// the window is.
+    private func anthropicCountTokens(_ req: HTTPRequest) async throws -> HTTPResponse {
+        let body: AnthropicRequest
+        do { body = try req.decode(AnthropicRequest.self) } catch {
+            return Self.anthropicError(400, "invalid request: \(error)")
+        }
+        let messages: [EngineMessage]
+        do { messages = try Self.convert(body) } catch { return Self.anthropicError(error) }
+        var tokens = 0
+        for message in messages {
+            tokens += ConversationService.estimateTokens(message.content) + message.images.count * 512
+            for call in message.toolCalls { tokens += ConversationService.estimateTokens(call.name + call.argumentsJSON) }
+        }
+        for tool in Self.toolSpecs(body.tools) {
+            tokens += ConversationService.estimateTokens(tool.name + tool.description + tool.parametersJSONSchema)
+        }
+        return try Self.json(JSON.object(["input_tokens": .number(Double(tokens))]))
+    }
+
+    /// Anthropic keeps a tool's result inside the user's turn; here each one is a `tool` message ahead of what the
+    /// user wrote, and an image a tool returned goes with the user's own. Reasoning of earlier turns is dropped.
+    static func convert(_ body: AnthropicRequest) throws -> [EngineMessage] {
+        var out: [EngineMessage] = []
+        // Claude Code opens the system prompt with a billing line that changes from request to request: kept, it
+        // would leave the prompt cache nothing to reuse.
+        let system = (body.system?.blocks ?? []).compactMap(\.text).filter { !$0.hasPrefix("x-anthropic-billing-header") }
+        if !system.isEmpty { out.append(EngineMessage(role: .system, content: system.joined(separator: "\n\n"))) }
+        for message in body.messages {
+            var texts: [String] = []
+            var images: [ImageInput] = []
+            var calls: [ToolCall] = []
+            for block in message.content.blocks {
+                switch block.type {
+                case "text": if let text = block.text { texts.append(text) }
+                case "image": images.append(try image(block))
+                case "tool_use":
+                    calls.append(
+                        ToolCall(id: block.id ?? "call_\(calls.count)", name: block.name ?? "", argumentsJSON: block.input?.jsonString() ?? "{}"))
+                case "tool_result":
+                    let parts = block.content?.blocks ?? []
+                    out.append(
+                        EngineMessage(
+                            role: .tool, content: parts.compactMap(\.text).joined(separator: "\n"), toolCallID: block.tool_use_id))
+                    images += try parts.filter { $0.type == "image" }.map(image)
+                default: break
+                }
+            }
+            if texts.isEmpty, images.isEmpty, calls.isEmpty { continue }
+            let content = texts.joined(separator: "\n")
+            if message.role == "assistant" {
+                out.append(EngineMessage(role: .assistant, content: content, toolCalls: calls))
+            } else if let last = out.indices.last, out[last].role == .user {
+                // Claude Code sends the context it adds and the question as two user turns; chat templates that
+                // insist on alternating roles refuse that.
+                out[last].content += "\n\n" + content
+                out[last].images += images
+            } else {
+                out.append(EngineMessage(role: .user, content: content, images: images))
+            }
+        }
+        return out
+    }
+
+    /// For a model that reads no images: they are left out, and the message says so instead.
+    static func withoutImages(_ messages: [EngineMessage]) -> [EngineMessage] {
+        messages.map { message in
+            guard !message.images.isEmpty else { return message }
+            var message = message
+            let note = "[\(message.images.count) image(s) left out: this model does not read images]"
+            message.content = message.content.isEmpty ? note : message.content + "\n\n" + note
+            message.images = []
+            return message
+        }
+    }
+
+    private static func image(_ block: AnthropicBlock) throws -> ImageInput {
+        guard let source = block.source, source.type == "base64",
+            let data = Data(base64Encoded: source.data ?? "", options: .ignoreUnknownCharacters)
+        else { throw APIError(400, "only base64 images are supported") }
+        return ImageInput(data: data, mimeType: source.media_type ?? "image/png")
+    }
+
+    private static func toolSpecs(_ tools: [AnthropicTool]?) -> [ToolSpec] {
+        (tools ?? []).compactMap { tool in
+            tool.input_schema.map { ToolSpec(name: tool.name, description: tool.description ?? "", parametersJSONSchema: $0.jsonString()) }
+        }
+    }
+
+    private static func anthropicStop(_ result: Collected) -> String {
+        !result.toolCalls.isEmpty ? "tool_use" : result.finish == .length ? "max_tokens" : "end_turn"
+    }
+
+    private static func anthropicUsage(_ usage: GenerationUsage?) -> JSON {
+        .object([
+            "input_tokens": .number(Double(usage?.promptTokens ?? 0)), "output_tokens": .number(Double(usage?.completionTokens ?? 0)),
+        ])
+    }
+
+    private static func anthropicMessage(id: String, model: String, content: [JSON], stop: String?, usage: GenerationUsage?) -> JSON {
+        .object([
+            "id": .string(id), "type": .string("message"), "role": .string("assistant"), "model": .string(model),
+            "content": .array(content), "stop_reason": stop.map(JSON.string) ?? .null, "stop_sequence": .null,
+            "usage": anthropicUsage(usage),
+        ])
+    }
+
     // Generation helpers
 
     /// How the reply is cut and shaped for the client (see `ReplyAssembler`).
@@ -629,18 +820,46 @@ public final class APIServer: Sendable {
             ?? HTTPResponse(status: status)
     }
 
+    /// The wording of Anthropic's own errors where a client acts on it: Claude Code shortens the conversation and
+    /// tries again when it reads that the prompt is too long.
+    static func anthropicText(of error: Error) -> String {
+        if let api = error as? APIError { return api.message }
+        if case .promptTooLong(let tokens, let limit) = error as? EngineError {
+            return "prompt is too long: \(tokens) tokens > \(limit) maximum"
+        }
+        return "\(error)"
+    }
+
+    static func anthropicErrorDetail(_ status: Int, _ message: String) -> JSON {
+        let type =
+            switch status {
+            case 400: "invalid_request_error"
+            case 404: "not_found_error"
+            case 503: "overloaded_error"
+            default: "api_error"
+            }
+        return .object(["type": .string(type), "message": .string(message)])
+    }
+
+    static func anthropicError(_ status: Int, _ message: String) -> HTTPResponse {
+        (try? json(JSON.object(["type": .string("error"), "error": anthropicErrorDetail(status, message)]), status: status))
+            ?? HTTPResponse(status: status)
+    }
+
+    static func anthropicError(_ error: Error) -> HTTPResponse { anthropicError(status(for: error), anthropicText(of: error)) }
+
     typealias Emit = @Sendable (any Encodable & Sendable) throws -> Void
+    /// One event of an Anthropic stream: its name and the fields that follow `type`.
+    typealias AnthropicEmit = @Sendable (_ event: String, _ fields: [String: JSON]) -> Void
 
     /// Runs `producer` on a task tied to the response stream: a client disconnect terminates the stream and cancels it.
-    private static func streamed(
-        contentType: String, frame: @Sendable @escaping (Data) -> Data, trailer: Data? = nil,
-        _ producer: @Sendable @escaping (Emit) async throws -> Void
+    private static func stream(
+        contentType: String, _ producer: @Sendable @escaping (@escaping @Sendable (Data) -> Void) async throws -> Void
     ) -> HTTPResponse {
         let (stream, continuation) = AsyncThrowingStream.makeStream(of: Data.self)
         let task = Task {
             do {
-                try await producer { value in continuation.yield(frame(try encoder.encode(value))) }
-                if let trailer { continuation.yield(trailer) }
+                try await producer { data in _ = continuation.yield(data) }
                 continuation.finish()
             } catch {
                 continuation.finish(throwing: error)
@@ -648,6 +867,17 @@ public final class APIServer: Sendable {
         }
         continuation.onTermination = { _ in task.cancel() }
         return HTTPResponse(status: 200, headers: ["Content-Type": contentType], body: .stream(stream))
+    }
+
+    /// A stream of JSON values, each wrapped by `frame`.
+    private static func streamed(
+        contentType: String, frame: @Sendable @escaping (Data) -> Data, trailer: Data? = nil,
+        _ producer: @Sendable @escaping (Emit) async throws -> Void
+    ) -> HTTPResponse {
+        stream(contentType: contentType) { yield in
+            try await producer { value in yield(frame(try encoder.encode(value))) }
+            if let trailer { yield(trailer) }
+        }
     }
 
     /// Newline-delimited JSON objects (Ollama style).
@@ -662,9 +892,28 @@ public final class APIServer: Sendable {
             trailer: Data("data: [DONE]\n\n".utf8), producer)
     }
 
+    /// Named server-sent events (Anthropic style): `event: <type>` over `data: {"type": <type>, …}`.
+    static func anthropicSSE(_ producer: @Sendable @escaping (@escaping AnthropicEmit) async -> Void) -> HTTPResponse {
+        stream(contentType: "text/event-stream") { yield in
+            let write: AnthropicEmit = { event, fields in
+                let data = JSON.object(fields.merging(["type": .string(event)]) { _, type in type })
+                yield(Data("event: \(event)\ndata: \(data.jsonString())\n\n".utf8))
+            }
+            // A long prompt is read in silence: pings keep a client's idle timer from ending the stream meanwhile.
+            let ping = Task {
+                while !Task.isCancelled {
+                    try await Task.sleep(for: .seconds(10))
+                    write("ping", [:])
+                }
+            }
+            defer { ping.cancel() }
+            await producer(write)
+        }
+    }
+
     static let docsPage = """
         <!doctype html><title>Mac-Olama API</title><style>body{font:14px -apple-system,system-ui;margin:2em;max-width:52em}code{background:#eee;padding:1px 4px}</style>
-        <h1>Mac-Olama API</h1><p>Ollama-compatible (primary) and OpenAI-compatible endpoints on this host.</p>
+        <h1>Mac-Olama API</h1><p>Ollama-compatible (primary), OpenAI-compatible and Anthropic-compatible endpoints on this host.</p>
         <h2>Ollama</h2><ul>
         <li><code>GET /api/version</code>, <code>GET /api/tags</code>, <code>GET /api/ps</code>, <code>POST /api/show</code></li>
         <li><code>POST /api/chat</code>, <code>POST /api/generate</code> (NDJSON streaming, <code>keep_alive</code>, <code>images</code>, <code>tools</code>)</li>
@@ -672,6 +921,7 @@ public final class APIServer: Sendable {
         <li>403: <code>/api/pull</code>, <code>/api/delete</code> — models are downloaded and removed in the app</li>
         <li>501: <code>/api/embed</code>, <code>/api/embeddings</code>, <code>/api/create</code>, <code>/api/push</code>, <code>/api/copy</code></li></ul>
         <h2>OpenAI</h2><ul><li><code>GET /v1/models</code>, <code>POST /v1/chat/completions</code> (SSE, <code>reasoning_content</code>), <code>POST /v1/completions</code></li><li><code>stop</code>, <code>response_format</code>, <code>reasoning_effort</code>, <code>chat_template_kwargs.enable_thinking</code>, <code>top_k</code>, <code>min_p</code>, penalties</li><li>501: <code>/v1/embeddings</code></li></ul>
+        <h2>Anthropic</h2><ul><li><code>POST /v1/messages</code> (SSE, <code>tools</code>, images, <code>thinking</code>), <code>POST /v1/messages/count_tokens</code> (an estimate)</li><li>A model name that is not installed means the model chosen in the app, so Claude Code runs with <code>ANTHROPIC_BASE_URL</code> set to this address and any <code>ANTHROPIC_AUTH_TOKEN</code></li></ul>
         """
 }
 
@@ -682,6 +932,51 @@ struct APIError: Error {
     init(_ status: Int, _ message: String) {
         self.status = status
         self.message = message
+    }
+}
+
+/// The content blocks of a streamed Anthropic message. They come one at a time, each opened before its deltas and
+/// closed after them; reasoning, the answer and every tool call are blocks of their own.
+private struct AnthropicBlocks {
+    let write: APIServer.AnthropicEmit
+    private var index = -1
+    private var open: String?
+
+    init(write: @escaping APIServer.AnthropicEmit) { self.write = write }
+
+    /// Adds to the `text` or `thinking` block, opening it when another kind (or none) was open.
+    mutating func extend(_ kind: String, with text: String) {
+        guard !text.isEmpty else { return }
+        if open != kind {
+            var block: [String: JSON] = ["type": .string(kind), kind: .string("")]
+            if kind == "thinking" { block["signature"] = .string("") }
+            start(block)
+            open = kind
+        }
+        write("content_block_delta", ["index": position, "delta": .object(["type": .string("\(kind)_delta"), kind: .string(text)])])
+    }
+
+    /// The engine hands over a call complete, so its arguments go in one piece.
+    mutating func toolUse(_ call: ToolCall) {
+        start(["type": .string("tool_use"), "id": .string(call.id), "name": .string(call.name), "input": .object([:])])
+        open = "tool_use"
+        write(
+            "content_block_delta",
+            ["index": position, "delta": .object(["type": .string("input_json_delta"), "partial_json": .string(call.argumentsJSON)])])
+    }
+
+    mutating func close() {
+        guard open != nil else { return }
+        write("content_block_stop", ["index": position])
+        open = nil
+    }
+
+    private var position: JSON { .number(Double(index)) }
+
+    private mutating func start(_ block: [String: JSON]) {
+        close()
+        index += 1
+        write("content_block_start", ["index": position, "content_block": .object(block)])
     }
 }
 

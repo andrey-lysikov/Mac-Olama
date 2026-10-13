@@ -3,7 +3,8 @@
 
 import Foundation
 
-// Wire formats for the Ollama (`/api/*`) and OpenAI (`/v1/*`) surfaces. Field names follow the official docs.
+// Wire formats for the Ollama (`/api/*`), OpenAI (`/v1/*`) and Anthropic (`/v1/messages`) surfaces. Field names
+// follow the official docs.
 
 // Shared helpers
 
@@ -551,4 +552,88 @@ public struct OpenAIErrorBody: Codable, Sendable {
         public var code: String?
     }
     public var error: Detail
+}
+
+// Anthropic
+//
+// Requests only: the replies are assembled as `JSON`, since their events carry explicit nulls and differ per kind.
+
+/// `content` and `system` are either a string or a list of blocks.
+public enum AnthropicContent: EitherCodable, Sendable {
+    case text(String), list([AnthropicBlock])
+
+    public init(first: String) { self = .text(first) }
+    public init(second: [AnthropicBlock]) { self = .list(second) }
+    public var first: String? { if case .text(let s) = self { s } else { nil } }
+    public var second: [AnthropicBlock]? { if case .list(let b) = self { b } else { nil } }
+    public init(from decoder: Decoder) throws { self = try Self.decodeEither(from: decoder) }
+    public func encode(to encoder: Encoder) throws { try encodeEither(to: encoder) }
+
+    /// A plain string is one text block.
+    public var blocks: [AnthropicBlock] {
+        switch self {
+        case .text(let s): [AnthropicBlock(type: "text", text: s)]
+        case .list(let b): b
+        }
+    }
+}
+
+/// One content block of any kind (`text`, `image`, `tool_use`, `tool_result`, `thinking`…): each kind fills its own
+/// fields, and a kind this server does not know still decodes, to be skipped.
+public struct AnthropicBlock: Codable, Sendable {
+    public struct Source: Codable, Sendable {
+        public var type: String
+        public var media_type: String?
+        public var data: String?
+    }
+    public var type: String
+    public var text: String?
+    /// `image`.
+    public var source: Source?
+    /// `tool_use`.
+    public var id: String?
+    public var name: String?
+    public var input: JSON?
+    /// `tool_result`: the call it answers and what the tool returned.
+    public var tool_use_id: String?
+    public var content: AnthropicContent?
+}
+
+public struct AnthropicMessage: Codable, Sendable {
+    public var role: String
+    public var content: AnthropicContent
+}
+
+/// A tool the client runs. Tools Anthropic runs on its side (web search) come without a schema and are left out.
+public struct AnthropicTool: Codable, Sendable {
+    public var name: String
+    public var description: String?
+    public var input_schema: JSON?
+}
+
+/// `/v1/messages` and, without `max_tokens`, `/v1/messages/count_tokens`.
+public struct AnthropicRequest: Codable, Sendable {
+    public struct Thinking: Codable, Sendable { public var type: String }
+    public var model: String
+    public var messages: [AnthropicMessage]
+    public var system: AnthropicContent?
+    public var max_tokens: Int?
+    public var stream: Bool?
+    public var temperature: Double?
+    public var top_p: Double?
+    public var top_k: Int?
+    public var stop_sequences: [String]?
+    public var tools: [AnthropicTool]?
+    public var thinking: Thinking?
+
+    /// Unlike the other surfaces, what the app and the checkpoint set stays: a client of this one tunes its sampling
+    /// for Claude, not for the local model that answers. It fills in what they leave open and sets the reply's length.
+    public func sampling(default base: SamplingParams) -> SamplingParams {
+        var s = base.over(SamplingParams(temperature: temperature, topP: top_p, topK: top_k.map { max(0, $0) }))
+        if let max_tokens, max_tokens > 0 { s.maxTokens = max_tokens }
+        return s
+    }
+
+    /// Whether the client asked for reasoning; without `thinking` the API means none.
+    public var thinks: Bool { thinking.map { $0.type != "disabled" } ?? false }
 }
