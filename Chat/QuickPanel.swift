@@ -97,8 +97,7 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
             viewModel: viewModel, onClose: { [weak self] in self?.hide() },
             onHeightChange: { [weak self] height in self?.scheduleFit(contentHeight: height) },
             onMakeKey: { [weak self] in self?.panel.makeKey() },
-            onChooseFiles: { [weak self] in self?.chooseFiles() },
-            onToggleAutoClose: { [weak self] in self?.toggleAutoClose() }
+            onChooseFiles: { [weak self] in self?.chooseFiles() }
         )
         .environment(container)
         let hosting = NSHostingView(rootView: root)
@@ -163,12 +162,6 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         removeFocusObserver()
     }
 
-    /// The lock on the panel: applies at once, while the panel is shown.
-    private func toggleAutoClose() {
-        container.settings.panelClosesOnFocusLoss.toggle()
-        installFocusObserver()
-    }
-
     /// The open dialog goes above the panel (one level over it) and takes the keyboard; the panel must not auto-close
     /// while the dialog is key, so the focus observer rests until it is dismissed.
     private func chooseFiles() {
@@ -221,12 +214,6 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
     }
 
     /// Dragging an edge: the width is kept as is, the height the user chose becomes the limit for answers.
-    /// A panel left open while another chat was picked in the chats window shows that chat once it has the keyboard.
-    func windowDidBecomeKey(_ notification: Notification) {
-        guard panel.isVisible, opening == nil, let id = container.settings.activeChatID, id != viewModel.chat?.id else { return }
-        Task { await viewModel.loadActiveChat() }
-    }
-
     func windowDidEndLiveResize(_ notification: Notification) {
         viewModel.maxPanelHeight = max(panel.frame.height, 160)
         saveGeometry()
@@ -280,7 +267,6 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
 
     private func installFocusObserver() {
         removeFocusObserver()
-        guard container.settings.panelClosesOnFocusLoss else { return }
         focusObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: panel, queue: .main) {
             [weak self] _ in
             MainActor.assumeIsolated {
@@ -393,7 +379,9 @@ final class QuickPanelViewModel: ConversationStreamDelegate, ConversationStreamH
     private(set) var transcriptToken = 0
     private var storeTask: Task<Void, Never>?
 
-    // The coordinator holds the shared state, forwarded by `ConversationStreamHosting`.
+    // The coordinator holds the shared state, forwarded by `ConversationStreamHosting`; only this differs here:
+    // a reply the chats window is writing into the panel's chat shows its steps and thinking here too.
+    var progress: GenerationProgress? { stream.progress ?? chat.flatMap { container.liveProgress[$0.id] } }
 
     var activeModel: ModelDescriptor? { container.activeModel }
     var canAttachImages: Bool { activeModel?.kind == .vlm }

@@ -216,9 +216,6 @@ struct SettingsSectionView: View {
 
     private var panel: some View {
         VStack(alignment: .leading, spacing: 12) {
-            switchRow(
-                String(localized: "Close the panel when it loses focus"),
-                get: { container.settings.panelClosesOnFocusLoss }, set: { container.setPanelClosesOnFocusLoss($0) })
             row(String(localized: "Open the panel with"), help: String(localized: "Double-click the field, then press the keys")) {
                 HStack(spacing: 8) {
                     // Only as wide as a combination needs; the buttons stay next to it at the right edge of the row.

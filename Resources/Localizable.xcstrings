@@ -959,26 +959,6 @@
         }
       }
     },
-    "Close the panel when it loses focus" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Закрывать панель при потере фокуса"
-          }
-        }
-      }
-    },
-    "Close the panel when you click outside it" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Закрывать панель при клике вне её"
-          }
-        }
-      }
-    },
     "Close Window" : {
       "localizations" : {
         "ru" : {
@@ -1804,16 +1784,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "к"
-          }
-        }
-      }
-    },
-    "Keep the panel open when you click outside it" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не закрывать панель при клике вне её"
           }
         }
       }

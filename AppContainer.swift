@@ -46,6 +46,9 @@ final class AppContainer {
     /// A chat the chats window should show when it comes up (the panel's "Open in Chats"); the window clears it.
     var requestedWindowChatID: UUID?
 
+    /// Steps and thinking of the replies being written right now, by chat: the surface that streams a reply puts them
+    /// here, and the other one, opened on the same chat meanwhile, shows them too.
+    var liveProgress: [UUID: GenerationProgress] = [:]
     /// The unsent question, shared by the panel and the chats window.
     let draft = ComposerDraft()
 
@@ -1030,7 +1033,6 @@ final class AppContainer {
 
     func setSearchResults(_ count: Int) { updateToolSetting(\.searchResults, to: min(max(count, 3), 12)) }
 
-    func setPanelClosesOnFocusLoss(_ closes: Bool) { settings.panelClosesOnFocusLoss = closes }
     func setVoiceInputEnabled(_ enabled: Bool) { settings.voiceInputEnabled = enabled }
     func setVoiceAutoSend(_ sends: Bool) { settings.voiceAutoSend = sends }
 
@@ -1381,10 +1383,6 @@ final class AppSettings {
     var allowedFolders: [String] {
         get { stringArray(.allowedFolders) }
         set { set(newValue, .allowedFolders) }
-    }
-    var panelClosesOnFocusLoss: Bool {
-        get { bool(.panelClosesOnFocusLoss) }
-        set { set(newValue, .panelClosesOnFocusLoss) }
     }
     var voiceInputEnabled: Bool {
         get { bool(.voiceInputEnabled) }

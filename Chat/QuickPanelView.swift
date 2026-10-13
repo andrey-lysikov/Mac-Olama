@@ -18,7 +18,6 @@ struct QuickPanelView: View {
     var onMakeKey: () -> Void = {}
     /// The file dialog is run by the controller: it has to sit above the panel and keep the panel from auto-closing.
     var onChooseFiles: () -> Void = {}
-    var onToggleAutoClose: () -> Void = {}
     @Environment(AppContainer.self) private var container
     @State private var transcriptHeight: CGFloat = 0
     /// Field plus attachment chips: whatever of the height limit is left goes to the transcript.
@@ -129,14 +128,6 @@ struct QuickPanelView: View {
                     Image(systemName: "paperclip")
                 }
                 .help(String(localized: "Attach file"))
-                // Pin: the panel stays open when you click elsewhere; crossed out, it closes.
-                Button(action: onToggleAutoClose) {
-                    Image(systemName: container.settings.panelClosesOnFocusLoss ? "pin.slash" : "pin")
-                }
-                .help(
-                    container.settings.panelClosesOnFocusLoss
-                        ? String(localized: "Keep the panel open when you click outside it")
-                        : String(localized: "Close the panel when you click outside it"))
                 Button {
                     container.openInChats(viewModel.chat?.id)
                 } label: {

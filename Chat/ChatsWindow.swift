@@ -52,7 +52,9 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
     var isGenerating: Bool { streamsIntoShownChat || remoteGenerating }
     var streamingText: String { streamsIntoShownChat ? stream.streamingText : "" }
     var visibleStreamingText: String { streamsIntoShownChat ? stream.visibleStreamingText : "" }
-    var progress: GenerationProgress? { streamsIntoShownChat ? stream.progress : nil }
+    var progress: GenerationProgress? {
+        streamsIntoShownChat ? stream.progress : selectedChatID.flatMap { container.liveProgress[$0] }
+    }
     var streamsHere: Bool { streamsIntoShownChat && stream.streamsHere }
 
     /// The window's reply runs in the chat on screen (or is still creating it); another chat opened meanwhile

@@ -49,7 +49,6 @@ public enum SettingsKey: String, CaseIterable, Sendable {
     case apiServerPort = "apiServerPort"  // Int, default 11434; a busy one blocks the API until another is chosen
     case toolsEnabled = "toolsEnabled"  // Bool, default false
     case searchProvider = "searchProvider"  // String: "duckduckgo" (default) or "google"
-    case panelClosesOnFocusLoss = "panelClosesOnFocusLoss"  // Bool, default true
     case fileToolsEnabled = "fileToolsEnabled"  // Bool, default false
     case shortcutsToolEnabled = "shortcutsToolEnabled"  // Bool, default false
     case allowedFolders = "allowedFolders"  // [String] absolute paths the file tools may access
@@ -107,7 +106,6 @@ public enum SettingsDefaults {
             SettingsKey.apiCORSOrigins.rawValue: "",
             SettingsKey.toolsEnabled.rawValue: false,
             SettingsKey.searchProvider.rawValue: searchProvider,
-            SettingsKey.panelClosesOnFocusLoss.rawValue: true,
             SettingsKey.hotkeyKeyCode.rawValue: hotkeyKeyCode,
             SettingsKey.hotkeyModifiers.rawValue: hotkeyModifiers,
             SettingsKey.fileToolsEnabled.rawValue: false,

@@ -107,7 +107,7 @@ final class ConversationStreamCoordinator {
     private var unshownTokens = 0
     private var lastShown = ContinuousClock.now
     /// Steps and thinking of the running reply, shown above it; nil when nothing runs here.
-    private(set) var progress: GenerationProgress?
+    private(set) var progress: GenerationProgress? { didSet { publishProgress() } }
     /// Questions sent while the model was busy; they go out one by one after the current reply.
     private(set) var queuedQuestions: [QueuedQuestion] = []
     /// Thinking time of replies finished in this session, for their summary line (not stored with the message).
@@ -295,7 +295,13 @@ final class ConversationStreamCoordinator {
     // Run loop
 
     /// The chat the running reply streams into; nil while idle. Stop must aim here, not at the selection.
-    private(set) var streamingChatID: UUID?
+    private(set) var streamingChatID: UUID? { didSet { publishProgress() } }
+
+    /// The other surface shows the same chat and has no stream of its own to read the steps from: "Reading the
+    /// mail…", the thinking time and the speed reach it through the container.
+    private func publishProgress() {
+        if let streamingChatID { container.liveProgress[streamingChatID] = progress }
+    }
 
     private func ask(_ question: QueuedQuestion) {
         streamTask?.cancel()
