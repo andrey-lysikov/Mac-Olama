@@ -73,12 +73,12 @@ public struct SafariToolProvider: ToolProvider {
                     args.bool("new_tab") == false
                     ? "const t = tabAt(null); t.url = \(Self.literal(url.absoluteString));"
                     : "const t = newTab(\(Self.literal(url.absoluteString)));"
-                return try await page(open + " settle(t); return t.doJavaScript(READ);", source: url.absoluteString)
+                return try await page(open + " settle(t); return js(t, READ);", source: url.absoluteString)
             case "browser_read":
-                return try await page("return tabAt(\(Self.literal(tab))).doJavaScript(READ);", source: "Safari tab")
+                return try await page("return js(tabAt(\(Self.literal(tab))), READ);", source: "Safari tab")
             case "browser_back":
                 let body =
-                    "const t = tabAt(\(Self.literal(tab))); t.doJavaScript('history.back()'); settle(t); return t.doJavaScript(READ);"
+                    "const t = tabAt(\(Self.literal(tab))); js(t, 'history.back()'); settle(t); return js(t, READ);"
                 return try await page(body, source: "Safari tab")
             case "browser_click":
                 guard let element else { return toolFailure(missing: "element") }
@@ -114,9 +114,9 @@ public struct SafariToolProvider: ToolProvider {
         _ = try await describe(element, tab: tab)  // a stale number fails here with a clear error, before anything is pressed
         let body = """
             const t = tabAt(\(Self.literal(tab)));
-            t.doJavaScript(\(Self.literal(Self.clickScript(element))));
+            js(t, \(Self.literal(Self.clickScript(element))));
             settle(t);
-            return t.doJavaScript(READ);
+            return js(t, READ);
             """
         return try await page(body, source: "Safari tab")
     }
@@ -127,10 +127,10 @@ public struct SafariToolProvider: ToolProvider {
         guard target.typable == true else { return "error: element \(element) is not a field; read the page again" }
         let body = """
             const t = tabAt(\(Self.literal(tab)));
-            const done = t.doJavaScript(\(Self.literal(Self.fillScript(element, text: text, submit: submit))));
+            const done = js(t, \(Self.literal(Self.fillScript(element, text: text, submit: submit))));
             if (done === 'NO_OPTION') return 'NO_OPTION';
             \(submit ? "settle(t);" : "")
-            return t.doJavaScript(READ);
+            return js(t, READ);
             """
         let out = try await run(body)
         if out == "NO_OPTION" { return "error: the list has no option called \"\(text)\"" }
@@ -149,7 +149,7 @@ public struct SafariToolProvider: ToolProvider {
     }
 
     private func describe(_ element: Int, tab: Int?) async throws -> Target {
-        let out = try await run("return tabAt(\(Self.literal(tab))).doJavaScript(\(Self.literal(Self.describeScript(element))));")
+        let out = try await run("return js(tabAt(\(Self.literal(tab))), \(Self.literal(Self.describeScript(element))));")
         guard out != "MISSING" else { throw SafariFailure.missing(element) }
         guard let target = try? JSONDecoder().decode(Target.self, from: Data(out.utf8)) else { throw SafariFailure.unreadable(out) }
         return target
@@ -198,6 +198,8 @@ public struct SafariToolProvider: ToolProvider {
         let prelude = """
             const s = Application('Safari');
             const READ = \(Self.literal(Self.readScript(limit: configuration.pageCharacters)));
+            // `do JavaScript` takes the script as its direct parameter and the tab as `in`; called on the tab itself it fails with -2700.
+            function js(t, code) { return s.doJavaScript(code, { in: t }); }
             function browserWindows() {
               return s.windows().filter(w => { try { w.currentTab(); return true } catch (e) { return false } });
             }
@@ -221,7 +223,7 @@ public struct SafariToolProvider: ToolProvider {
             function settle(t) {
               delay(0.6);
               for (let i = 0; i < 25; i++) {
-                try { if (t.doJavaScript('document.readyState') === 'complete') return; } catch (e) {}
+                try { if (js(t, 'document.readyState') === 'complete') return; } catch (e) {}
                 delay(0.4);
               }
             }
