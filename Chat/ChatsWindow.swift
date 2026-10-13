@@ -545,9 +545,9 @@ private struct ChatsSplitView: View {
         .listStyle(.sidebar)
         // Picking a chat always leaves the model library.
         .onChange(of: viewModel.selectedChatID) { _, id in if id != nil { container.section = .chat } }
-        // Rows scroll under the pinned sections with the system's soft edge, not under a hard line.
+        // The hard edge backs the pinned sections: under the soft one the rows showed through three lines of entries.
         .safeAreaBar(edge: .bottom, spacing: 0) { modelsEntry }
-        .scrollEdgeEffectStyle(.soft, for: .bottom)
+        .scrollEdgeEffectStyle(.hard, for: .bottom)
         .alert(String(localized: "Rename Chat"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField(String(localized: "Title"), text: $renameText)
             Button(String(localized: "Save")) {
