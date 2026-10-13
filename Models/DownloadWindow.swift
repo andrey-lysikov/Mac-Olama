@@ -360,7 +360,8 @@ final class DownloadViewModel {
         }
         if fit.warnings.contains("memory-busy") {
             let free = Int64(HardwareProfile.availableMemoryBytes()).memorySizeText
-            return .unknown(
+            // The model itself fits; what is busy now is not its fault. A check mark, and the two stars tell the rest.
+            return .fits(
                 String(
                     localized:
                         "Would fit (about \(needed) of \(limit)), but only \(free) is free right now: close some apps or expect swapping."
