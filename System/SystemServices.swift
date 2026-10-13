@@ -47,8 +47,7 @@ enum NetworkInterfaces {
                 let address = SocketAddress.numericHost(
                     pointer.pointee.ifa_addr, length: socklen_t(pointer.pointee.ifa_addr.pointee.sa_len))
             else { continue }
-            let name = String(cString: pointer.pointee.ifa_name)
-            found.append((name, address))
+            found.append((String(cString: pointer.pointee.ifa_name), address))
         }
         return found
     }

@@ -54,14 +54,6 @@ private struct ThinkingTagger {
     }
 }
 
-extension JSON {
-    /// Tool arguments as a JSON string. Some servers send them pre-encoded as a string; that string passes through.
-    fileprivate var argumentsString: String {
-        if case .string(let s) = self { return s }
-        return jsonString()
-    }
-}
-
 actor RemoteEngine: InferenceEngine {
     /// What the server reported when the model was connected.
     struct Probe: Sendable {

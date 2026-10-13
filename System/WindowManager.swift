@@ -12,6 +12,7 @@ final class WindowManager: NSObject, NSWindowDelegate {
 
     static let shared = WindowManager()
     private var windows: [ID: NSWindow] = [:]
+    private var toolbarObservations: [ID: NSKeyValueObservation] = [:]
     private var container: AppContainer?
     /// Hides the quick panel: it floats above everything and would cover the window being opened.
     var hidePanel: (() -> Void)?
@@ -98,6 +99,15 @@ final class WindowManager: NSObject, NSWindowDelegate {
         // once, then every other saved frame (also of windows that no longer exist) is dropped.
         let name = "MacOlama.\(id.rawValue)"
         window.layoutIfNeeded()  // the first SwiftUI layout happens here, before the frame is restored, not after it
+        // No "Icon and Text / Icon Only / Text Only" menu on a right click in the toolbar: there is nothing to choose
+        // here. SwiftUI puts the toolbar in on its own time, so it is told whenever one arrives.
+        toolbarObservations[id] = window.observe(\.toolbar, options: [.initial, .new]) { window, _ in
+            MainActor.assumeIsolated {
+                window.toolbar?.allowsDisplayModeCustomization = false
+                window.toolbar?.allowsUserCustomization = false
+                window.toolbar?.displayMode = .iconOnly
+            }
+        }
         if !window.setFrameUsingName(name), !window.setFrameUsingName("MacOlama.\(title)") { window.center() }
         window.setFrameAutosaveName(name)
         let defaults = UserDefaults.standard

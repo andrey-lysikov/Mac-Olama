@@ -125,6 +125,10 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
 
     func show(prefill: String? = nil) {
         if let prefill { viewModel.input = prefill }
+        // Called from the chats window: what is being written there comes to the panel, as it goes the other way.
+        if WindowManager.shared.window(.chats)?.isKeyWindow == true, let draft = container.takeWindowDraft?() {
+            viewModel.stream.adopt(draft)
+        }
         // Already on screen: stay where it is, just take the keyboard again (no hide-and-show).
         if panel.isVisible {
             panel.orderFrontRegardless()

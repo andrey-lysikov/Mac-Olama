@@ -74,6 +74,7 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
         self.container = container
         self.stream = ConversationStreamCoordinator(container: container)
         stream.delegate = self
+        container.takeWindowDraft = { [weak self] in self?.stream.takeDraft() ?? .init() }
         observe()
         installPasteMonitor()
         observeWindowActivation()
@@ -129,6 +130,23 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
         chats = (try? await container.chatStore.allChats(includeArchived: false)) ?? []
         if let id = selectedChatID, !chats.contains(where: { $0.id == id }) { selectedChatID = chats.first?.id }
         if !filter.isEmpty { searchContents() }  // new chats and replies count too
+        await loadAnswerStarts()
+    }
+
+    /// The first words of each chat's first answer, shown in its row after the title. Read once per chat; a chat
+    /// that has no finished answer yet is looked at again on the next reload.
+    private(set) var answerStarts: [UUID: String] = [:]
+
+    private func loadAnswerStarts() async {
+        for chat in chats where answerStarts[chat.id] == nil {
+            guard let messages = try? await container.chatStore.messages(chatID: chat.id) else { continue }
+            let answer = messages.lazy.filter { $0.role == .assistant && !$0.isPartial }.map { AnswerText.visible($0.text) }
+                .first { !$0.isEmpty }
+            guard let answer else { continue }
+            // One line of plain words: the row has no room for Markdown's marks.
+            let words = answer.prefix(400).replacing(/[#*`>|_~]+/, with: " ").split(whereSeparator: \.isWhitespace)
+            answerStarts[chat.id] = String(words.joined(separator: " ").prefix(160))
+        }
     }
 
     /// Looks through the stored messages once typing pauses, so every keystroke does not query the database.
@@ -426,6 +444,12 @@ private struct ChatsSplitView: View {
             viewModel.selectedChatID = id
             container.requestedWindowChatID = nil
         }
+        // And what was being written in the panel: it lands in this composer.
+        .onChange(of: container.draftForWindow != nil, initial: true) { _, waiting in
+            guard waiting, let draft = container.draftForWindow else { return }
+            container.draftForWindow = nil
+            viewModel.stream.adopt(draft)
+        }
         // The window is named after what it shows: the chat's short title, as in the sidebar, or the models section.
         .onChange(of: windowTitle, initial: true) { _, title in WindowManager.shared.window(.chats)?.title = title }
         // Showing the library (menu, notification, sidebar) clears the chat selection so only one section is highlighted.
@@ -457,6 +481,16 @@ private struct ChatsSplitView: View {
         }
         // The reading background of the content column; the sidebar floats over the window's own.
         .background(Color(nsColor: .textBackgroundColor))
+        // The chat's icon before its title, as in its row in the sidebar; no glass under it, it is not a button.
+        .toolbar {
+            if container.section == .chat {
+                ToolbarItem(placement: .navigation) {
+                    Image(systemName: "bubble.left").foregroundStyle(Color.accentColor)
+                        .accessibilityHidden(true)
+                }
+                .sharedBackgroundVisibility(.hidden)
+            }
+        }
     }
 
     private var windowTitle: String {
@@ -485,55 +519,59 @@ private struct ChatsSplitView: View {
                 Section(isExpanded: expansion(of: section)) {
                     ForEach(chats) { chat in
                         let isChosen = chat.id == viewModel.selectedChatID
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Image(systemName: "bubble.left")
-                                .font(.system(size: 14))
-                                .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(Color.accentColor))
-                                .frame(width: 20)
-                            VStack(alignment: .leading, spacing: 2) {
-                                // Titles come from the first question: three lines tell chats apart better than one.
-                                Text(chat.title.isEmpty ? String(localized: "Untitled chat") : chat.title).lineLimit(3)
-                                // A plain date, not a ticking relative timer: a running clock read as "still generating".
-                                Text(chat.updatedAt.formatted(date: .abbreviated, time: .shortened)).font(.caption)
-                                    .foregroundStyle(isChosen ? AnyShapeStyle(.white.opacity(0.8)) : AnyShapeStyle(.secondary))
-                            }
-                            Spacer(minLength: 4)
-                            if viewModel.generatingChatIDs.contains(chat.id) {
-                                ProgressView().controlSize(.small)
-                                    .help(String(localized: "The model is answering in this chat"))
-                            }
-                            Button {
-                                viewModel.delete(chat)
-                            } label: {
-                                Image(systemName: "trash").contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain).foregroundStyle(isChosen ? AnyShapeStyle(.white.opacity(0.8)) : AnyShapeStyle(.secondary))
-                            .help(String(localized: "Delete Chat"))
-                        }
+                        chatRow(chat, isChosen: isChosen)
                         .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
                         .contentShape(Rectangle())
                         .onTapGesture { viewModel.selectedChatID = chat.id }
-                        .padding(.horizontal, 8).padding(.vertical, 10)
-                        .background(
+                        .padding(.leading, 8).padding(.trailing, 4).padding(.vertical, 10)
+                        .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
+                        // The tint fills the row itself, not the content inside it: the ring the system draws around
+                        // a row whose menu is open runs along the row's edge, and the two now coincide.
+                        .listRowBackground(
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
                                 .fill(isChosen ? Color.accentColor : .clear))
-                        .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
                         .accessibilityAddTraits(isChosen ? [.isButton, .isSelected] : .isButton)
                         // Rows run one under another; the only lines in the list are the ones between dates.
                         .listRowSeparator(.hidden)
-                        .contextMenu {
-                            Button(String(localized: "Rename…")) {
-                                renaming = chat; renameText = chat.title
+                        // Swiped to the left, the row shows Delete, as in Mail and Notes; swiped all the way, it is deleted.
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                viewModel.delete(chat)
+                            } label: {
+                                Label(String(localized: "Delete"), systemImage: "trash")
                             }
-                            Button(String(localized: "Open in Panel")) { container.setActiveChat(chat.id) }
-                            Button(String(localized: "System Prompt…")) {
+                        }
+                        .contextMenu {
+                            Button {
+                                renaming = chat; renameText = chat.title
+                            } label: {
+                                Label(String(localized: "Rename…"), systemImage: "pencil")
+                            }
+                            Button {
+                                container.setActiveChat(chat.id)
+                            } label: {
+                                Label(String(localized: "Open in Panel"), systemImage: "menubar.rectangle")
+                            }
+                            Button {
                                 container.section = .chat
                                 viewModel.selectedChatID = chat.id
                                 systemPromptText = chat.systemPrompt ?? ""
                                 showSystemPrompt = true
+                            } label: {
+                                Label(String(localized: "System Prompt…"), systemImage: "text.bubble")
                             }
                             Divider()
-                            Button(String(localized: "Delete"), role: .destructive) { viewModel.delete(chat) }
+                            Button {
+                                ChatExport.run(chat: chat, container: container, window: WindowManager.shared.window(.chats))
+                            } label: {
+                                Label(String(localized: "Export…"), systemImage: "square.and.arrow.up")
+                            }
+                            Divider()
+                            Button(role: .destructive) {
+                                confirmDelete(chat)
+                            } label: {
+                                Label(String(localized: "Delete"), systemImage: "trash")
+                            }
                         }
                     }
                 } header: {
@@ -559,6 +597,59 @@ private struct ChatsSplitView: View {
         // surface opens a chat here. The smallest scroll that shows the row, so a click on a visible row moves nothing.
         .onChange(of: viewModel.selectedChatID, initial: true) { _, _ in reveal(viewModel.selectedChatID, with: proxy) }
         .onChange(of: viewModel.focusToken) { _, _ in reveal(viewModel.selectedChatID, with: proxy) }
+        }
+    }
+
+    /// One chat in the sidebar.
+    private func chatRow(_ chat: Chat, isChosen: Bool) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "bubble.left")
+                .font(.system(size: 14))
+                .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(Color.accentColor))
+                // The bubble sits on the title's first line.
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 2) {
+                // Titles come from the first question: three lines tell chats apart better than one.
+                // A short question leaves the row half empty, so the answer's first words follow it, dimmer.
+                let title = Text(Hyphenation.soft(chat.title.isEmpty ? String(localized: "Untitled chat") : chat.title))
+                let answer = Text(viewModel.answerStarts[chat.id].map { "  " + Hyphenation.soft($0) } ?? "")
+                    .foregroundStyle(isChosen ? AnyShapeStyle(.white.opacity(0.7)) : AnyShapeStyle(.secondary))
+                Text("\(title)\(answer)")
+                    .font(.system(size: 14)).lineLimit(3)
+                // A plain date, not a ticking relative timer: a running clock read as "still generating".
+                // Export is words after the time, not one more icon in the row.
+                HStack(spacing: 4) {
+                    Text(chat.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                    Text(verbatim: "·")
+                    ChatExportLink(isChosen: isChosen) {
+                        ChatExport.run(chat: chat, container: container, window: WindowManager.shared.window(.chats))
+                    }
+                }
+                .font(.caption).lineLimit(1)
+                .foregroundStyle(isChosen ? AnyShapeStyle(.white.opacity(0.8)) : AnyShapeStyle(.secondary))
+            }
+            // The title takes all the width there is: a spacer here kept a strip at the right edge empty.
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if viewModel.generatingChatIDs.contains(chat.id) {
+                ProgressView().controlSize(.small)
+                    .help(String(localized: "The model is answering in this chat"))
+            }
+        }
+    }
+
+    /// The system's own question before a chat is gone for good.
+    private func confirmDelete(_ chat: Chat) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = String(localized: "Delete the chat “\(ChatExport.fileName(for: chat))”?")
+        alert.informativeText = String(localized: "The chat and everything in it will be deleted. This cannot be undone.")
+        alert.addButton(withTitle: String(localized: "Delete")).hasDestructiveAction = true
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        let answer: (NSApplication.ModalResponse) -> Void = { if $0 == .alertFirstButtonReturn { viewModel.delete(chat) } }
+        if let window = WindowManager.shared.window(.chats) {
+            alert.beginSheetModal(for: window, completionHandler: answer)
+        } else {
+            answer(alert.runModal())
         }
     }
 
@@ -1071,5 +1162,56 @@ private struct SidebarWidthKeeper: NSViewRepresentable {
             }
             return window?.contentView.flatMap(search)
         }
+    }
+}
+
+/// "Export…" on a chat's date line: a word in the date's colour, lit under the pointer so it reads as a button.
+private struct ChatExportLink: View {
+    let isChosen: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(String(localized: "Export…")).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        // The date's own colour, set here: a plain button would paint its words in the primary one.
+        .foregroundStyle(colour)
+        .onHover { hovering = $0 }
+        .help(String(localized: "Export Chat…"))
+    }
+
+    private var colour: AnyShapeStyle {
+        if isChosen { return AnyShapeStyle(.white.opacity(hovering ? 1 : 0.8)) }
+        return hovering ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary)
+    }
+}
+
+/// Soft hyphens for long English words. The system hyphenates by the language of the interface, so a Russian word
+/// breaks at a syllable and an English one moves to the next line whole, leaving the line short; with the places
+/// marked, it breaks too.
+@MainActor
+enum Hyphenation {
+    private static let english = Locale(identifier: "en_US") as CFLocale
+    private static let cache = NSCache<NSString, NSString>()
+
+    static func soft(_ text: String) -> String {
+        if let known = cache.object(forKey: text as NSString) { return known as String }
+        guard CFStringIsHyphenationAvailableForLocale(english) else { return text }
+        let result = text.replacing(/[A-Za-z]{7,}/) { match in
+            let word = NSMutableString(string: String(match.0))
+            var index = word.length - 2
+            // From the end backwards, so a mark put in does not move the places still to come.
+            while index > 2 {
+                let at = CFStringGetHyphenationLocationBeforeIndex(word, index, CFRange(location: 0, length: word.length), 0, english, nil)
+                guard at != kCFNotFound, at >= 2, at < index else { break }
+                word.insert("\u{00AD}", at: at)
+                index = at
+            }
+            return word as String
+        }
+        cache.setObject(result as NSString, forKey: text as NSString)
+        return result
     }
 }

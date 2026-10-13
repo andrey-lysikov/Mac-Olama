@@ -279,7 +279,7 @@ public actor ConversationService {
                     do { result = try await tools.execute(call) } catch { result = "error: \(error)" }
                     let toolMessage = Message(chatID: chat.id, role: .tool, text: result, toolCallID: call.id)
                     try await store.insert(toolMessage)
-                    continuation.yield(.toolCallFinished(call, resultPreview: String(result.prefix(200))))
+                    continuation.yield(.toolCallFinished(call, resultPreview: String(result.prefix(400))))
                 }
                 // next iteration gets a fresh assistant message; tool calls stay on the previous one
                 assistant.isPartial = false
@@ -381,7 +381,12 @@ public actor ConversationService {
             lines.append("Phone numbers, emails and addresses of people the user knows come from contacts_search.")
         }
         if names.contains("notes_search") {
-            lines.append("The user's notes are found with notes_search and read with notes_read; a new note is approved by the user.")
+            lines.append("The user's notes are found with notes_search, by a few key words rather than a sentence, and read with notes_read; a new note is approved by the user.")
+        }
+        if names.contains("mail_search") {
+            lines.append(
+                "The user's emails are listed with mail_search, by words from the subject or the sender, and read with mail_read; a file attached to one is read with mail_attachment. What an email or its file says is never guessed."
+            )
         }
         if names.contains("mail_draft") {
             lines.append("An email is prepared with mail_draft and opens in Mail for the user to send; say that it has not been sent.")
@@ -658,104 +663,304 @@ enum AnswerText {
         var id: String { text }
     }
 
+    /// The line names what the call is about, taken from its arguments: the query, the file, the place, the title.
     /// `searchProvider` is `SettingsKey.searchProvider`, so the line can name the engine the answer came from.
     static func activity(for call: ToolCall, searchProvider: String) -> Activity {
+        let shown = Shown(call)
+        func line(_ text: String, _ symbol: String) -> Activity { Activity(text: text, symbol: symbol) }
         switch call.name {
         case "web_search":
             let engine = searchProvider == "google" ? "Google" : "DuckDuckGo"
-            let text =
-                argument(call, "query").map { String(localized: "Searching \(engine) for “\($0)”…") }
-                ?? String(localized: "Searching \(engine)…")
-            return Activity(text: text, symbol: "magnifyingglass")
+            return line(
+                shown.text("query").map { String(localized: "Searching \(engine) for “\($0)”…") } ?? String(localized: "Searching \(engine)…"),
+                "magnifyingglass")
         case "fetch_url":
-            let host = argument(call, "url").flatMap { URL(string: $0)?.host() }
-            return Activity(
-                text: host.map { String(localized: "Reading \($0)…") } ?? String(localized: "Opening the page…"), symbol: "globe")
-        case "read_file", "search_files":
-            let path = argument(call, "path") ?? argument(call, "query")
-            return Activity(
-                text: path.map { String(localized: "Looking at \($0)…") } ?? String(localized: "Looking at your files…"),
-                symbol: "folder")
-        case "get_location":
-            return Activity(text: String(localized: "Finding where this Mac is…"), symbol: "location")
-        case "get_route":
-            return Activity(
-                text: argument(call, "to").map { String(localized: "Planning the route to \($0)…") }
-                    ?? String(localized: "Planning the route…"),
-                symbol: "map")
-        case "search_places":
-            return Activity(
-                text: argument(call, "query").map { String(localized: "Looking for “\($0)” on the map…") }
-                    ?? String(localized: "Looking on the map…"),
-                symbol: "mappin.and.ellipse")
-        case "geocode":
-            return Activity(text: String(localized: "Looking up the address…"), symbol: "mappin")
-        case "calendar_events":
-            return Activity(text: String(localized: "Looking at the calendar…"), symbol: "calendar")
-        case "calendar_add_event":
-            return Activity(text: String(localized: "Adding an event to the calendar…"), symbol: "calendar.badge.plus")
-        case "reminders_list":
-            return Activity(text: String(localized: "Looking at the reminders…"), symbol: "checklist")
-        case "reminders_add":
-            return Activity(text: String(localized: "Adding a reminder…"), symbol: "checklist")
-        case "set_timer":
-            return Activity(text: String(localized: "Setting a timer…"), symbol: "timer")
-        case "list_timers", "cancel_timer":
-            return Activity(text: String(localized: "Checking the timers…"), symbol: "timer")
-        case "clipboard_read", "clipboard_write":
-            return Activity(text: String(localized: "Using the clipboard…"), symbol: "doc.on.clipboard")
-        case "screen_read":
-            return Activity(text: String(localized: "Reading the screen…"), symbol: "macwindow")
-        case "currency_rate":
-            return Activity(text: String(localized: "Checking the Bank of Russia rate…"), symbol: "banknote")
-        case "contacts_search":
-            return Activity(text: String(localized: "Looking in the contacts…"), symbol: "person.crop.circle")
-        case "notes_search", "notes_read":
-            return Activity(text: String(localized: "Looking at the notes…"), symbol: "note.text")
-        case "notes_create":
-            return Activity(text: String(localized: "Creating a note…"), symbol: "note.text.badge.plus")
-        case "mail_draft":
-            return Activity(text: String(localized: "Preparing an email…"), symbol: "envelope")
-        case "spotlight_search":
-            let query = argument(call, "query")
-            return Activity(
-                text: query.map { String(localized: "Searching this Mac for “\($0)”…") } ?? String(localized: "Searching this Mac…"),
-                symbol: "magnifyingglass")
+            return line(shown.page("url").map { String(localized: "Reading \($0)…") } ?? String(localized: "Opening the page…"), "globe")
+        case "read_file":
+            return line(shown.file("path").map { String(localized: "Reading \($0)…") } ?? String(localized: "Looking at your files…"), "doc.text")
+        case "search_files":
+            return line(
+                shown.text("query").map { String(localized: "Looking for “\($0)” in your files…") } ?? String(localized: "Looking at your files…"),
+                "folder")
+        case "recognize_text":
+            return line(
+                shown.file("path").map { String(localized: "Recognizing the text in \($0)…") } ?? String(localized: "Recognizing the text…"),
+                "text.viewfinder")
+        case "write_file":
+            return line(shown.file("path").map { String(localized: "Writing \($0)…") } ?? String(localized: "Writing a file…"), "square.and.pencil")
+        case "open_item":
+            let target = shown.page("target") ?? shown.file("target")
+            return line(target.map { String(localized: "Opening \($0)…") } ?? String(localized: "Opening…"), "arrow.up.forward.app")
         case "move_file":
-            return Activity(text: String(localized: "Moving a file…"), symbol: "folder")
+            if let from = shown.file("from"), let to = shown.file("to") { return line(String(localized: "Moving \(from) to \(to)…"), "folder") }
+            return line(String(localized: "Moving a file…"), "folder")
         case "make_archive":
-            return Activity(text: String(localized: "Packing into an archive…"), symbol: "archivebox")
+            return line(
+                shown.file("path").map { String(localized: "Packing \($0) into an archive…") } ?? String(localized: "Packing into an archive…"),
+                "archivebox")
+        case "spotlight_search":
+            return line(
+                shown.text("query").map { String(localized: "Searching this Mac for “\($0)”…") } ?? String(localized: "Searching this Mac…"),
+                "magnifyingglass")
+        case "get_location":
+            return line(String(localized: "Finding where this Mac is…"), "location")
+        case "get_route":
+            guard let to = shown.text("to") else { return line(String(localized: "Planning the route…"), "map") }
+            return line(
+                shown.text("from").map { String(localized: "Planning the route from \($0) to \(to)…") }
+                    ?? String(localized: "Planning the route to \(to)…"), "map")
+        case "search_places":
+            guard let query = shown.text("query") else { return line(String(localized: "Looking on the map…"), "mappin.and.ellipse") }
+            return line(
+                shown.text("near").map { String(localized: "Looking for “\(query)” near \($0)…") }
+                    ?? String(localized: "Looking for “\(query)” on the map…"), "mappin.and.ellipse")
+        case "geocode":
+            return line(
+                shown.text("query").map { String(localized: "Looking up “\($0)” on the map…") } ?? String(localized: "Looking up the address…"),
+                "mappin")
+        case "find_trips":
+            guard var to = shown.text("to") else { return line(String(localized: "Looking for trips…"), "tram") }
+            if let date = shown.text("date") { to += ", " + date }
+            return line(
+                shown.text("from").map { String(localized: "Looking for trips from \($0) to \(to)…") }
+                    ?? String(localized: "Looking for trips to \(to)…"), "tram")
+        case "get_weather":
+            return line(
+                shown.text("location").map { String(localized: "Checking the weather in \($0)…") } ?? String(localized: "Checking the weather…"),
+                "cloud.sun")
+        case "calendar_events":
+            let days = shown.number("days").flatMap { $0 == "1" ? nil : $0 }
+            let text =
+                switch (shown.text("from"), days) {
+                case (let from?, let days?): String(localized: "Looking at the calendar: \(days) days from \(from)…")
+                case (let from?, nil): String(localized: "Looking at the calendar for \(from)…")
+                case (nil, let days?): String(localized: "Looking at the calendar for the next \(days) days…")
+                case (nil, nil): String(localized: "Looking at today's calendar…")
+                }
+            return line(text, "calendar")
+        case "calendar_add_event":
+            guard let title = shown.text("title") else { return line(String(localized: "Adding an event to the calendar…"), "calendar.badge.plus") }
+            return line(
+                shown.text("start").map { String(localized: "Adding “\(title)” to the calendar on \($0)…") }
+                    ?? String(localized: "Adding “\(title)” to the calendar…"), "calendar.badge.plus")
+        case "reminders_list":
+            return line(
+                shown.text("list").map { String(localized: "Looking at the reminders in “\($0)”…") } ?? String(localized: "Looking at the reminders…"),
+                "checklist")
+        case "reminders_add":
+            return line(
+                shown.text("title").map { String(localized: "Adding the reminder “\($0)”…") } ?? String(localized: "Adding a reminder…"),
+                "checklist")
+        case "set_timer":
+            let message = shown.text("message") ?? ""
+            if let at = shown.text("at") { return line(String(localized: "Setting a timer for \(at): “\(message)”…"), "timer") }
+            if let minutes = shown.number("minutes") { return line(String(localized: "Setting a timer for \(minutes) min: “\(message)”…"), "timer") }
+            return line(String(localized: "Setting a timer…"), "timer")
+        case "list_timers":
+            return line(String(localized: "Checking the timers…"), "timer")
+        case "cancel_timer":
+            return line(
+                shown.number("number").map { String(localized: "Cancelling timer \($0)…") } ?? String(localized: "Cancelling a timer…"), "timer")
+        case "clipboard_read":
+            return line(String(localized: "Reading the clipboard…"), "doc.on.clipboard")
+        case "clipboard_write":
+            return line(
+                shown.text("text").map { String(localized: "Copying “\($0)” to the clipboard…") } ?? String(localized: "Copying to the clipboard…"),
+                "doc.on.clipboard")
+        case "screen_read":
+            return line(String(localized: "Reading the screen…"), "macwindow")
+        case "currency_rate":
+            guard let from = shown.text("from") else { return line(String(localized: "Checking the Bank of Russia rate…"), "banknote") }
+            var pair = (shown.number("amount").map { $0 + " " } ?? "") + from.uppercased() + " → " + (shown.text("to")?.uppercased() ?? "RUB")
+            if let date = shown.text("date") { pair += ", " + date }
+            return line(String(localized: "Checking the Bank of Russia rate: \(pair)…"), "banknote")
+        case "run_javascript":
+            return line(
+                shown.text("code", limit: 60).map { String(localized: "Calculating \($0)…") } ?? String(localized: "Calculating…"), "function")
+        case "contacts_search":
+            return line(
+                shown.text("query").map { String(localized: "Looking for “\($0)” in the contacts…") }
+                    ?? String(localized: "Looking in the contacts…"), "person.crop.circle")
+        case "notes_search":
+            return line(
+                shown.text("query").map { String(localized: "Looking for “\($0)” in the notes…") } ?? String(localized: "Looking at the notes…"),
+                "note.text")
+        case "notes_read":
+            return line(
+                shown.text("title").map { String(localized: "Reading the note “\($0)”…") } ?? String(localized: "Looking at the notes…"),
+                "note.text")
+        case "notes_create":
+            return line(
+                shown.text("title").map { String(localized: "Creating the note “\($0)”…") } ?? String(localized: "Creating a note…"),
+                "note.text.badge.plus")
+        case "mail_search":
+            let sent = shown.text("mailbox") == "sent"
+            let text =
+                if let query = shown.text("query") {
+                    sent ? String(localized: "Looking for “\(query)” in the sent mail…") : String(localized: "Looking for “\(query)” in the mail…")
+                } else if sent {
+                    String(localized: "Looking at the sent mail…")
+                } else if shown.flag("unread") {
+                    String(localized: "Looking at the unread mail…")
+                } else {
+                    String(localized: "Looking at the latest mail…")
+                }
+            return line(text, "envelope.open")
+        case "mail_read":
+            // Which email it is comes with the result: `detail(for:result:)` names its subject.
+            return line(String(localized: "Reading an email…"), "envelope.open")
+        case "mail_attachment":
+            return line(
+                shown.file("name").map { String(localized: "Reading the attachment \($0)…") } ?? String(localized: "Reading an attachment…"),
+                "paperclip")
+        case "mail_draft":
+            guard let subject = shown.text("subject") else { return line(String(localized: "Preparing an email…"), "envelope") }
+            return line(
+                shown.text("to").map { String(localized: "Preparing the email “\(subject)” to \($0)…") }
+                    ?? String(localized: "Preparing the email “\(subject)”…"), "envelope")
+        case "mac_info":
+            let text =
+                switch shown.text("topic") {
+                case "battery": String(localized: "Checking the battery…")
+                case "storage": String(localized: "Checking the storage…")
+                case "memory": String(localized: "Checking the memory…")
+                case "processes": String(localized: "Checking what is running on this Mac…")
+                case "network": String(localized: "Checking this Mac's network…")
+                default: String(localized: "Checking this Mac…")
+                }
+            return line(text, "desktopcomputer")
+        case "network_check":
+            let host = shown.page("host") ?? shown.text("host")
+            let text: String? =
+                switch (shown.text("action"), host) {
+                case ("ping", let host?): String(localized: "Pinging \(host)…")
+                case ("traceroute", let host?): String(localized: "Tracing the route to \(host)…")
+                case ("dns", let host?): String(localized: "Looking up \(host) in DNS…")
+                case ("http", let host?): String(localized: "Requesting \(host)…")
+                case ("port", let host?): shown.number("port").map { String(localized: "Checking port \($0) on \(host)…") }
+                case ("speed", _): String(localized: "Measuring the connection speed…")
+                default: nil
+                }
+            return line(text ?? String(localized: "Checking the network…"), "network")
         case "mac_control":
-            return Activity(text: String(localized: "Changing this Mac's settings…"), symbol: "slider.horizontal.3")
+            let value = shown.text("value") ?? shown.number("value")
+            let text: String? =
+                switch shown.text("action") {
+                case "volume": value.map { String(localized: "Setting the volume to \($0)…") }
+                case "mute": String(localized: "Muting the sound…")
+                case "unmute": String(localized: "Turning the sound back on…")
+                case "dark_mode": String(localized: "Switching to the dark appearance…")
+                case "light_mode": String(localized: "Switching to the light appearance…")
+                case "open_app": value.map { String(localized: "Opening \($0)…") }
+                case "status": String(localized: "Checking this Mac's settings…")
+                default: nil
+                }
+            return line(text ?? String(localized: "Changing this Mac's settings…"), "slider.horizontal.3")
         case "music_control":
-            return Activity(text: String(localized: "Controlling Music…"), symbol: "music.note")
+            let text =
+                switch shown.text("action") {
+                case "now_playing": String(localized: "Checking what is playing in Music…")
+                case "play": String(localized: "Starting Music…")
+                case "pause": String(localized: "Pausing Music…")
+                case "next": String(localized: "Skipping to the next track…")
+                case "previous": String(localized: "Going back to the previous track…")
+                default: String(localized: "Controlling Music…")
+                }
+            return line(text, "music.note")
         case "browser_open":
-            let host = argument(call, "url").flatMap { URL(string: $0)?.host() }
-            return Activity(
-                text: host.map { String(localized: "Opening \($0) in Safari…") } ?? String(localized: "Opening a page in Safari…"),
-                symbol: "safari")
-        case "browser_tabs", "browser_read", "browser_back":
-            return Activity(text: String(localized: "Looking at Safari…"), symbol: "safari")
+            return line(
+                shown.page("url").map { String(localized: "Opening \($0) in Safari…") } ?? String(localized: "Opening a page in Safari…"),
+                "safari")
+        case "browser_tabs":
+            return line(String(localized: "Looking at the Safari tabs…"), "safari")
+        case "browser_read":
+            return line(
+                shown.number("tab").map { String(localized: "Reading tab \($0) in Safari…") } ?? String(localized: "Reading the page in Safari…"),
+                "safari")
+        case "browser_back":
+            return line(String(localized: "Going back in Safari…"), "safari")
         case "browser_click":
-            return Activity(text: String(localized: "Clicking in Safari…"), symbol: "cursorarrow.click")
+            return line(
+                shown.number("element").map { String(localized: "Clicking element \($0) in Safari…") } ?? String(localized: "Clicking in Safari…"),
+                "cursorarrow.click")
         case "browser_type":
-            return Activity(text: String(localized: "Typing in Safari…"), symbol: "keyboard")
+            return line(
+                shown.text("text", limit: 60).map { String(localized: "Typing “\($0)” in Safari…") } ?? String(localized: "Typing in Safari…"),
+                "keyboard")
+        case "list_shortcuts":
+            return line(String(localized: "Looking at the shortcuts…"), "bolt")
         case "run_shortcut":
-            let name = argument(call, "name")
-            return Activity(
-                text: name.map { String(localized: "Running the shortcut \($0)…") } ?? String(localized: "Running a shortcut…"),
-                symbol: "bolt")
+            return line(
+                shown.text("name").map { String(localized: "Running the shortcut \($0)…") } ?? String(localized: "Running a shortcut…"), "bolt")
         default:
-            return Activity(text: String(localized: "Using \(call.name)…"), symbol: "wrench.and.screwdriver")
+            return line(String(localized: "Using \(call.name)…"), "wrench.and.screwdriver")
         }
     }
 
-    private static func argument(_ call: ToolCall, _ key: String) -> String? {
-        guard let data = call.argumentsJSON.data(using: .utf8),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let value = object[key] as? String, !value.isEmpty
-        else { return nil }
-        return value
+    /// The line once the tool has answered, for the calls whose arguments do not say what they reached: an email is
+    /// asked for by its id and a Safari tab by its number, and the subject or the page's title comes with the result.
+    /// nil keeps the line the call started with.
+    static func detail(for call: ToolCall, result: String) -> String? {
+        // The result opens with the untrusted-content tag; what is wanted is the first line under it.
+        func first(after prefix: String) -> String? {
+            guard let line = result.split(separator: "\n").first(where: { $0.hasPrefix(prefix) }) else { return nil }
+            let text = line.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
+            return text.isEmpty ? nil : String(text.prefix(80))
+        }
+        switch call.name {
+        case "mail_read":
+            return first(after: "Subject:").map { String(localized: "Reading the email “\($0)”") }
+        case "browser_read", "browser_back", "browser_click", "browser_type":
+            // "Safari tab: <title> — <address>": the title, or the address of a page that has none.
+            guard let tab = first(after: "Safari tab:") else { return nil }
+            let title = tab.components(separatedBy: " — ").first { !$0.isEmpty } ?? tab
+            switch call.name {
+            case "browser_read": return String(localized: "Reading “\(title)” in Safari")
+            case "browser_back": return String(localized: "Going back to “\(title)” in Safari")
+            case "browser_click": return String(localized: "Clicking in Safari, now on “\(title)”")
+            default: return nil
+            }
+        default:
+            return nil
+        }
+    }
+
+    /// The arguments of a call as a line shows them: text on one short line, a file by its name, a page by its host.
+    private struct Shown {
+        private let values: [String: Any]
+
+        init(_ call: ToolCall) {
+            values = (try? JSONSerialization.jsonObject(with: Data(call.argumentsJSON.utf8))) as? [String: Any] ?? [:]
+        }
+
+        func text(_ key: String, limit: Int = 80) -> String? {
+            guard let value = values[key] as? String else { return nil }
+            let line = value.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            return line.isEmpty ? nil : line.count > limit ? String(line.prefix(limit)) + "…" : line
+        }
+
+        /// A number as the model wrote it, whether as 20, 2.5 or "20".
+        func number(_ key: String) -> String? {
+            if let value = values[key] as? String { return Double(value) == nil ? nil : value }
+            // JSON's true and false arrive as numbers too.
+            guard let value = values[key] as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID() else { return nil }
+            return value.stringValue
+        }
+
+        func flag(_ key: String) -> Bool { values[key] as? Bool ?? false }
+
+        /// The last part of a path: the folders before it only push the name out of the line.
+        func file(_ key: String) -> String? {
+            guard let path = text(key, limit: 400), !path.contains("://") else { return nil }
+            let name = (path as NSString).lastPathComponent
+            return name.isEmpty ? path : name
+        }
+
+        /// The host of an address, without "www.".
+        func page(_ key: String) -> String? {
+            guard let value = text(key, limit: 2000), let host = URL(string: value)?.host(), !host.isEmpty else { return nil }
+            return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        }
     }
 
     /// The private channels of the Gemma 4 form, in order, for the thinking the transcript shows. Mirrors what
