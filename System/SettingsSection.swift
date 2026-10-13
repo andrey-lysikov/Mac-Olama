@@ -457,7 +457,7 @@ struct SettingsSectionView: View {
         case .currency: String(localized: "Exchange Rates")
         case .contacts: String(localized: "Contacts")
         case .notes: String(localized: "Notes")
-        case .mail: String(localized: "Mail Drafts")
+        case .mail: String(localized: "Mail")
         case .spotlight: String(localized: "Spotlight Search")
         case .macControl: String(localized: "System Control")
         case .music: String(localized: "Music")
@@ -488,7 +488,7 @@ struct SettingsSectionView: View {
         case .currency: String(localized: "The model may take the official rates of the Bank of Russia (cbr.ru)")
         case .contacts: String(localized: "The model may look up phone numbers, emails and addresses in your contacts")
         case .notes: String(localized: "The model may search and read your notes; you approve new ones")
-        case .mail: String(localized: "The model may prepare an email in Mail; you send it yourself")
+        case .mail: String(localized: "The model may find and read your emails and their attachments and prepare a new email in Mail; you send it yourself")
         case .spotlight:
             String(localized: "The model may find files anywhere on this Mac by name and content; opening them still needs folder access")
         case .macControl: String(localized: "The model may change the volume and the appearance and open apps")
