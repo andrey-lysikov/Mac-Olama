@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Unit tests run hosted inside the app: keep it inert then (no status item, API server, downloads or model loading).
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
+        replaceRunningInstances()
         UserDefaults.standard.register(defaults: SettingsDefaults.registration)
         // An earlier build shortened the tooltip delay in the app's own defaults; the system delay applies again.
         UserDefaults.standard.removeObject(forKey: "NSInitialToolTipDelay")
@@ -46,6 +47,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         LaunchAtLogin.sync(enabled: container.settings.launchAtLogin)
         container.start()
+    }
+
+    /// A copy started while another is running (a new build, or the one in Applications) takes over: the old one is told
+    /// to quit and this one waits for it, since it still holds the API port, the hotkey and the loaded model.
+    private func replaceRunningInstances() {
+        guard let id = Bundle.main.bundleIdentifier else { return }
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: id).filter { $0 != .current }
+        guard !others.isEmpty else { return }
+        // `isTerminated` changes on the run loop, so the wait has to turn it.
+        func wait(_ seconds: TimeInterval) {
+            let deadline = Date(timeIntervalSinceNow: seconds)
+            while others.contains(where: { !$0.isTerminated }), Date() < deadline {
+                RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+            }
+        }
+        others.forEach { $0.terminate() }
+        wait(5)
+        others.filter { !$0.isTerminated }.forEach { $0.forceTerminate() }
+        wait(2)
     }
 
     /// ⌘Q closes the chats window instead of quitting: the app lives in the menu bar, and leaving it is the "Quit" item
