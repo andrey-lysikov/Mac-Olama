@@ -234,7 +234,15 @@ public struct SafariToolProvider: ToolProvider {
     }
 
     private func page(_ body: String, source: String) async throws -> String {
-        try format(try await run(body), source: source)
+        let out = try await run(body)
+        var text = try format(out, source: source)
+        // A video open in the tab: what is said in it comes with the page, which shows only the player and the comments.
+        if let address = (try? JSONDecoder().decode(Tab.self, from: Data(out.utf8)))?.url.flatMap({ URL(string: $0) }),
+            let video = await VideoTranscript.read(address, maxCharacters: configuration.pageCharacters)
+        {
+            text += "\n" + ToolOutput.wrap(video, source: "what is said in the video")
+        }
+        return text
     }
 
     private struct Page: Decodable {

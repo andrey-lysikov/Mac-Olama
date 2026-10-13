@@ -232,7 +232,9 @@ public struct WebToolProvider: ToolProvider {
                 parametersJSONSchema:
                     #"{"type":"object","properties":{"query":{"type":"string","description":"Search query"}},"required":["query"]}"#),
             ToolSpec(
-                name: "fetch_url", description: "Fetch a web page and return its readable content as Markdown.",
+                name: "fetch_url",
+                description:
+                    "Fetch a web page and return its readable content as Markdown. For a video on YouTube, VK Video or Rutube it returns the title, the description and the transcript of what is said, with time marks: use it to summarize or retell a video.",
                 parametersJSONSchema:
                     #"{"type":"object","properties":{"url":{"type":"string","description":"Absolute http(s) URL"}},"required":["url"]}"#),
         ]
@@ -254,6 +256,10 @@ public struct WebToolProvider: ToolProvider {
                 return "error: url must be an absolute http(s) URL"
             }
             guard await HTTP.allowsHost(url.host, blockedHosts: configuration.blockedHosts) else { return "error: host is not allowed" }
+            // A video cannot be watched, but what is said in it can be read: its subtitles stand in for the page.
+            if let video = await VideoTranscript.read(url, maxCharacters: configuration.maxPageCharacters) {
+                return ToolOutput.wrap(video, source: raw)
+            }
             let content: WebFetch.Content
             do {
                 content = try await WebFetch.readable(
@@ -280,6 +286,256 @@ public struct WebToolProvider: ToolProvider {
         default:
             throw ConversationError.unknownTool(call.name)
         }
+    }
+}
+
+// What is said in a video
+
+/// A video as text: title, channel, length, description and the subtitles, the author's own or the ones the site
+/// generates. YouTube, VK Video and Rutube are read; nothing is downloaded or played, and a video without subtitles
+/// has no text to give.
+enum VideoTranscript {
+    /// Which video an address points at, for the forms a link to one takes; nil for any other page.
+    enum Source: Equatable {
+        case youtube(String)
+        /// `key` opens a video shared by a private link.
+        case rutube(String, key: String?)
+        case vk(owner: String, id: String)
+    }
+
+    static func source(_ url: URL) -> Source? {
+        guard let host = url.host()?.lowercased() else { return nil }
+        func site(_ name: String) -> Bool { host == name || host.hasSuffix("." + name) }
+        let parts = url.pathComponents.filter { $0 != "/" }
+        let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        func value(_ name: String) -> String? { query.first { $0.name == name }?.value }
+        if host == "youtu.be" || site("youtube.com") || site("youtube-nocookie.com") {
+            var id: String?
+            if host == "youtu.be" {
+                id = parts.first
+            } else if parts.first == "watch" {
+                id = value("v")
+            } else if parts.count >= 2, ["shorts", "live", "embed", "v"].contains(parts[0]) {
+                id = parts[1]
+            }
+            guard let id, id.wholeMatch(of: /[A-Za-z0-9_-]{6,20}/) != nil else { return nil }
+            return .youtube(id)
+        }
+        if site("rutube.ru") {
+            guard let id = parts.first(where: { $0.wholeMatch(of: /[0-9a-f]{32}/) != nil }) else { return nil }
+            return .rutube(id, key: value("p"))
+        }
+        if site("vkvideo.ru") || site("vk.com") || site("vk.ru") {
+            // "video-123_456" in the path, or in `z=` when the video is open over another page; the player's own
+            // address names the two numbers apart.
+            if let match = url.absoluteString.firstMatch(of: /(?:video|clip)(-?\d+)_(\d+)/) {
+                return .vk(owner: String(match.1), id: String(match.2))
+            }
+            if let owner = value("oid"), let id = value("id"), Int(owner) != nil, Int(id) != nil { return .vk(owner: owner, id: id) }
+        }
+        return nil
+    }
+
+    /// What a site told about a video; `subtitles` is the address of the track to read and how it is described.
+    private struct Video {
+        var site: String
+        var title: String
+        var channel: String?
+        var seconds: Int?
+        var description: String?
+        var subtitles: (url: String, language: String, automatic: Bool)?
+        /// The user agent the subtitle file is asked with; YouTube gives it only to the client that asked for the video.
+        var agent = HTTP.userAgent
+    }
+
+    /// nil when the address is not a video or the site did not answer; the caller then reads the page as any other.
+    static func read(_ url: URL, maxCharacters: Int) async -> String? {
+        let video: Video?
+        switch source(url) {
+        case .youtube(let id): video = await youtube(id)
+        case .rutube(let id, let key): video = await rutube(id, key: key)
+        case .vk(let owner, let id): video = await vk(owner: owner, id: id)
+        case nil: return nil
+        }
+        guard let video else { return nil }
+        var lines = ["\(video.site) video: \(video.title)"]
+        if let channel = video.channel, !channel.isEmpty { lines.append("Channel: " + channel) }
+        if let seconds = video.seconds, seconds > 0 { lines.append("Length: " + clock(seconds)) }
+        if let description = video.description?.trimmingCharacters(in: .whitespacesAndNewlines), !description.isEmpty {
+            lines += ["", "Description:", String(description.prefix(600))]
+        }
+        guard let subtitles = video.subtitles, let address = URL(string: subtitles.url),
+            let (data, _) = try? await HTTP.get(address, userAgent: video.agent, accept: nil),
+            let text = transcript(cues(data)), !text.isEmpty
+        else {
+            lines += ["", "This video has no subtitles, so what is said in it cannot be read."]
+            return lines.joined(separator: "\n")
+        }
+        lines += ["", "Transcript (\(subtitles.language)\(subtitles.automatic ? ", recognized automatically" : "")):"]
+        // A page is cut at the limit; a video is given three times that, or an hour of talk would lose its second half.
+        let room = maxCharacters * 3
+        lines.append(text.count > room ? String(text.prefix(room)) + "\n…[the transcript goes on; the rest was cut]" : text)
+        return lines.joined(separator: "\n")
+    }
+
+    private static func clock(_ seconds: Int) -> String {
+        seconds >= 3600
+            ? String(format: "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
+            : String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    private static func json(_ request: URLRequest) async -> [String: Any]? {
+        guard let (data, _) = try? await URLSession.shared.data(for: request) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    /// The track in the language the video is spoken in (the one the site recognized), the author's own before the
+    /// recognized one; any track is better than none.
+    private static func pick<Track>(_ tracks: [Track], language: (Track) -> String?, automatic: (Track) -> Bool) -> Track? {
+        let spoken = tracks.first(where: automatic).flatMap(language)
+        return tracks.first { !automatic($0) && language($0) == spoken } ?? tracks.first(where: automatic) ?? tracks.first
+    }
+
+    // YouTube
+
+    private static let youtubeAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X)"
+
+    /// What YouTube's own player asks for before it plays a video. Asked as the iOS app: the subtitle links a web
+    /// page is given no longer download without a token only a browser can make.
+    private static func youtube(_ id: String) async -> Video? {
+        guard let url = URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false") else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 15
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(youtubeAgent, forHTTPHeaderField: "User-Agent")
+        let client: [String: Any] = ["clientName": "IOS", "clientVersion": "20.10.4", "deviceModel": "iPhone16,2", "hl": "en"]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["context": ["client": client], "videoId": id])
+        guard let player = await json(request), let details = player["videoDetails"] as? [String: Any] else { return nil }
+        var video = Video(
+            site: "YouTube", title: details["title"] as? String ?? id, channel: details["author"] as? String,
+            seconds: (details["lengthSeconds"] as? String).flatMap(Int.init), description: details["shortDescription"] as? String,
+            agent: youtubeAgent)
+        let tracks =
+            ((player["captions"] as? [String: Any])?["playerCaptionsTracklistRenderer"] as? [String: Any])?["captionTracks"]
+            as? [[String: Any]] ?? []
+        let automatic = { (track: [String: Any]) in track["kind"] as? String == "asr" }
+        if let track = pick(tracks, language: { $0["languageCode"] as? String }, automatic: automatic), let base = track["baseUrl"] as? String {
+            video.subtitles = (base + "&fmt=vtt", track["languageCode"] as? String ?? "", automatic(track))
+        }
+        return video
+    }
+
+    // Rutube
+
+    /// The options Rutube's player loads for a video: what it is and the subtitle files it has.
+    private static func rutube(_ id: String, key: String?) async -> Video? {
+        var address = "https://rutube.ru/api/play/options/\(id)/?no_404=true&referer=https%3A%2F%2Frutube.ru"
+        if let key, key.wholeMatch(of: /[A-Za-z0-9_-]+/) != nil { address += "&p=" + key }
+        guard let url = URL(string: address), let (data, _) = try? await HTTP.get(url),
+            let options = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let title = options["title"] as? String
+        else { return nil }
+        var video = Video(
+            site: "Rutube", title: title, channel: (options["author"] as? [String: Any])?["name"] as? String,
+            seconds: (options["duration"] as? NSNumber).map { $0.intValue / 1000 }, description: options["description"] as? String)
+        let tracks = options["captions"] as? [[String: Any]] ?? []
+        let automatic = { (track: [String: Any]) in track["is_autogenerated"] as? Bool ?? false }
+        if let track = pick(tracks, language: { $0["code"] as? String }, automatic: automatic), let file = track["file"] as? String {
+            video.subtitles = (file, track["code"] as? String ?? "", automatic(track))
+        }
+        return video
+    }
+
+    // VK Video
+
+    /// VK's site reads a video through its API as an anonymous visitor: a token for the site's own web client, then
+    /// `video.get`. Only what is open without signing in is given.
+    private static func vk(owner: String, id: String) async -> Video? {
+        let client = "52461373"
+        func form(_ address: String, _ fields: [String: String]) -> URLRequest? {
+            guard let url = URL(string: address) else { return nil }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 15
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            request.setValue(HTTP.userAgent, forHTTPHeaderField: "User-Agent")
+            request.setValue("https://vkvideo.ru", forHTTPHeaderField: "Origin")
+            var body = URLComponents()
+            body.queryItems = fields.map { URLQueryItem(name: $0.key, value: $0.value) }
+            request.httpBody = body.percentEncodedQuery?.data(using: .utf8)
+            return request
+        }
+        let scopes = "audio_anonymous,video_anonymous,photos_anonymous,profile_anonymous"
+        guard
+            let ask = form(
+                "https://login.vk.ru/?act=get_anonym_token",
+                ["client_id": client, "client_secret": "o557NLIkAErNhakXrQ7A", "scopes": scopes, "version": "1", "app_id": client]),
+            let token = ((await json(ask))?["data"] as? [String: Any])?["access_token"] as? String,
+            let get = form(
+                "https://api.vkvideo.ru/method/video.get?v=5.245&client_id=" + client,
+                ["videos": "\(owner)_\(id)", "extended": "1", "access_token": token]),
+            let response = (await json(get))?["response"] as? [String: Any],
+            let item = (response["items"] as? [[String: Any]])?.first, let title = item["title"] as? String,
+            // A video closed to visitors who are not signed in comes back as a stub with no length.
+            let seconds = (item["duration"] as? NSNumber)?.intValue, seconds > 0
+        else { return nil }
+        let group = (response["groups"] as? [[String: Any]])?.first?["name"] as? String
+        let person = (response["profiles"] as? [[String: Any]])?.first.map {
+            [$0["first_name"] as? String, $0["last_name"] as? String].compactMap { $0 }.joined(separator: " ")
+        }
+        var video = Video(
+            site: "VK", title: title, channel: group ?? person, seconds: seconds,
+            description: item["description"] as? String)
+        let tracks = item["subtitles"] as? [[String: Any]] ?? []
+        let automatic = { (track: [String: Any]) in track["is_auto"] as? Bool ?? false }
+        if let track = pick(tracks, language: { $0["lang"] as? String }, automatic: automatic), let file = track["url"] as? String {
+            video.subtitles = (file, track["lang"] as? String ?? "", automatic(track))
+        }
+        return video
+    }
+
+    // Subtitles
+
+    /// The lines of a WebVTT or SubRip file with the second each begins at. Recognized subtitles roll: a line is
+    /// repeated in the next cue with the new one under it, so a line equal to the one before it is said once.
+    static func cues(_ data: Data) -> [(second: Int, text: String)] {
+        var out: [(second: Int, text: String)] = []
+        var second: Int?
+        var last = ""
+        for raw in String(decoding: data, as: UTF8.self).components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if let time = line.firstMatch(of: /^(?:(\d+):)?(\d\d):(\d\d)[.,]\d+\s+-->/) {
+                second = (time.1.flatMap { Int($0) } ?? 0) * 3600 + (Int(time.2) ?? 0) * 60 + (Int(time.3) ?? 0)
+                continue
+            }
+            guard let second, !line.isEmpty else {
+                if line.isEmpty { second = nil }
+                continue
+            }
+            let text = line.replacing(/<[^>]*>/, with: "").replacingOccurrences(of: "&nbsp;", with: " ")
+                .replacingOccurrences(of: "&amp;", with: "&").replacingOccurrences(of: "&#39;", with: "'")
+                .replacingOccurrences(of: "&quot;", with: "\"").replacingOccurrences(of: "&lt;", with: "<")
+                .replacingOccurrences(of: "&gt;", with: ">").trimmingCharacters(in: .whitespaces)
+            guard !text.isEmpty, text != last else { continue }
+            last = text
+            out.append((second, text))
+        }
+        return out
+    }
+
+    /// Running text, a time mark at the start of each half minute.
+    private static func transcript(_ cues: [(second: Int, text: String)]) -> String? {
+        var paragraphs: [String] = []
+        var mark = -1
+        for cue in cues {
+            if cue.second / 30 != mark {
+                mark = cue.second / 30
+                paragraphs.append("[" + clock(mark * 30) + "] " + cue.text)
+            } else {
+                paragraphs[paragraphs.count - 1] += " " + cue.text
+            }
+        }
+        return paragraphs.isEmpty ? nil : paragraphs.joined(separator: "\n")
     }
 }
 
