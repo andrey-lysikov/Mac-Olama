@@ -6,8 +6,6 @@ import Synchronization
 
 // Errors
 
-/// `LocalizedError` as well as `CustomStringConvertible`: without both, the system prints "operation could not be
-/// completed (MacOlama.SomeError, error 0)" wherever an error is shown or logged.
 public protocol DescribedError: Error, LocalizedError, CustomStringConvertible {}
 
 extension DescribedError {
@@ -17,15 +15,12 @@ extension DescribedError {
 // Duration
 
 extension Duration {
-    /// Seconds as a Double, for rates and progress.
     public var seconds: Double { Double(components.seconds) + Double(components.attoseconds) / 1e18 }
-    /// Whole nanoseconds, as the Ollama API counts durations.
     public var nanoseconds: Int64 { Int64(components.seconds) * 1_000_000_000 + Int64(components.attoseconds / 1_000_000_000) }
 }
 
 // InferenceEngine
 
-/// Engine state: the single source for every indicator (menu bar icon, panel and chats window spinners).
 public enum EngineState: Sendable, Equatable {
     case unloaded
     case loading(modelID: String, progress: Double)
@@ -41,18 +36,13 @@ public enum EngineState: Sendable, Equatable {
     }
 }
 
-/// Every field is optional: nil means nobody asked, and the layer below decides — the checkpoint's
-/// `generation_config.json` (`ModelDefaults.sampling`), then the engine's own defaults. The app sets no values of its own.
 public struct SamplingParams: Sendable, Equatable, Codable {
     public var temperature: Double?
     public var topP: Double?
-    /// nil = until the context window is full.
     public var maxTokens: Int?
     public var repetitionPenalty: Double?
     public var seed: UInt64?
-    /// 0 turns it off.
     public var topK: Int?
-    /// 0 turns it off.
     public var minP: Double?
     public var presencePenalty: Double?
     public var frequencyPenalty: Double?
@@ -72,7 +62,6 @@ public struct SamplingParams: Sendable, Equatable, Codable {
         self.frequencyPenalty = frequencyPenalty
     }
 
-    /// These values, with `base` filling in what is not set here.
     public func over(_ base: SamplingParams) -> SamplingParams {
         SamplingParams(
             temperature: temperature ?? base.temperature, topP: topP ?? base.topP, maxTokens: maxTokens ?? base.maxTokens,
@@ -82,7 +71,6 @@ public struct SamplingParams: Sendable, Equatable, Codable {
     }
 }
 
-/// `keep_alive` semantics as in Ollama.
 public enum KeepAlive: Sendable, Equatable {
     case `default`  // idle timer from settings
     case seconds(TimeInterval)
@@ -90,7 +78,6 @@ public enum KeepAlive: Sendable, Equatable {
     case unloadNow
 }
 
-/// Tool description for tool calling; parameters are a JSON Schema string to keep JSON types out of the API.
 public struct ToolSpec: Sendable, Equatable, Codable {
     public var name: String
     public var description: String
@@ -103,7 +90,6 @@ public struct ToolSpec: Sendable, Equatable, Codable {
     }
 }
 
-/// VLM image input as bytes, not a path: the engine runs on another actor and must not touch the file system.
 public struct ImageInput: Sendable, Equatable {
     public var data: Data
     public var mimeType: String
@@ -113,7 +99,6 @@ public struct ImageInput: Sendable, Equatable {
     }
 }
 
-/// Message in engine form (no ids, dates or other storage fields).
 public struct EngineMessage: Sendable, Equatable {
     public var role: MessageRole
     public var content: String
@@ -135,18 +120,10 @@ public struct GenerationRequest: Sendable {
     public var tools: [ToolSpec]
     public var sampling: SamplingParams
     public var keepAlive: KeepAlive
-    /// For indicators: which chat is generating (nil for chat-less API requests).
     public var chatID: UUID?
-    /// Context window in tokens (prompt + reply). nil = model maximum; engines bound their KV cache by it.
     public var contextTokens: Int?
-    /// Multi-token prediction is allowed for this request: the model has a drafter and the user switched it on.
-    /// Without it the engine leaves the drafter unloaded instead of paying for weights it may not use.
     public var speculates: Bool
-    /// The model may reason before answering. Families whose chat template makes thinking optional (Gemma 4, Qwen3)
-    /// read this as `enable_thinking`; one that always reasons ignores it. Off, Gemma 4 does not think at all.
     public var thinks: Bool
-    /// A prompt longer than `contextTokens` fails with `EngineError.promptTooLong` instead of sliding the window over
-    /// its beginning. API clients ask for this; the chat trims its own history first.
     public var rejectsLongPrompt: Bool
 
     public init(
@@ -191,8 +168,6 @@ public enum GenerationEvent: Sendable, Equatable {
     case token(String)
     case toolCall(ToolCall)
     case usage(GenerationUsage)
-    /// Tokens generated so far in this request, text or not: a tool call or a channel the library holds back until
-    /// it is complete counts too. Engines that cannot tell never send it.
     case generated(Int)
     case finished(FinishReason)
 }
@@ -201,7 +176,6 @@ public enum EngineError: DescribedError, Equatable, Sendable {
     case noModelLoaded
     case imagesNotSupported
     case loadFailed(String)
-    /// The config's `model_type` is in neither MLX factory: no conversion of this architecture loads in this build.
     case unsupportedArchitecture(String)
     case generationFailed(String)
     case busy
@@ -224,7 +198,7 @@ extension EngineError {
                     "The MLX engine in this version of the app does not support this model's architecture (\(type)). Another conversion of it will not load either; choose a different model or wait for an app update."
             )
         case .loadFailed(let detail):
-            // MLX reports a checkpoint/architecture mismatch as keyNotFound(path: [...]) for the first missing weight.
+            // MLX reports a weight mismatch as keyNotFound.
             detail.contains("keyNotFound")
                 ? String(
                     localized:
@@ -235,11 +209,8 @@ extension EngineError {
     }
 }
 
-/// Inference engine. Implementation: `MLXEngine` (Engine/); a llama.cpp engine may be added behind the same protocol.
-/// An engine holds at most one model.
 public protocol InferenceEngine: Actor {
     var loadedModel: ModelDescriptor? { get }
-    /// `progress` is 0...1 and may be called from any context.
     func load(_ model: ModelDescriptor, progress: @Sendable @escaping (Double) -> Void) async throws
     func unload() async
     func generate(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error>
@@ -248,8 +219,6 @@ public protocol InferenceEngine: Actor {
 
 // Generation stream scaffolding
 
-/// The generation task an engine currently runs. Engines are actors and cannot share a base class, so each holds
-/// one of these and `AsyncThrowingStream.engine` installs the task into it; `cancelCurrent`/`unload` cancel through it.
 final class GenerationTaskBox: Sendable {
     private let task = Mutex<Task<Void, Never>?>(nil)
 
@@ -266,16 +235,12 @@ final class GenerationTaskBox: Sendable {
 }
 
 extension AsyncThrowingStream where Element == GenerationEvent, Failure == Error {
-    /// A stream that has already failed: what `generate` returns when nothing is loaded.
     static func failed(_ error: Error) -> AsyncThrowingStream<GenerationEvent, Error> {
         let (stream, continuation) = makeStream(of: GenerationEvent.self)
         continuation.finish(throwing: error)
         return stream
     }
 
-    /// Shared scaffolding of the engines' `generate`: the body runs on a task (installed into `current`, if given, so
-    /// `cancelCurrent`/`unload` reach it), cancellation becomes `.finished(.cancelled)`, a normal return finishes the
-    /// stream, and a consumer walking away cancels the task.
     static func engine(
         current: GenerationTaskBox? = nil,
         _ body: @escaping @Sendable (Continuation) async throws -> Void
@@ -303,8 +268,6 @@ extension AsyncThrowingStream where Element == GenerationEvent, Failure == Error
 
 // EngineManager
 
-/// Owns the single engine and its single loaded model: serializes generations, unloads on idle,
-/// and publishes `EngineState` for every indicator.
 public actor EngineManager {
     public struct Configuration: Sendable {
         public var idleUnloadSeconds: TimeInterval
@@ -321,11 +284,8 @@ public actor EngineManager {
     private let engine: any InferenceEngine
     private var subscribers: [UUID: AsyncStream<EngineState>.Continuation] = [:]
     private var idleTask: Task<Void, Never>?
-    /// Set by a request with `keep_alive: -1`; the next request that asks for anything else, or an unload, clears it.
     private var keepForever = false
-    /// Generation queue: each request waits for the previous one.
     private var queueTail: Task<Void, Never>?
-    /// Task is a value type, so the slot carries the generation as its identity.
     private var loadTask: (generation: Int, task: Task<Void, Error>)?
     private var loadingModelID: String?
     private var loadGeneration = 0
@@ -342,7 +302,6 @@ public actor EngineManager {
 
     // State observation
 
-    /// State stream; the current state is delivered first.
     public func states() -> AsyncStream<EngineState> {
         let id = UUID()
         let (stream, continuation) = AsyncStream.makeStream(of: EngineState.self, bufferingPolicy: .bufferingNewest(1))
@@ -366,7 +325,6 @@ public actor EngineManager {
         get async { await engine.loadedModel }
     }
 
-    /// Loads the model unless already loaded; concurrent calls for the same model await the same task.
     public func ensureLoaded(_ model: ModelDescriptor) async throws {
         // Loop: every await is a suspension where another call may have installed its own load.
         while true {
@@ -422,7 +380,6 @@ public actor EngineManager {
         }
     }
 
-    /// Prewarm: start loading without waiting.
     public func prewarm(_ model: ModelDescriptor) {
         Task { try? await ensureLoaded(model) }
     }
@@ -457,7 +414,6 @@ public actor EngineManager {
 
     // Generation
 
-    /// Loads the model if needed and enqueues the generation; events arrive as a stream.
     public func generate(model: ModelDescriptor, request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream.makeStream(of: GenerationEvent.self)
         let previous = queueTail
@@ -508,11 +464,10 @@ public actor EngineManager {
         } catch {
             continuation.finish(throwing: error)
         }
-        // Awaited here, inside this request's turn in the queue: the next request cannot start before the unload.
+        // Unload within this request's turn in the queue.
         await finishGeneration(model: model, keepAlive: request.keepAlive)
     }
 
-    /// Each request's `keep_alive` replaces the previous one's, as in Ollama; `.default` returns to the idle timer.
     private func finishGeneration(model: ModelDescriptor, keepAlive: KeepAlive) async {
         switch keepAlive {
         case .unloadNow:

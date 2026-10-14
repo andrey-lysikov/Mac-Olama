@@ -7,12 +7,10 @@ import UserNotifications
 
 // Calendar and Reminders
 
-/// The one event store of the app: EventKit asks for access once per kind, and a store keeps what it was given.
 @MainActor
 enum CalendarAccess {
     static let store = EKEventStore()
 
-    /// Asks for both when the user turns the switch on, so macOS prompts then and never in the middle of an answer.
     static func request() {
         Task {
             _ = try? await store.requestFullAccessToEvents()
@@ -20,8 +18,6 @@ enum CalendarAccess {
         }
     }
 
-    /// Asked on every call without full access: macOS shows its question while it has none (a new build is a new app
-    /// to it, write-only access asks to widen), and after a refusal its privacy pane opens instead.
     static func allowed(_ type: EKEntityType) async -> Bool {
         if EKEventStore.authorizationStatus(for: type) != .fullAccess {
             _ = try? await (type == .event ? store.requestFullAccessToEvents() : store.requestFullAccessToReminders())
@@ -34,7 +30,6 @@ enum CalendarAccess {
     }
 }
 
-/// `calendar_events`, `calendar_add_event`, `reminders_list` and `reminders_add`: the user's Calendar and Reminders.
 public struct CalendarToolProvider: ToolProvider {
     public init() {}
 
@@ -164,7 +159,7 @@ public struct CalendarToolProvider: ToolProvider {
             guard !calendars.isEmpty else { return "error: no Reminders list called \"\(list)\"" }
         }
         let predicate = store.predicateForIncompleteReminders(withDueDateStarting: nil, ending: nil, calendars: calendars)
-        // Handed over as plain values: EventKit calls back on its own queue, and its objects stay there.
+        // Plain values: EventKit objects stay on its queue.
         let found: [ReminderLine] = await withCheckedContinuation { continuation in
             store.fetchReminders(matching: predicate) { reminders in
                 let lines = (reminders ?? []).map { reminder in
@@ -206,8 +201,6 @@ public struct CalendarToolProvider: ToolProvider {
 
 // Timers
 
-/// `set_timer`, `list_timers` and `cancel_timer`: "remind me in 20 minutes" as a notification macOS delivers at the
-/// time, even with the chat closed. Only the app's own timers are listed or cancelled, never other notifications.
 public struct TimerToolProvider: ToolProvider {
     private static let prefix = "timer-"
 
@@ -287,7 +280,6 @@ public struct TimerToolProvider: ToolProvider {
         var message: String
     }
 
-    /// The app's own timers, soonest first, so a number from list_timers still means the same one when cancelling.
     private static func pending(_ center: UNUserNotificationCenter) async -> [Timer] {
         await center.pendingNotificationRequests()
             .filter { $0.identifier.hasPrefix(prefix) }

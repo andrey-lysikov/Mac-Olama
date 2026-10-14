@@ -6,8 +6,6 @@ import Foundation
 import PDFKit
 import UniformTypeIdentifiers
 
-/// What ⌘V should attach instead of pasting text: copied files, or a copied image (screenshot, image from a browser).
-/// A text field's own paste only understands strings, so both windows ask here first.
 @MainActor
 enum PasteboardAttachments {
     enum Content {
@@ -21,8 +19,7 @@ enum PasteboardAttachments {
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: fileOptions) as? [URL], !urls.isEmpty {
             return .files(urls)
         }
-        // An explicitly copied link (`public.url`, browser "Copy Link"): the page becomes an attachment.
-        // A URL typed or selected as plain text stays a text paste, so links can still be quoted verbatim.
+        // An explicitly copied link becomes an attachment; plain-text URLs stay text.
         if pasteboard.availableType(from: [.URL]) != nil,
             let url = (pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL])?.first(where: \.isWebURL)
         {
@@ -38,8 +35,6 @@ extension URL {
     var isWebURL: Bool { ["http", "https"].contains(scheme?.lowercased() ?? "") }
 }
 
-/// Downloads a page and turns it into a document attachment, so models without web tools can read it too.
-/// Used by paste and drop in both windows.
 enum WebPageDocument {
     static func fetch(_ url: URL) async throws -> DocumentInput {
         func document(title: String, markdown: String) -> DocumentInput {
@@ -73,7 +68,6 @@ enum WebPageDocument {
     }
 }
 
-/// Turns a dropped/picked file into either an image (for VLMs) or extracted text (any model).
 enum DocumentExtractor {
     enum Extracted {
         case image(NSImage)
@@ -85,15 +79,13 @@ enum DocumentExtractor {
         .plainText, .utf8PlainText, .sourceCode, .json, .xml, .yaml, .html, .commaSeparatedText, .rtf, .script, .shellScript,
     ]
 
-    /// URL-specific here: the RTF reader, the type gate and the size cap; the decoding itself is shared with
-    /// `extract(data:name:type:)`.
     static func extract(url: URL) -> Extracted? {
         guard let type = UTType(filenameExtension: url.pathExtension) ?? UTType(mimeType: "text/plain") else { return nil }
         if type.conforms(to: .image) || type.conforms(to: .pdf) {
             guard let data = try? Data(contentsOf: url) else { return nil }
             switch extract(data: data, name: url.lastPathComponent, type: type) {
             case .image(let image): return .image(image)
-            // Only a PDF's text layer may come back as text, and an empty layer answered nil here — it still does.
+            // Only a PDF text layer comes back as text; an empty one returns nil.
             case .document(let doc) where type.conforms(to: .pdf) && !doc.text.isEmpty: return .document(doc)
             default: return nil
             }

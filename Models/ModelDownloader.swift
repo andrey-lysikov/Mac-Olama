@@ -30,11 +30,8 @@ extension HubModelInfo.Sibling {
     }
 }
 
-/// Downloads a repo (Hugging Face or ModelScope) into `models/<folder>/` with Range resume, sha256 checks and a `manifest.json`.
-/// Partial files live in `downloads/<org>--<repo>/*.part` and are moved into place when complete.
 public actor ModelDownloader {
     public struct Options: Sendable {
-        /// Files not needed for inference; skipping them shrinks the download.
         public var excludedPatterns: [String] = [
             "*.md", ".gitattributes", "*.png", "*.jpg", "LICENSE*", "*.txt", "*.pt", "*.bin", "*.gguf",
         ]
@@ -51,10 +48,8 @@ public actor ModelDownloader {
     private let throttle = DownloadThrottle()
     private var maxConcurrentFiles = 2
     private var activeTasks: [String: (id: UUID, task: Task<Void, Never>)] = [:]
-    /// Cancelled tasks that may still be writing their .part; a restart waits for them first.
     private var draining: [String: Task<Void, Never>] = [:]
 
-    /// 0 = unlimited. Applies to chunks in flight, so a running download slows within a second.
     public func setSpeedLimit(bytesPerSecond: Int64) async {
         await throttle.setLimit(bytesPerSecond)
     }
@@ -80,13 +75,10 @@ public actor ModelDownloader {
         draining[repoID] = entry.task
     }
 
-    /// Convenience for Hugging Face repos.
     public func download(repoID: String, revision: String = "main") -> AsyncThrowingStream<DownloadEvent, Error> {
         download(.huggingFace(repoID: repoID), revision: revision)
     }
 
-    /// Starts a download and streams events. A second call for the same reference fails the stream with `busy`.
-    /// `into` installs the files somewhere other than `models/<repo>` — an MTP drafter goes inside its model's folder.
     public func download(
         _ reference: ModelReference, revision: String = "main", into destination: URL? = nil
     )
@@ -121,13 +113,11 @@ public actor ModelDownloader {
         draining.removeValue(forKey: repoID)
     }
 
-    /// Clears only this download's slot: a cancelled predecessor must not evict its replacement.
     private func clearTask(repoID: String, id: UUID) {
         if activeTasks[repoID]?.id == id { activeTasks[repoID] = nil }
         if draining[repoID] != nil, activeTasks[repoID] == nil { draining[repoID] = nil }
     }
 
-    /// What a hub reports before the transfer: the files, the revision stored for update checks, the base model.
     private struct Listing {
         var files: [RepoFile]
         var revision: String
@@ -149,7 +139,7 @@ public actor ModelDownloader {
             async let info = modelScope.info(repoID: id)
             let details = try? await info
             let modelScope = modelScope
-            // ModelScope has no commit id in its model API; the last update time serves as the revision for update checks.
+            // ModelScope has no commit id; last update time is the revision.
             return Listing(
                 files: try await files, revision: details?.lastUpdated.map { String(Int($0.timeIntervalSince1970)) } ?? "master",
                 baseModel: details?.baseModel, url: { modelScope.fileURL(repoID: id, path: $0) })
@@ -213,7 +203,6 @@ public actor ModelDownloader {
         continuation.yield(.finished(manifest.descriptor(directory: finalDir)))
     }
 
-    /// One file end to end, off the actor: network, disk and hashing must not serialize behind actor calls.
     private nonisolated func fetchOne(
         _ file: RepoFile, at index: Int, url: URL, stagingDir: URL, reporter: DownloadProgressReporter
     ) async throws -> (Int, ModelManifest.FileEntry) {
@@ -232,8 +221,6 @@ public actor ModelDownloader {
         return (index, .init(path: file.path, sizeBytes: file.size, sha256: file.sha256))
     }
 
-    /// Downloads one file; if a `.part` exists, resumes from its size via a Range request.
-    /// A size of 0 means "unknown": whatever arrives is accepted and an existing empty file is not trusted.
     private nonisolated func downloadFile(
         url: URL, to dest: URL, expectedSize: Int64, path: String, reporter: DownloadProgressReporter, retryOn416: Bool = true
     ) async throws {
@@ -250,7 +237,7 @@ public actor ModelDownloader {
         }
         if offset > expectedSize { try? fm.removeItem(at: part); offset = 0 }
         if expectedSize > 0, offset == expectedSize {
-            // Fully staged before a crash: finish locally instead of sending a range the server answers with 416.
+            // Already complete: finish locally instead of a 416 range.
             if fm.fileExists(atPath: dest.path) { try? fm.removeItem(at: dest) }
             try fm.moveItem(at: part, to: dest)
             return
@@ -310,8 +297,6 @@ public actor ModelDownloader {
         }
     }
 
-    /// Maps an untrusted hub listing path to a location inside `dir`; rejects absolute paths,
-    /// `~`, `.`/`..` components and anything resolving outside `dir`.
     static func safeDestination(for path: String, under dir: URL) throws -> URL {
         guard !path.isEmpty, !path.hasPrefix("/"), !path.hasPrefix("~") else { throw HubError.unsafePath(path) }
         let components = path.split(separator: "/", omittingEmptySubsequences: true)
@@ -338,7 +323,7 @@ public actor ModelDownloader {
     static func sha256Hex(of url: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
-        var hasher = SHA256()  // streamed: weight files are far too large to read whole
+        var hasher = SHA256()  // streamed: weights are too large to read whole
         while let chunk = try handle.read(upToCount: 4 << 20), !chunk.isEmpty {
             hasher.update(data: chunk)
         }
@@ -348,8 +333,6 @@ public actor ModelDownloader {
 
 // Transfer plumbing
 
-/// Delivers a response body as Data chunks via delegate callbacks; `URLSession.AsyncBytes` hands out
-/// single bytes and burns a CPU core on multi-gigabyte files.
 enum ChunkedResponse {
     static func begin(
         _ request: URLRequest, on session: URLSession
@@ -379,7 +362,7 @@ enum ChunkedResponse {
             case finished(Result<HTTPURLResponse, Error>)
         }
 
-        // Backpressure: the consumer acknowledges written bytes; past the high-water mark the task suspends.
+        // Backpressure: suspend past the high-water mark.
         static let highWater = 8 << 20
         static let lowWater = 2 << 20
 
@@ -417,7 +400,6 @@ enum ChunkedResponse {
             armed?.resume(with: result)
         }
 
-        /// The consumer wrote this chunk to disk; refill the window and wake the transfer if it was paused.
         func consumed(_ count: Int) {
             let resume: Bool = buffered.withLock { b in
                 b.bytes -= count
@@ -463,7 +445,6 @@ enum ChunkedResponse {
     }
 }
 
-/// Token bucket shared by all files of all downloads; `consume` suspends until the chunk fits the rate.
 actor DownloadThrottle {
     private var limit: Int64 = 0
     private var available = 0.0
@@ -471,7 +452,7 @@ actor DownloadThrottle {
 
     func setLimit(_ bytesPerSecond: Int64) {
         limit = max(0, bytesPerSecond)
-        available = 0  // fresh start: no debt from the old rate, no burst either
+        available = 0  // fresh start, no debt or burst
         last = .now
     }
 
@@ -493,8 +474,6 @@ actor DownloadThrottle {
     }
 }
 
-/// Aggregates per-file progress of concurrent transfers. Speed is a sliding five-second window over
-/// this session's bytes, so resumed and already-present files do not inflate it.
 final class DownloadProgressReporter: Sendable {
     private struct State {
         var perFile: [String: Int64] = [:]

@@ -4,25 +4,13 @@
 import AppKit
 import SwiftUI
 
-// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
-// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
-
-/// Everything the app itself is set to do, in the chats window next to the model library. The status menu keeps only
-/// what is reached in one click; anything with a value to pick or a list to edit belongs here.
-/// What a single model does — its context window, temperature, drafter, thinking — stays in the models section.
-/// Every setting is one row: its name on the left, its control on the right, the way System Settings reads — its
-/// switches are the small control size, so they sit level with one line of text rather than towering over it.
 struct SettingsSectionView: View {
     @Environment(AppContainer.self) private var container
-    /// The shortcut being edited: it reaches the app only when the tick is pressed, so a half-typed combination
-    /// never becomes the live one.
     @State private var draft = GlobalHotkey.Combination(keyCode: 0, modifiers: 0)
     @State private var recording = false
 
-    /// The page sizes offered: from a short news item to a long article. A number typed by hand would say no more.
     private static let pageSizes = [4000, 8000, 12000, 20000, 30000, 60000]
     private static let searchCounts = [3, 5, 8, 10, 12]
-    /// Rounds of tools before the model must answer: one search or one page read is a round.
     private static let toolRounds = [3, 5, 10, 15, 20]
     private static let idleTimeouts: [(String, TimeInterval)] = [
         (String(localized: "1 minute"), 60), (String(localized: "5 minutes"), 300), (String(localized: "15 minutes"), 900),
@@ -49,7 +37,7 @@ struct SettingsSectionView: View {
         .scrollContentBackground(.hidden)
         .scrollEdgeEffectHidden(true, for: .top)  // no band under the toolbar, as in the chat
         .onAppear(perform: loadDraft)
-        // The field turns the shortcut off while it listens; whatever the outcome, the live one comes back.
+        // Restore the live shortcut after recording.
         .onChange(of: recording) { _, listening in if !listening { container.restoreHotkey() } }
     }
 
@@ -57,7 +45,6 @@ struct SettingsSectionView: View {
         draft = container.hotkey
     }
 
-    /// The value stored (and put into the prompt) is the English name; the label is the language's own.
     private static let languages: [(String, String)] = [
         (String(localized: "Automatic"), ""),
         ("English", "English"), ("Русский", "Russian"), ("Deutsch", "German"), ("Français", "French"),
@@ -67,7 +54,6 @@ struct SettingsSectionView: View {
 
     // Sections
 
-    /// Dictation is recognized on this Mac in the preferred reply language, or the system's.
     private var voiceInput: some View {
         VStack(alignment: .leading, spacing: 12) {
             switchRow(
@@ -93,8 +79,6 @@ struct SettingsSectionView: View {
         }
     }
 
-    /// Everything a model may reach, in one block: a line on what the switches mean, then one sub-block per kind, each
-    /// under its own heading, so the groups read as parts of one set rather than as unrelated settings.
     private var pluginGroups: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(String(localized: "What a model may use while it answers. Each plugin is off until you turn it on."))
@@ -110,7 +94,6 @@ struct SettingsSectionView: View {
         }
     }
 
-    /// One group of plugins: its plain switches, with web search, folders and Shortcuts where they belong.
     private func plugins(_ kind: PluginGroup) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             if kind == .webSearch { webSearch }
@@ -219,7 +202,7 @@ struct SettingsSectionView: View {
         VStack(alignment: .leading, spacing: 12) {
             row(String(localized: "Open the panel with"), help: String(localized: "Double-click the field, then press the keys")) {
                 HStack(spacing: 8) {
-                    // Only as wide as a combination needs; the buttons stay next to it at the right edge of the row.
+                    // Fits the combination; buttons stay at the right.
                     ShortcutField(combination: $draft, recording: $recording)
                         .frame(width: 110, height: 22)
                     Button {
@@ -336,10 +319,8 @@ struct SettingsSectionView: View {
 
     // Building blocks
 
-    // `Binding` takes `@Sendable` closures that carry their caller's isolation, so the accessors handed down to
-    // these building blocks say `@MainActor @Sendable` too; the call sites stay plain `{ container.settings… }`.
+    // Accessors are `@MainActor @Sendable` to match `Binding`.
 
-    /// `Toggle(...).labelsHidden().toggleStyle(.switch).controlSize(.small)` written once; sits inside a `row`.
     private func smallSwitch(
         get: @escaping @MainActor @Sendable () -> Bool, set: @escaping @MainActor @Sendable (Bool) -> Void
     ) -> some View {
@@ -349,7 +330,6 @@ struct SettingsSectionView: View {
             .controlSize(.small)
     }
 
-    /// A row whose only control is a switch.
     private func switchRow(
         _ title: String, help: String? = nil, indented: Bool = false,
         get: @escaping @MainActor @Sendable () -> Bool, set: @escaping @MainActor @Sendable (Bool) -> Void
@@ -357,7 +337,6 @@ struct SettingsSectionView: View {
         row(title, help: help, indented: indented) { smallSwitch(get: get, set: set) }
     }
 
-    /// `Picker(...).labelsHidden().frame(width:)` written once; the options stay at the call site.
     private func picker<Value: Hashable>(
         width: CGFloat, get: @escaping @MainActor @Sendable () -> Value, set: @escaping @MainActor @Sendable (Value) -> Void,
         @ViewBuilder options: () -> some View
@@ -366,7 +345,6 @@ struct SettingsSectionView: View {
             .labelsHidden().frame(width: width)
     }
 
-    /// A row whose only control is a picker.
     private func pickerRow<Value: Hashable>(
         _ title: String, help: String? = nil, width: CGFloat,
         get: @escaping @MainActor @Sendable () -> Value, set: @escaping @MainActor @Sendable (Value) -> Void,
@@ -375,7 +353,6 @@ struct SettingsSectionView: View {
         row(title, help: help) { picker(width: width, get: get, set: set, options: options) }
     }
 
-    /// One setting: its name on the left, its control right-aligned, so the controls of a section line up.
     private func row(_ title: String, help: String? = nil, indented: Bool = false, @ViewBuilder control: () -> some View) -> some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
@@ -495,9 +472,6 @@ struct SettingsSectionView: View {
     }
 }
 
-/// The shortcut field of System Settings: it shows the combination, a double click starts listening, and the next key
-/// press with modifiers becomes the new one. While it listens the global shortcut is off, or pressing it would open
-/// the panel instead of being recorded; Esc leaves the field as it was.
 private struct ShortcutField: NSViewRepresentable {
     @Binding var combination: GlobalHotkey.Combination
     @Binding var recording: Bool
@@ -532,7 +506,7 @@ private struct ShortcutField: NSViewRepresentable {
             window?.makeFirstResponder(self)
             recording = true
             onRecordingChange?(true)
-            GlobalHotkey.shared.unregister()  // the combination being pressed must reach this field, not the panel
+            GlobalHotkey.shared.unregister()  // let the pressed combination reach this field
         }
 
         override func keyDown(with event: NSEvent) {
@@ -540,7 +514,6 @@ private struct ShortcutField: NSViewRepresentable {
             capture(event)
         }
 
-        /// A combination with ⌘ never arrives as `keyDown`: the menus see it first, as a key equivalent.
         override func performKeyEquivalent(with event: NSEvent) -> Bool {
             guard recording else { return super.performKeyEquivalent(with: event) }
             capture(event)
@@ -587,8 +560,6 @@ private struct ShortcutField: NSViewRepresentable {
 
 // AboutSectionView
 
-/// The last permanent section of the chats window: what the app is, its version with a way to ask for a newer one
-/// right now instead of waiting for the daily check, the copyright line and where the code lives.
 struct AboutSectionView: View {
     @Environment(AppContainer.self) private var container
 
@@ -618,7 +589,7 @@ struct AboutSectionView: View {
                     .padding(.top, 4)
                 Text(versionLine).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                     .padding(.top, 10)
-                // The answer arrives as a notification, the same way the menu's "Check for Updates" reports it.
+                // Result arrives as a notification.
                 Button {
                     container.updates.checkApp(force: true)
                 } label: {
@@ -644,7 +615,7 @@ struct AboutSectionView: View {
             .padding(.horizontal, 16).padding(.vertical, 24)
             .frame(maxWidth: .infinity)
         }
-        // Shorter than the window, the page sits in its middle; taller, it scrolls from the top as usual.
+        // Centred when short, scrolls from the top when tall.
         .defaultScrollAnchor(.center, for: .alignment)
         .scrollContentBackground(.hidden)
         .scrollEdgeEffectHidden(true, for: .top)  // no band under the toolbar, as in the chat

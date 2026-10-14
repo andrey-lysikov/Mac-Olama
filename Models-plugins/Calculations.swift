@@ -4,12 +4,8 @@
 import Foundation
 import JavaScriptCore
 
-// Exact numbers instead of the model's arithmetic.
-
 // JavaScript
 
-/// `run_javascript`: exact arithmetic, dates and conversions in JavaScriptCore. A bare context has no network, files or
-/// timers (no fetch, require, XMLHttpRequest), and a time limit stops runaway loops.
 public struct JavaScriptToolProvider: ToolProvider {
     public var timeLimit: TimeInterval = 3
     public var maxCodeCharacters = 8000
@@ -67,7 +63,6 @@ public struct JavaScriptToolProvider: ToolProvider {
 
     private typealias SetTimeLimit = @convention(c) (JSContextGroupRef, Double, OpaquePointer?, UnsafeMutableRawPointer?) -> Void
 
-    /// Exported by JavaScriptCore but not in its public headers; looked up so a missing symbol only drops the time limit.
     private static let setExecutionTimeLimit: SetTimeLimit? = {
         guard let handle = dlopen("/System/Library/Frameworks/JavaScriptCore.framework/JavaScriptCore", RTLD_LAZY),
             let symbol = dlsym(handle, "JSContextGroupSetExecutionTimeLimit")
@@ -83,8 +78,6 @@ public struct JavaScriptToolProvider: ToolProvider {
 
 // Exchange rates
 
-/// `currency_rate`: the official rates of the Bank of Russia for a day (cbr.ru, free, no key); any pair goes through
-/// the rouble, as the bank publishes every currency against it.
 public struct CurrencyToolProvider: ToolProvider {
     public var ratesURL = URL(string: "https://www.cbr.ru/scripts/XML_daily.asp")!
 
@@ -132,13 +125,10 @@ public struct CurrencyToolProvider: ToolProvider {
     }
 
     struct Table: Equatable {
-        /// The day the rates were set for, as the bank writes it (a weekend keeps Friday's).
         var date: String
-        /// Roubles for one unit of each currency, RUB itself included.
         var rates: [String: Double]
     }
 
-    /// The bank's XML: `<Valute><CharCode>USD</CharCode><Nominal>1</Nominal><Value>81,2345</Value>`, in windows-1251.
     static func parse(_ data: Data) -> Table? {
         guard let text = String(data: data, encoding: .windowsCP1251) ?? String(data: data, encoding: .utf8),
             let date = text.firstMatch(of: /<ValCurs Date="([^"]+)"/)?.1
@@ -163,7 +153,6 @@ public struct CurrencyToolProvider: ToolProvider {
         return formatter.string(from: date)
     }
 
-    /// Money reads with two decimals; a rate below one keeps enough digits to mean something.
     private static func number(_ value: Double) -> String {
         abs(value) >= 1 || value == 0 ? String(format: "%.2f", value) : String(format: "%.6f", value)
     }

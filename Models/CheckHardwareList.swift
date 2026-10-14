@@ -5,16 +5,14 @@ import Darwin
 import Foundation
 import IOKit
 
-/// Machine profile: chip, memory, GPU. Read once at startup.
 public struct HardwareProfile: Sendable, Equatable {
     public var chipName: String  // "Apple M4 Pro"
     public var gpuCores: Int?
     public var memoryBytes: UInt64
-    public var wiredLimitBytes: UInt64  // how much unified memory the GPU may take (estimate)
+    public var wiredLimitBytes: UInt64  // GPU share of unified memory (estimate)
 
     public var memoryGB: Int { Int(memoryBytes / (1024 * 1024 * 1024)) }
 
-    /// `recommendedWorkingSetBytes` comes from Metal (`GPU.maxRecommendedWorkingSetBytes()` in OlamaMLX) when available.
     public static func current(recommendedWorkingSetBytes: Int? = nil) -> HardwareProfile {
         let chip = sysctlString("machdep.cpu.brand_string") ?? "Apple Silicon"
         let mem = sysctlUInt64("hw.memsize") ?? UInt64(ProcessInfo.processInfo.physicalMemory)
@@ -26,8 +24,6 @@ public struct HardwareProfile: Sendable, Equatable {
         )
     }
 
-    /// Memory that could be handed out right now (free, inactive and purgeable pages): a model competes with whatever
-    /// is already running, so the wired limit alone says too little.
     public static func availableMemoryBytes() -> UInt64 {
         var stats = vm_statistics64_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
@@ -74,38 +70,24 @@ public struct HardwareProfile: Sendable, Equatable {
 }
 
 extension String {
-    /// Decodes a C-string buffer as UTF-8, cut at its terminator; only part of the buffer may be filled,
-    /// and `String(cString:)` over an array is deprecated.
     init(cBuffer: [CChar]) {
         self = String(decoding: cBuffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
 }
 
-/// Estimate of whether a model fits this machine's memory. Speed is not guessed: the system reports no memory
-/// bandwidth, and a table of chips would go stale with every new one.
 public struct ModelFitReport: Sendable, Equatable {
     public enum Fit: Sendable { case comfortable, tight, no }
     public var fit: Fit
-    /// 3 comfortable, 2 tight, 1 will not fit.
     public var stars: Int
     public var memoryAfterLoadBytes: Int64
-    /// Split of `needed`, for the tooltip: weights, attention cache at the context used for the estimate, fixed headroom.
     public var weightsBytes: Int64 = 0
     public var kvBytes: Int64 = 0
     public var contextTokens: Int = 0
     public var warnings: [String]
 
-    /// How much context the estimate assumes when the user has not chosen a window. A model may declare 260k, but the
-    /// attention cache only grows with the conversation, and a chat that long is rare — the same 32k the reply budget
-    /// is capped at. A window chosen in the models section is used as it is.
     public static let assumedContext = 32768
-    /// Without a KV profile the cache is guessed from the model's size; that guess was calibrated on short chats and
-    /// runs away at long ones, so it is asked about a shorter window.
     public static let assumedContextWithoutProfile = 8192
 
-    /// `kvCache` comes from the model's own `config.json`; without it the old rule of thumb is used. `availableBytes` is
-    /// what the machine can hand out right now (0 = do not take it into account). `chosenContext` is the window the
-    /// model is set to run with, when there is one.
     public static func evaluate(
         modelBytes: Int64, contextLength: Int?, hardware: HardwareProfile, kvCache: KVCacheProfile? = nil,
         availableBytes: UInt64 = 0, chosenContext: Int? = nil
@@ -116,12 +98,12 @@ public struct ModelFitReport: Sendable, Equatable {
         if let kvCache {
             kv = kvCache.bytes(context: context)
         } else {
-            // Rule of thumb: ~0.125 MB/token for a 7–8B model with grouped-query attention in fp16, scaled by model size.
+            // Rule of thumb: ~0.125 MB/token for 7–8B GQA fp16, scaled by size.
             kv = Int64(0.125 * 1024 * 1024 * max(0.3, Double(modelBytes) / (4.7 * 1024 * 1024 * 1024)) * Double(context))
         }
         let needed = modelBytes + kv + Int64(1.0 * 1024 * 1024 * 1024)
         let limit = Int64(hardware.wiredLimitBytes)
-        // What is free right now can be the tighter of the two: other apps hold memory the model would need.
+        // Free memory may be the tighter limit.
         let free = availableBytes > 0 ? min(limit, Int64(availableBytes)) : limit
         let remaining = Int64(hardware.memoryBytes) - needed
         var warnings: [String] = []

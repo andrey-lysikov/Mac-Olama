@@ -17,15 +17,12 @@ public protocol SearchProvider: Sendable {
     func search(_ query: String, limit: Int) async throws -> [SearchResult]
 }
 
-/// Shared fetch with a browser-like UA and a hard timeout.
 enum HTTP {
-    /// Plain product token for APIs that want to know the client, carrying the app's own version.
     static let appUserAgent = "Mac-Olama/" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0")
     static let userAgent =
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15 "
         + appUserAgent
 
-    /// `userAgent`/`accept` nil = do not set the header (the session's defaults apply).
     static func get(
         _ url: URL, timeout: TimeInterval = 15, headers: [String: String] = [:], maxBytes: Int? = nil,
         userAgent: String? = HTTP.userAgent, accept: String? = "text/html,application/json;q=0.9,*/*;q=0.8",
@@ -53,8 +50,6 @@ enum HTTP {
         return (data, http)
     }
 
-    /// True when any address `host` resolves to is loopback, private or link-local (getaddrinfo also accepts
-    /// literal IPs; both families are checked because the connection may use either). Resolution failure blocks.
     static func resolvesToLocal(_ host: String) async -> Bool {
         await Task.detached {
             var hints = addrinfo()
@@ -75,7 +70,6 @@ enum HTTP {
         }.value
     }
 
-    /// Whether this host may be fetched at all: not on the block list, not this Mac's own network.
     static func allowsHost(_ host: String?, blockedHosts: Set<String>) async -> Bool {
         guard let host = host?.lowercased(), !blockedHosts.contains(host), !host.hasSuffix(".local"),
             !(await resolvesToLocal(host))
@@ -84,7 +78,6 @@ enum HTTP {
     }
 }
 
-/// Follows redirects only to http(s) URLs whose host is neither blocked nor resolving to a local address.
 final class RedirectGuard: NSObject, URLSessionTaskDelegate {
     private let blockedHosts: Set<String>
 
@@ -104,7 +97,6 @@ final class RedirectGuard: NSObject, URLSessionTaskDelegate {
     }
 }
 
-/// DuckDuckGo HTML endpoint: no API key, parsed from the DOM. Fragile by nature; kept as the zero-config default.
 public struct DuckDuckGoProvider: SearchProvider {
     public let name = "duckduckgo"
     public init() {}
@@ -116,7 +108,6 @@ public struct DuckDuckGoProvider: SearchProvider {
         return try Self.parse(html: String(decoding: data, as: UTF8.self), limit: limit)
     }
 
-    /// Result links `a.result__a` and snippets `a.result__snippet` come in document order; a snippet belongs to the link before it.
     static func parse(html: String, limit: Int) throws -> [SearchResult] {
         let document = try SwiftSoup.parse(html, "https://html.duckduckgo.com/html/")
         var results: [SearchResult] = []
@@ -144,8 +135,6 @@ public struct DuckDuckGoProvider: SearchProvider {
     }
 }
 
-/// Google's basic-HTML results page (`gbv=1`): no API key, parsed from the DOM.
-/// Google may answer with a JavaScript or consent wall instead; then the query falls back to DuckDuckGo so the tool keeps working.
 public struct GoogleProvider: SearchProvider {
     public let name = "google"
     public init() {}
@@ -155,13 +144,12 @@ public struct GoogleProvider: SearchProvider {
         c.queryItems = [
             URLQueryItem(name: "q", value: query), URLQueryItem(name: "gbv", value: "1"), URLQueryItem(name: "num", value: String(limit)),
         ]
-        // VERIFY(google): the basic-HTML page is served to text browsers; a regular Safari UA gets the JavaScript version.
+        // VERIFY(google): basic HTML is served to text-browser user agents.
         let (data, _) = try await HTTP.get(c.url!, headers: ["User-Agent": "Lynx/2.9.0 libwww-FM/2.14 SSL-MM/1.4.1"])
         let results = try Self.parse(html: String(decoding: data, as: UTF8.self), limit: limit)
         return results.isEmpty ? try await DuckDuckGoProvider().search(query, limit: limit) : results
     }
 
-    /// Result links are `<a href="/url?q=<target>&…">` with an `<h3>` title; the snippet is the text up to the next result link.
     static func parse(html: String, limit: Int) throws -> [SearchResult] {
         let document = try SwiftSoup.parse(html, "https://www.google.com/")
         var results: [SearchResult] = []
@@ -187,7 +175,7 @@ public struct GoogleProvider: SearchProvider {
                     snippets.append([])
                     current = results.count - 1
                 }
-                return  // the link's own text is the title and the displayed URL, not the snippet
+                return  // anchor text is the title and URL, not the snippet
             }
             for child in element.getChildNodes() { try walk(child) }
         }
@@ -203,7 +191,6 @@ public struct GoogleProvider: SearchProvider {
 
 // Tool provider
 
-/// `web_search` and `fetch_url` for tool calling. Results are wrapped as untrusted data for the model.
 public struct WebToolProvider: ToolProvider {
     public struct Configuration: Sendable {
         // Enough candidates to choose from and pages read far enough to compare sources.
@@ -256,7 +243,7 @@ public struct WebToolProvider: ToolProvider {
                 return "error: url must be an absolute http(s) URL"
             }
             guard await HTTP.allowsHost(url.host, blockedHosts: configuration.blockedHosts) else { return "error: host is not allowed" }
-            // A video cannot be watched, but what is said in it can be read: its subtitles stand in for the page.
+            // Video pages are read through their subtitles.
             if let video = await VideoTranscript.read(url, maxCharacters: configuration.maxPageCharacters) {
                 return ToolOutput.wrap(video, source: raw)
             }
@@ -272,7 +259,7 @@ public struct WebToolProvider: ToolProvider {
                             || ["octet-stream", "/pdf", "/zip", "/gzip"].contains(where: lowered.contains)
                     })
             } catch WebFetch.FetchError.status(let code) {
-                // Redirects are followed automatically, so a surviving 3xx means RedirectGuard refused the target.
+                // A remaining 3xx means RedirectGuard refused it.
                 return (300..<400).contains(code) ? "error: redirect blocked (target not allowed)" : "error: HTTP \(code)"
             }
             switch content {
@@ -291,14 +278,9 @@ public struct WebToolProvider: ToolProvider {
 
 // What is said in a video
 
-/// A video as text: title, channel, length, description and the subtitles, the author's own or the ones the site
-/// generates. YouTube, VK Video and Rutube are read; nothing is downloaded or played, and a video without subtitles
-/// has no text to give.
 enum VideoTranscript {
-    /// Which video an address points at, for the forms a link to one takes; nil for any other page.
     enum Source: Equatable {
         case youtube(String)
-        /// `key` opens a video shared by a private link.
         case rutube(String, key: String?)
         case vk(owner: String, id: String)
     }
@@ -326,8 +308,7 @@ enum VideoTranscript {
             return .rutube(id, key: value("p"))
         }
         if site("vkvideo.ru") || site("vk.com") || site("vk.ru") {
-            // "video-123_456" in the path, or in `z=` when the video is open over another page; the player's own
-            // address names the two numbers apart.
+            // VK video ids from the path or `z=`.
             if let match = url.absoluteString.firstMatch(of: /(?:video|clip)(-?\d+)_(\d+)/) {
                 return .vk(owner: String(match.1), id: String(match.2))
             }
@@ -336,7 +317,6 @@ enum VideoTranscript {
         return nil
     }
 
-    /// What a site told about a video; `subtitles` is the address of the track to read and how it is described.
     private struct Video {
         var site: String
         var title: String
@@ -344,11 +324,9 @@ enum VideoTranscript {
         var seconds: Int?
         var description: String?
         var subtitles: (url: String, language: String, automatic: Bool)?
-        /// The user agent the subtitle file is asked with; YouTube gives it only to the client that asked for the video.
         var agent = HTTP.userAgent
     }
 
-    /// nil when the address is not a video or the site did not answer; the caller then reads the page as any other.
     static func read(_ url: URL, maxCharacters: Int) async -> String? {
         let video: Video?
         switch source(url) {
@@ -372,7 +350,7 @@ enum VideoTranscript {
             return lines.joined(separator: "\n")
         }
         lines += ["", "Transcript (\(subtitles.language)\(subtitles.automatic ? ", recognized automatically" : "")):"]
-        // A page is cut at the limit; a video is given three times that, or an hour of talk would lose its second half.
+        // Videos get three times the page limit.
         let room = maxCharacters * 3
         lines.append(text.count > room ? String(text.prefix(room)) + "\n…[the transcript goes on; the rest was cut]" : text)
         return lines.joined(separator: "\n")
@@ -389,8 +367,6 @@ enum VideoTranscript {
         return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 
-    /// The track in the language the video is spoken in (the one the site recognized), the author's own before the
-    /// recognized one; any track is better than none.
     private static func pick<Track>(_ tracks: [Track], language: (Track) -> String?, automatic: (Track) -> Bool) -> Track? {
         let spoken = tracks.first(where: automatic).flatMap(language)
         return tracks.first { !automatic($0) && language($0) == spoken } ?? tracks.first(where: automatic) ?? tracks.first
@@ -400,8 +376,6 @@ enum VideoTranscript {
 
     private static let youtubeAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X)"
 
-    /// What YouTube's own player asks for before it plays a video. Asked as the iOS app: the subtitle links a web
-    /// page is given no longer download without a token only a browser can make.
     private static func youtube(_ id: String) async -> Video? {
         guard let url = URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false") else { return nil }
         var request = URLRequest(url: url)
@@ -428,7 +402,6 @@ enum VideoTranscript {
 
     // Rutube
 
-    /// The options Rutube's player loads for a video: what it is and the subtitle files it has.
     private static func rutube(_ id: String, key: String?) async -> Video? {
         var address = "https://rutube.ru/api/play/options/\(id)/?no_404=true&referer=https%3A%2F%2Frutube.ru"
         if let key, key.wholeMatch(of: /[A-Za-z0-9_-]+/) != nil { address += "&p=" + key }
@@ -448,8 +421,6 @@ enum VideoTranscript {
 
     // VK Video
 
-    /// VK's site reads a video through its API as an anonymous visitor: a token for the site's own web client, then
-    /// `video.get`. Only what is open without signing in is given.
     private static func vk(owner: String, id: String) async -> Video? {
         let client = "52461373"
         func form(_ address: String, _ fields: [String: String]) -> URLRequest? {
@@ -496,8 +467,6 @@ enum VideoTranscript {
 
     // Subtitles
 
-    /// The lines of a WebVTT or SubRip file with the second each begins at. Recognized subtitles roll: a line is
-    /// repeated in the next cue with the new one under it, so a line equal to the one before it is said once.
     static func cues(_ data: Data) -> [(second: Int, text: String)] {
         var out: [(second: Int, text: String)] = []
         var second: Int?
@@ -523,7 +492,6 @@ enum VideoTranscript {
         return out
     }
 
-    /// Running text, a time mark at the start of each half minute.
     private static func transcript(_ cues: [(second: Int, text: String)]) -> String? {
         var paragraphs: [String] = []
         var mark = -1
@@ -541,19 +509,14 @@ enum VideoTranscript {
 
 // Shared page reading
 
-/// One pipeline for `fetch_url` and pasted links: GET, then JSON and plain text as they are, HTML through
-/// PageExtractor; anything `isRaw` claims comes back untouched for the caller to handle (PDF) or refuse.
 enum WebFetch {
     enum FetchError: Error {
         case status(Int)
     }
 
     enum Content {
-        /// A JSON or text/plain body, not clipped: each caller caps it its own way.
         case plain(Data)
-        /// Readable HTML, already capped at `maxCharacters` by the extractor.
         case page(title: String, markdown: String)
-        /// A content type `isRaw` claimed; `url` is the final one after redirects.
         case other(data: Data, contentType: String, url: URL)
     }
 

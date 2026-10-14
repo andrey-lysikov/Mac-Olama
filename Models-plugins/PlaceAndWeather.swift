@@ -7,16 +7,12 @@ import MapKit
 
 // Location
 
-/// Where this Mac is, from Location Services: the one source for `get_location` and for `get_weather` asked without a
-/// place. Nothing is looked up until a model calls one of them, and the coordinates are cut to about a kilometre.
 @MainActor
 final class LocationService: NSObject, CLLocationManagerDelegate {
     static let shared = LocationService()
 
-    /// What the tools report: the place in words for the model, coordinates for a forecast.
     struct Place: Sendable {
         var city: String?
-        /// City with its region and country, as Maps writes it: "Cupertino, CA, United States".
         var label: String?
         var country: String?
         var latitude: Double
@@ -36,11 +32,10 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
     private override init() {
         super.init()
         manager.delegate = self
-        // A kilometre is all a city, a forecast or a time zone needs, and it comes faster than a precise fix.
+        // Kilometre accuracy is enough and faster.
         manager.desiredAccuracy = kCLLocationAccuracyKilometer
     }
 
-    /// Asks macOS when the user turns the switch on, so the prompt comes then and never in the middle of an answer.
     func requestPermission() {
         if manager.authorizationStatus == .notDetermined { manager.requestWhenInUseAuthorization() }
     }
@@ -62,7 +57,6 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
 
     // Waiting for macOS
 
-    /// The permission prompt may be left unanswered; after the time is up the tool says the place is unknown.
     private func decision(within seconds: Double) async {
         let id = UUID()
         await withCheckedContinuation { continuation in
@@ -74,8 +68,6 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         }
     }
 
-    /// A recent fix macOS holds is used at once; otherwise updates run until one comes. Not `requestLocation()`: it
-    /// gives up in about ten seconds with "location unknown", shorter than a Mac may need to place itself by Wi-Fi.
     private func fix(within seconds: Double) async throws -> CLLocation {
         if let known = manager.location, -known.timestamp.timeIntervalSinceNow < 600,
             (0...3000).contains(known.horizontalAccuracy)
@@ -104,7 +96,6 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         for continuation in waiting { continuation.resume(with: result) }
     }
 
-    /// The name comes from the rounded coordinates too, so no more than a kilometre's precision leaves the Mac.
     private func describe(_ location: CLLocation) async -> Place {
         let latitude = (location.coordinate.latitude * 100).rounded() / 100
         let longitude = (location.coordinate.longitude * 100).rounded() / 100
@@ -129,8 +120,7 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
 
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: any Error) {
         let code = (error as? CLError)?.code
-        // "Unknown right now": the updates keep trying, as Core Location documents, so the wait goes on until the
-        // time limit instead of ending here.
+        // "Unknown" is transient; keep waiting until the time limit.
         guard code != .locationUnknown else { return }
         MainActor.assumeIsolated {
             finish(.failure(code == .denied ? Failure.denied : Failure.unavailable(error.localizedDescription)))
@@ -148,7 +138,6 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
 }
 
 extension LocationService.Failure {
-    /// What the model reads instead of a place: why, and what to do rather than guess.
     var toolText: String {
         switch self {
         case .denied:
@@ -159,8 +148,6 @@ extension LocationService.Failure {
     }
 }
 
-/// `get_location`: the city, country, time zone with the local time and rounded coordinates of this Mac, for answers
-/// that depend on where the user is. Off by default; macOS asks for permission when the switch is turned on.
 public struct LocationToolProvider: ToolProvider {
     public init() {}
 
@@ -197,7 +184,6 @@ public struct LocationToolProvider: ToolProvider {
 }
 
 extension WeatherToolProvider {
-    /// The forecast place for a question that names none: this Mac's.
     static func currentPlace() async throws -> Place {
         let here = try await LocationService.shared.current()
         return Place(
@@ -208,8 +194,6 @@ extension WeatherToolProvider {
 
 // Maps
 
-/// `get_route`, `search_places` and `geocode`: Apple Maps through MapKit, no key. They share one switch with
-/// `get_location`, so a start or a search centre left out is where this Mac is.
 public struct MapsToolProvider: ToolProvider {
     public init() {}
 
@@ -267,15 +251,12 @@ public struct MapsToolProvider: ToolProvider {
     }
 }
 
-/// The MapKit side. Its requests answer on the main actor, so the whole lookup runs there.
 @MainActor
 enum MapLookup {
-    /// A place the tools talk about: what to call it in the answer, and where it is.
     struct Point {
         var label: String
         var location: CLLocation
         var item: MKMapItem
-        /// What its marker on the feed's map says; nil for the user's own place, which is marked as such.
         var name: String?
         var isUser = false
 
@@ -319,8 +300,7 @@ enum MapLookup {
                 }
             }
         } catch {
-            // Maps refuses a route when a road is closed (Krasnodar to Khadyzhensk by car, while on foot it has one):
-            // its reason and the straight line still give the model something true to say.
+            // Route refused: return the reason and straight-line distance.
             let reason = (error as NSError).localizedFailureReason ?? error.localizedDescription
             lines.append("Apple Maps gives no route \(how) right now: \(reason). Another mode of travel may still have one.")
         }
@@ -378,7 +358,6 @@ enum MapLookup {
 
     // Places
 
-    /// Where the user is, from Location Services: the start or the search centre the model left out.
     private static func here() async throws -> Point {
         let place = try await LocationService.shared.current()
         let location = CLLocation(latitude: place.latitude, longitude: place.longitude)
@@ -386,7 +365,6 @@ enum MapLookup {
         return Point(label: label, location: location, item: MKMapItem(location: location, address: nil), isUser: true)
     }
 
-    /// A city, an address or coordinates; a landmark or a business is not an address, so the local search tries next.
     private static func find(_ text: String) async throws -> Point? {
         if let location = coordinates(text) {
             return Point(label: text, location: location, item: MKMapItem(location: location, address: nil), name: text)
@@ -404,7 +382,6 @@ enum MapLookup {
         "error: Apple Maps found no place called \"\(text)\"; try another spelling or add the region or country"
     }
 
-    /// "lat, lon" typed or passed on by the model.
     private static func coordinates(_ text: String) -> CLLocation? {
         let parts = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
         guard parts.count == 2, let lat = Double(parts[0]), let lon = Double(parts[1]), abs(lat) <= 90, abs(lon) <= 180 else {
@@ -413,7 +390,6 @@ enum MapLookup {
         return CLLocation(latitude: lat, longitude: lon)
     }
 
-    /// Its name with the address, the way Maps lists a result: "Аптека 36,6, улица Мира, 12, Краснодар, Россия".
     private static func label(of item: MKMapItem) -> String {
         let address = item.addressRepresentations?.fullAddress(includingRegion: true, singleLine: true)
         switch (item.name, address) {
@@ -447,17 +423,12 @@ extension String {
 
 // Trips
 
-/// `find_trips`: trains, flights, buses and commuter trains between two places on a day, from Yandex Schedules
-/// (rasp.yandex.ru, no key). Its search page carries the timetable with Russian Railways' seats and prices as JSON;
-/// buying is left to the user, through links to rzd.ru, Aviasales and the schedule itself.
 public struct TripsToolProvider: ToolProvider {
     public var scheduleURL = URL(string: "https://rasp.yandex.ru/search/")!
     public var suggestURL = URL(string: "https://suggests.rasp.yandex.net/all_suggests")!
     public var railwayStationsURL = URL(string: "https://pass.rzd.ru/suggester")!
     public var airportCodesURL = URL(string: "https://autocomplete.travelpayouts.com/places2")!
-    /// The location switch is on too: a trip without a start begins in the city this Mac is in.
     public var usesCurrentPlace = false
-    /// A busy line (Moscow to Saint Petersburg) has a hundred departures a day; the rest stay behind the link.
     static let listed = 30
 
     public init() {}
@@ -495,8 +466,7 @@ public struct TripsToolProvider: ToolProvider {
             } else {
                 return toolFailure(missing: "from")
             }
-            // The page reads plain names itself and knows cities its suggester misses ("Париж"); a name it cannot
-            // place (an airport, "Шереметьево") is a 404, and then the suggester's keys are asked for instead.
+            // Try plain names first; on 404 fall back to suggester keys.
             var page = searchPage([("fromName", from), ("toName", to)], day: day, transport: transport)
             var search = try await timetable(page)
             if search?.context.from.title?.nonEmpty == nil || search?.context.to.title?.nonEmpty == nil {
@@ -525,15 +495,12 @@ public struct TripsToolProvider: ToolProvider {
 
     // Requests
 
-    /// The timetable a search page carries, or nil when the page is not one (an unknown place, a captcha).
     private func timetable(_ page: URL) async throws -> Search? {
         let (data, response) = try await HTTP.get(page, timeout: 20)
         guard response.statusCode == 200, let state = Self.state(in: String(decoding: data, as: UTF8.self)) else { return nil }
         return try? JSONDecoder().decode(Schedule.self, from: state).search
     }
 
-    /// The schedule's own key for a name: "c213" for Moscow, "s9600213" for Sheremetyevo. The suggester lists streets
-    /// and stops too, so the same name wins, a city before a station, then any city, then whatever comes first.
     private func point(_ name: String) async throws -> String? {
         var c = URLComponents(url: suggestURL, resolvingAgainstBaseURL: false)
         c?.queryItems = [
@@ -560,13 +527,11 @@ public struct TripsToolProvider: ToolProvider {
         return c?.url ?? base
     }
 
-    /// Where to buy: the same search on rzd.ru for trains and on Aviasales for flights. A link that cannot be made
-    /// is left out; the schedule's own page is always there.
     private func links(for search: Search, day: Date, page: URL) async -> [String] {
         let kinds = Set(search.segments.map(\.transport.code))
         let from = search.context.from.title ?? "", to = search.context.to.title ?? ""
         async let railway = kinds.contains("train") ? railwayLink(search, from: from, to: to, day: day) : nil
-        // Searched from an airport, the flight's own cities go to Aviasales: "Шереметьево" is no city code.
+        // From an airport, use the flight's cities for Aviasales.
         let flight = search.segments.first { $0.transport.code == "plane" }
         async let flights =
             kinds.contains("plane")
@@ -575,8 +540,6 @@ public struct TripsToolProvider: ToolProvider {
         return ["Timetable: " + page.absoluteString] + [await railway, await flights].compactMap { $0 }
     }
 
-    /// Russian Railways' codes of the two cities, so every station of each is searched; a city its suggester does
-    /// not name exactly falls back to the stations of the first train.
     private func railwayLink(_ search: Search, from: String, to: String, day: Date) async -> String? {
         let train = search.segments.first { $0.transport.code == "train" }
         async let start = railwayCode(from)
@@ -600,7 +563,6 @@ public struct TripsToolProvider: ToolProvider {
         return stations.first { $0["n"] as? String == name }.flatMap { ($0["c"] as? NSNumber)?.stringValue }
     }
 
-    /// Aviasales takes city codes and the day as DDMM: MOW0110KRR1 is Moscow to Krasnodar on 1 October, one adult.
     private func flightsLink(from: String, to: String, day: Date) async -> String? {
         async let start = airportCode(from)
         async let end = airportCode(to)
@@ -683,7 +645,6 @@ public struct TripsToolProvider: ToolProvider {
         var cancelType: String?
     }
 
-    /// The JSON the page assigns to `window.INITIAL_STATE`, cut out by matching braces outside strings.
     static func state(in html: String) -> Data? {
         guard let marker = html.range(of: "window.INITIAL_STATE =") else { return nil }
         let bytes = Array(html.utf8[marker.upperBound...])
@@ -781,7 +742,6 @@ public struct TripsToolProvider: ToolProvider {
         }
     }
 
-    /// Russian Railways' classes by the names travellers use.
     private static func seatClass(_ key: String) -> String {
         switch key {
         case "platzkarte": "platzkart (open sleeper)"
@@ -817,7 +777,6 @@ public struct TripsToolProvider: ToolProvider {
         return formatter.string(from: date)
     }
 
-    /// Names reach the page's JSON HTML-escaped: "Экспресс &quot;Ласточка&quot;".
     private static func plain(_ text: String) -> String {
         text.replacingOccurrences(of: "&quot;", with: "\"").replacingOccurrences(of: "&#39;", with: "'")
             .replacingOccurrences(of: "&amp;", with: "&")
@@ -826,15 +785,10 @@ public struct TripsToolProvider: ToolProvider {
 
 // Weather
 
-/// `get_weather`: current conditions and a daily forecast from Open-Meteo (free, no key; data under CC BY 4.0, so the
-/// source is named in every result). A place name is turned into coordinates by Open-Meteo's own geocoder.
 public struct WeatherToolProvider: ToolProvider {
     public var geocodingURL = URL(string: "https://geocoding-api.open-meteo.com/v1/search")!
     public var forecastURL = URL(string: "https://api.open-meteo.com/v1/forecast")!
-    /// Fallback when Open-Meteo fails: ProjectEOL's MCP server with NOAA GFS, as System Spinner uses it.
     public var projectEolURL = URL(string: "https://weatherapi.projecteol.ru/mcp/")!
-    /// The location switch is on too: a call without a place means where the user is, found by Location Services,
-    /// so a question about the weather "here" takes one round instead of asking the city first.
     public var usesCurrentPlace = false
 
     public init() {}
@@ -937,7 +891,6 @@ public struct WeatherToolProvider: ToolProvider {
         ]
     }
 
-    /// One MCP `tools/call` to ProjectEOL; the answer is plain JSON-RPC.
     private func callProjectEol(_ tool: String, arguments: [String: Any]) async throws -> Data {
         let body: [String: Any] = [
             "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": ["name": tool, "arguments": arguments] as [String: Any],
@@ -953,7 +906,6 @@ public struct WeatherToolProvider: ToolProvider {
         return data
     }
 
-    /// Open-Meteo only. 5 s, not the usual 15: a slow answer is not worth waiting for when ProjectEOL can stand in.
     private func get(_ url: URL?) async throws -> Data {
         guard let url else { throw URLError(.badURL) }
         let (data, response) = try await HTTP.get(url, timeout: 5, userAgent: HTTP.appUserAgent, accept: nil)
@@ -969,7 +921,6 @@ public struct WeatherToolProvider: ToolProvider {
         var country: String?
         var latitude: Double
         var longitude: Double
-        /// IANA name; ProjectEOL answers in UTC and its hours are put into this zone's days.
         var timeZone: String? = nil
     }
 
@@ -1127,13 +1078,11 @@ public struct WeatherToolProvider: ToolProvider {
         return lines.joined(separator: "\n")
     }
 
-    /// GFS has no weather code: the words come from cloud cover (0…1) and rain, snow when it stays below freezing.
     static func condition(cloud: Double, rain: Double, rainAbove: Double, celsius: Double?) -> String {
         if rain >= rainAbove { return (celsius ?? 1) <= 0 ? "snow" : "rain" }
         return cloud < 0.2 ? "clear sky" : cloud < 0.6 ? "partly cloudy" : "overcast"
     }
 
-    /// WMO weather interpretation codes, as Open-Meteo documents them.
     static func describe(_ code: Int) -> String {
         switch code {
         case 0: "clear sky"

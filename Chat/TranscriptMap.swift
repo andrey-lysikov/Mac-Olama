@@ -4,19 +4,13 @@
 import MapKit
 import SwiftUI
 
-// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
-// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
-
 // TranscriptMap
 
-/// A map a tool answered with: the points of a route or the places found, stored with the tool's result so the feed
-/// draws it as it was, without asking Maps again. The model never reads it: `ToolMapNote.strip` cuts it from the context.
 struct TranscriptMap: Codable, Equatable, Sendable {
     struct Point: Codable, Equatable, Sendable {
         var lat: Double
         var lon: Double
         var name: String?
-        /// The user's own place, drawn as "You are here".
         var here: Bool?
 
         var coordinate: CLLocationCoordinate2D { CLLocationCoordinate2D(latitude: lat, longitude: lon) }
@@ -25,14 +19,10 @@ struct TranscriptMap: Codable, Equatable, Sendable {
     enum Kind: String, Codable, Sendable { case route, places }
 
     var kind: Kind
-    /// driving, walking or transit, for a route.
     var mode: String?
     var points: [Point]
-    /// The route's line as [lat, lon] pairs, thinned to a few hundred; nil when Maps gave no route.
     var line: [[Double]]?
 
-    /// The same points in Yandex Maps, which builds its own route there. Only the points leave the app: showing
-    /// Yandex's data in it would need Yandex's own map, the condition of its API.
     var yandexURL: URL? {
         var components = URLComponents(string: "https://yandex.ru/maps/")
         switch kind {
@@ -53,7 +43,6 @@ struct TranscriptMap: Codable, Equatable, Sendable {
         return components?.url
     }
 
-    /// A route line for storing: every few points of Maps' polyline, the last one kept, five decimals (about a metre).
     static func line(of polyline: MKPolyline, limit: Int = 300) -> [[Double]] {
         let count = polyline.pointCount
         guard count > 1 else { return [] }
@@ -69,7 +58,6 @@ struct TranscriptMap: Codable, Equatable, Sendable {
 
 // ToolMapNote
 
-/// How a map rides along with a tool's result: one tagged line at its end, cut out before the model sees it.
 enum ToolMapNote {
     private static let open = "<mac-olama-map>"
     private static let close = "</mac-olama-map>"
@@ -98,18 +86,14 @@ enum ToolMapNote {
 
 // TranscriptMaps
 
-/// The maps the tool rounds before each answer brought, keyed by that answer. A tool result is parsed once.
 @MainActor
 enum TranscriptMaps {
-    /// Bounded: it would otherwise keep an entry for every tool result ever shown, deleted chats included. An evicted one
-    /// is parsed again from the message.
     private static let parsed: NSCache<NSUUID, Parsed> = {
         let cache = NSCache<NSUUID, Parsed>()
         cache.countLimit = 500
         return cache
     }()
 
-    /// `NSCache` holds objects; a message without a map is remembered too, so it is not scanned again.
     private final class Parsed {
         let map: TranscriptMap?
         init(_ map: TranscriptMap?) { self.map = map }
@@ -144,8 +128,6 @@ enum TranscriptMaps {
 
 // TranscriptMapView
 
-/// A route or the places found, under the answer. It takes no clicks or scrolling, so the feed keeps scrolling over
-/// it; the buttons open it in Apple Maps or in Yandex Maps for anything more.
 struct TranscriptMapView: View {
     let map: TranscriptMap
     var height: CGFloat
@@ -180,7 +162,6 @@ struct TranscriptMapView: View {
         }
     }
 
-    /// A lone point would be drawn at the closest zoom; a street's width around it reads better.
     private var position: MapCameraPosition {
         guard map.points.count == 1, map.line == nil, let point = map.points.first else { return .automatic }
         return .region(MKCoordinateRegion(center: point.coordinate, latitudinalMeters: 3000, longitudinalMeters: 3000))

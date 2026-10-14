@@ -11,38 +11,19 @@ import MLXVLM
 import Tokenizers
 import os
 
-// Written against mlx-swift-lm 3.31.4 sources (ModelContainer.prepare/generate, UserInput(chat:), Generation, ToolCall).
-
-/// MLX inference engine. In-process, one model; generations are serialized by `EngineManager`.
 public actor MLXEngine: InferenceEngine {
     public private(set) var loadedModel: ModelDescriptor?
     private var container: ModelContainer?
     private let current = GenerationTaskBox()
-    /// Caches of recent generations, least recently used first: a prompt that continues one of them (the next turn of
-    /// that chat, or of an API client's conversation) prefills only its remainder (see `PromptSession`).
     private var sessions: [PromptSession] = []
-    /// Several chats stay warm; the byte budget keeps idle caches from crowding out the model on a small Mac.
     private static let maxSessions = 4
     private static let sessionBudgetBytes = max(1 << 30, (GPU.maxRecommendedWorkingSetBytes() ?? 0) / 6)
-    /// Token ids that stand for images in the prompt (from `config.json`); empty when the model does not say, which
-    /// keeps image prompts out of cache reuse.
     private var mediaTokenIDs: Set<Int> = []
-    /// Off switch for cache reuse. Symptom of a cache gone wrong: after tool rounds (not in the first round) the answer turns
-    /// incoherent, repeats itself or loses the question, while the same chat regenerated with this off is fine.
     private static let reusesPromptCache = true
-    /// Off switch for multi-token prediction. Drafted tokens are verified by the model itself, so the answer is the
-    /// one plain decoding would give; only the speed changes.
     private static let usesSpeculativeDecoding = true
-    /// Tokens offered per speculative round (one bonus plus the drafted ones), the library's default; a drafter that
-    /// cannot go that wide clamps it.
     private static let speculationBlockSize = 4
-    /// What is known about the loaded model's MTP drafter. `greedyOnly` remembers a drafter that was let go because
-    /// the request sampled: it is loaded again if a later request is greedy, rather than sitting in memory unused.
     private var drafterState: DrafterState = .unknown
-    /// Metal buffer cache kept between generations (bytes); nil keeps the MLX default.
     private let cacheLimitBytes: Int?
-    /// MLX's own limit, read before this engine changes it. A generation runs with it: a small cache makes MLX free
-    /// and reallocate the prefill's large temporary buffers on every step.
     private let generationCacheLimit: Int
 
     public init(cacheLimitBytes: Int? = 512 * 1024 * 1024) {
@@ -50,20 +31,17 @@ public actor MLXEngine: InferenceEngine {
         self.generationCacheLimit = Memory.cacheLimit
     }
 
-    /// The buffer cache is large only while a generation runs; after it the surplus goes back to the system.
     private func setGenerating(_ generating: Bool) {
         guard let idle = cacheLimitBytes else { return }
         Memory.cacheLimit = generating ? generationCacheLimit : idle
         if !generating, Memory.cacheMemory > idle { Memory.clearCache() }
     }
 
-    /// What MLX samples with when neither the request nor the checkpoint says: shown in the models list as the default.
     public nonisolated static var librarySampling: SamplingParams {
         let p = GenerateParameters()
         return SamplingParams(temperature: Double(p.temperature), topP: Double(p.topP), topK: p.topK, minP: Double(p.minP))
     }
 
-    /// Bytes the GPU may reasonably wire; feeds `HardwareProfile.wiredLimitBytes`.
     public nonisolated static func recommendedWorkingSetBytes() -> Int? {
         GPU.maxRecommendedWorkingSetBytes()
     }
@@ -98,9 +76,6 @@ public actor MLXEngine: InferenceEngine {
         }
     }
 
-    /// Picks the factory that knows the checkpoint's `model_type`. A vision model whose architecture only the text
-    /// factory knows still loads, as text; one that neither knows fails here with a plain reason instead of a decoding
-    /// error from deep inside MLX.
     private static func loadable(_ model: ModelDescriptor) async throws -> ModelDescriptor {
         guard let config = try? Data(contentsOf: model.directory.appendingPathComponent("config.json")),
             let type = MTPDrafter.modelType(inConfig: config)
@@ -120,7 +95,7 @@ public actor MLXEngine: InferenceEngine {
         sessions = []
         mediaTokenIDs = []
         drafterState = .unknown
-        Memory.clearCache()  // release Metal buffers so memory actually returns to the system
+        Memory.clearCache()  // return Metal memory to the system
     }
 
     public func cancelCurrent() async {
@@ -129,8 +104,7 @@ public actor MLXEngine: InferenceEngine {
 
     // Generate
 
-    // The task body mutates actor state (`sessions`, `drafterState`), so unlike the other engines it cannot move into
-    // the nonisolated `AsyncThrowingStream.engine` helper: the inline `Task` inherits this actor's isolation.
+    // Inline `Task` keeps actor isolation for mutating state.
     public func generate(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
         guard let container, let model = loadedModel else { return .failed(EngineError.noModelLoaded) }
         if model.kind == .llm, request.messages.contains(where: { !$0.images.isEmpty }) {
@@ -161,8 +135,7 @@ public actor MLXEngine: InferenceEngine {
                 if request.rejectsLongPrompt, let limit = request.contextTokens, promptTokens.count >= limit {
                     throw EngineError.promptTooLong(tokens: promptTokens.count, limit: limit)
                 }
-                // Some templates open the reasoning block in the prompt itself (`…assistant\n<think>\n`), so the reply
-                // carries only the closing tag. Re-open it in the stream, so the transcript hides the reasoning while it is written.
+                // Re-open a reasoning block the template opened in the prompt.
                 let promptTail = Array(promptTokens.suffix(8))
                 let promptEnd = await container.perform(values: promptTail) { context, ids in
                     context.tokenizer.decode(tokenIds: ids, skipSpecialTokens: false)
@@ -171,9 +144,7 @@ public actor MLXEngine: InferenceEngine {
                 if let block = AnswerText.reasoningBlocks.first(where: { trimmedEnd.hasSuffix($0.open) }) {
                     continuation.yield(.token(block.open))
                 }
-                // Only the part of the prompt the cache does not hold yet is prefilled (the tool result of the next round,
-                // the next question). A cache holding images is reused only for the same images, and only when every
-                // image token lies in the reused part: the text-only remainder cannot carry pixels.
+                // Prefill only the uncached part; image caches reused only for the same images.
                 let images = PromptSession.imageKeys(request)
                 let reusable = Self.reusesPromptCache && input.video == nil && input.audio == nil
                 let previous = reusable ? self.takeSession(for: promptTokens, images: images) : nil
@@ -184,8 +155,7 @@ public actor MLXEngine: InferenceEngine {
                         context: context, drafter: start.drafter?.model)
                 }
                 let generation = run.stream
-                // The count straight from the token loop, four times a second: the stream itself stays silent while
-                // the library holds back a tool call it is still assembling.
+                // Token count from the loop, four times a second.
                 let reporter = Task {
                     var reported = 0
                     while !Task.isCancelled {
@@ -219,15 +189,14 @@ public actor MLXEngine: InferenceEngine {
                                     promptSeconds: info.promptTime,
                                     generationSeconds: info.generateTime
                                 )))
-                        // Plain `default`: mlx-swift-lm is tracked on `main`, and in Swift 6 mode `@unknown default` still
-                        // demands every known case, so each case the library adds would break the build.
+                        // Plain `default` so new library cases do not break the build.
                         switch info.stopReason {
                         case .length: finish = .length
                         case .cancelled: finish = .cancelled
                         default: break
                         }
                     default:
-                        // Event kinds added after this was written (none of them carries answer text we rely on) are ignored.
+                        // Ignore newer event kinds.
                         break
                     }
                 }
@@ -254,7 +223,6 @@ public actor MLXEngine: InferenceEngine {
 
     // Prompt cache reuse
 
-    /// A generation under way: its stream, the loop feeding it, and what the cache will hold when it ends.
     private struct Run: Sendable {
         let stream: AsyncStream<Generation>
         let loop: Task<Void, Never>
@@ -262,21 +230,15 @@ public actor MLXEngine: InferenceEngine {
         let session: PromptSession
     }
 
-    /// The prompt and, when the checkpoint has MTP heads, the drafter: neither MLX object is `Sendable`, so they cross
-    /// into the model's isolation together.
     private struct StartInput {
         let input: LMInput
         let drafter: DrafterBox?
     }
 
-    /// The drafter is kept with the model in this actor and used inside the model's isolation. Generations are
-    /// serialized by `EngineManager`, so the reference crosses once per generation and is touched nowhere else —
-    /// stated here the way mlx-swift-lm's own tests state it for drafter models.
     private struct DrafterBox: @unchecked Sendable {
         let model: any MTPDrafterModel
     }
 
-    /// What is known about this model's drafter; see `drafterState`.
     private enum DrafterState {
         case unknown
         case none
@@ -284,8 +246,6 @@ public actor MLXEngine: InferenceEngine {
         case greedyOnly
     }
 
-    /// The drafter to speculate with, loaded on the first generation of a model that has MTP heads and kept with it.
-    /// A drafter that insists on greedy decoding is let go while the request samples — it would only hold memory.
     private func drafter(temperature: Double) async -> DrafterBox? {
         guard Self.usesSpeculativeDecoding, let model = loadedModel else { return nil }
         switch drafterState {
@@ -310,7 +270,6 @@ public actor MLXEngine: InferenceEngine {
         return nil
     }
 
-    /// Whether the drafting actually paid off, from the library's own counters: the one honest answer to "is MTP on".
     private static func logSpeculation(_ info: GenerateCompletionInfo) {
         if let reason = info.passthroughReason {
             MTPDrafter.logger.notice("speculation stopped: \(reason, privacy: .public)")
@@ -323,8 +282,6 @@ public actor MLXEngine: InferenceEngine {
         )
     }
 
-    /// Picks what to prefill: the suffix after a reused prefix, or the whole prompt on a fresh cache, and how to
-    /// decode it. Runs inside `perform`, i.e. with the model to itself for the prefill.
     private static func start(
         input: LMInput, promptTokens: [Int], images: [String], previous: (session: PromptSession, reuse: Int)?,
         parameters: GenerateParameters, context: ModelContext, drafter: (any MTPDrafterModel)?
@@ -334,8 +291,7 @@ public actor MLXEngine: InferenceEngine {
         var kept = 0
         if let (previous, reuse) = previous {
             (cache, state, kept) = (previous.cache, previous.state, reuse)
-            // Trimming must leave the carried state valid too. Qwen-VL keeps its rope anchor offset-relative, so it survives;
-            // a model storing absolute positions would misplace the suffix (garbled text right after the reused part).
+            // Trim must keep carried state valid (Qwen-VL rope anchor is offset-relative).
             let surplus = previous.tokens.count - reuse
             if surplus > 0 { trimPromptCache(cache, numTokens: surplus) }
         } else {
@@ -344,8 +300,7 @@ public actor MLXEngine: InferenceEngine {
         let suffix = kept > 0 ? LMInput(tokens: MLXArray(promptTokens[kept...].map(Int32.init))) : input
         let recorder = TokenRecorder()
         let prefill = promptTokens.count - kept
-        // Speculation has nowhere to put a carried state, so a cache that needs one (Qwen-VL rope anchors) keeps the
-        // plain path: reusing that cache saves more than drafting would.
+        // Caches with carried state skip speculation.
         if let drafter, state == nil {
             let iterator = try MTPSpeculativeTokenIterator(
                 input: suffix, mainModel: context.model, drafter: drafter, mainCache: cache, parameters: parameters,
@@ -358,8 +313,7 @@ public actor MLXEngine: InferenceEngine {
                 session: PromptSession(cache: cache, state: iterator.state, tokens: promptTokens, images: images))
         }
         let iterator = try TokenIterator(input: suffix, model: context.model, cache: cache, state: state, parameters: parameters)
-        // Read right after the prefill, as mlx-swift-lm's ChatSession does: models that anchor positions (Qwen-VL rope
-        // deltas) need it to continue on this cache next time. Losing it fails loudly: `ContinuationStateError.missingState`.
+        // Save continuation state after prefill; missing state fails loudly.
         state = iterator.state
         let (stream, loop) = generateTask(
             promptTokenCount: prefill, modelConfiguration: context.configuration, tokenizer: context.tokenizer,
@@ -371,9 +325,6 @@ public actor MLXEngine: InferenceEngine {
 
     // Prompt cache pool
 
-    /// Takes the cache this prompt can continue out of the pool (it is this generation's until it ends; a failure
-    /// leaves none). The next turn of a conversation covers that cache's whole prompt; a cache from another chat that
-    /// shares only the system prompt is not cut down for it while the pool has room, since that chat will be back.
     private func takeSession(for prompt: [Int], images: [String]) -> (session: PromptSession, reuse: Int)? {
         let full = sessions.count >= Self.maxSessions
         var best: (index: Int, reuse: Int)?
@@ -388,7 +339,6 @@ public actor MLXEngine: InferenceEngine {
         return (sessions.remove(at: best.index), best.reuse)
     }
 
-    /// Adds a finished generation's cache as the most recent, evicting the least recent past the count or byte budget.
     private func keep(_ session: PromptSession) {
         sessions.append(session)
         while sessions.count > Self.maxSessions
@@ -398,8 +348,6 @@ public actor MLXEngine: InferenceEngine {
         }
     }
 
-    /// Image, video and audio placeholder ids a VLM's `config.json` declares at its root (`image_token_id`,
-    /// `image_token_index`, `boi_token_index`, `vision_start_token_id`…).
     private static func mediaTokenIDs(in directory: URL) -> Set<Int> {
         guard let data = try? Data(contentsOf: directory.appending(path: "config.json")),
             let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
@@ -434,7 +382,7 @@ public actor MLXEngine: InferenceEngine {
             request.tools.isEmpty
             ? nil
             : request.tools.map { spec in
-                // ToolSpec is [String: any Sendable]; decode the schema through JSONValue and convert to plain Sendable values.
+                // Decode the tool schema via JSONValue into Sendable values.
                 let decoded = try? JSONCoding.plainDecoder.decode(JSONValue.self, from: Data(spec.parametersJSONSchema.utf8))
                 let params = decoded.map(Self.sendable) as? [String: any Sendable] ?? [:]
                 return [
@@ -446,13 +394,10 @@ public actor MLXEngine: InferenceEngine {
                     ] as [String: any Sendable],
                 ] as [String: any Sendable]
             }
-        // `enable_thinking` is what a template with optional reasoning reads; Gemma 4 writes no thought channel without
-        // it, and one that always reasons ignores the key. No resize: each model's processor scales images to what its
-        // vision tower was trained on (Qwen-VL within its pixel budget, Gemma at its fixed size).
+        // `enable_thinking` for optional reasoning; images are scaled by each model's processor.
         return UserInput(chat: chat, tools: tools, additionalContext: ["enable_thinking": request.thinks])
     }
 
-    /// Plain Sendable representation of a JSONValue tree (String/Int/Double/Bool/arrays/dictionaries).
     private static func sendable(_ value: JSONValue) -> any Sendable {
         switch value {
         case .null: return Optional<String>.none as any Sendable
@@ -465,7 +410,7 @@ public actor MLXEngine: InferenceEngine {
         }
     }
 
-    // Unqualified ToolCall is ours: current-module declarations shadow the imported MLXLMCommon.ToolCall.
+    // Unqualified ToolCall is ours (shadows MLXLMCommon's).
     private static func convert(_ call: MLXLMCommon.ToolCall) -> ToolCall {
         let dict = call.function.arguments.mapValues { $0.anyValue }
         let args = (try? JSONSerialization.data(withJSONObject: dict)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
@@ -480,22 +425,13 @@ public actor MLXEngine: InferenceEngine {
 
 // PromptSession
 
-/// The model's KV cache and the exact tokens it represents (prompt, then every generated token, each fed back as the
-/// next step's input). A new prompt that starts with these tokens only needs its remainder prefilled.
-// Ways it can go wrong: the token list drifts from what the cache holds (an iterator in mlx-swift-lm that feeds tokens it
-// does not yield, or stops feeding the last one), which `completed` catches through the attention offset; a recurrent
-// cache (Mamba) shared by two generations at once, which taking it out of the pool (`takeSession`) prevents; and one
-// word of difference from a cold run, which is not an error: chunked prefill rounds differently in a 4-bit model.
+// Failure modes: token drift, shared recurrent cache.
 private final class PromptSession: @unchecked Sendable {
     let cache: [KVCache]
     let state: LMOutput.State?
     let tokens: [Int]
-    /// How many of `tokens` were the prompt; the rest were generated.
     let promptCount: Int
-    /// Fingerprints of the images the prompt carried, in order: equal token ids do not mean equal pixels.
     let images: [String]
-    /// What the cache holds in memory, counted once the generation has ended: the allocated buffers, not the `state`
-    /// slice. Trimming only moves the offset, so a cache cut down for reuse keeps its full-size buffers.
     private(set) lazy var bytes: Int = cache.reduce(0) { total, layer in total + layer.innerState().reduce(0) { $0 + $1.nbytes } }
 
     init(cache: [KVCache], state: LMOutput.State?, tokens: [Int], promptCount: Int? = nil, images: [String]) {
@@ -510,9 +446,6 @@ private final class PromptSession: @unchecked Sendable {
         request.messages.flatMap(\.images).map { SHA256.hash(data: $0.data).map { String(format: "%02x", $0) }.joined() }
     }
 
-    /// How many leading tokens of `prompt` the cache can keep. A cache with recurrent layers (Qwen 3.5/3.6: Mamba-style
-    /// state) cannot be rewound, so it is reused only when the prompt continues it exactly; one that can be trimmed keeps
-    /// the common prefix. At least one prompt token must be left to prefill.
     func reusablePrefix(for prompt: [Int]) -> Int? {
         var common = 0
         let limit = min(tokens.count, prompt.count - 1)
@@ -521,8 +454,6 @@ private final class PromptSession: @unchecked Sendable {
         return canTrimPromptCache(cache) && common > 0 ? common : nil
     }
 
-    /// The same cache after a generation: the recorded tokens are those it has fed. If the attention layers' offset
-    /// says otherwise (a change in mlx-swift-lm), the cache is dropped rather than trusted.
     func completed(with generated: [Int]) -> PromptSession? {
         let all = tokens + generated
         let attention = cache.first { !($0 is ArraysCache) }
@@ -531,7 +462,6 @@ private final class PromptSession: @unchecked Sendable {
     }
 }
 
-/// Generated token ids, collected on the generation loop's thread and read after it has stopped.
 private final class TokenRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [Int] = []
@@ -540,7 +470,6 @@ private final class TokenRecorder: @unchecked Sendable {
     var count: Int { lock.withLock { storage.count } }
 }
 
-/// A token iterator that also records every token it yields (each has been fed to the model by then).
 private struct RecordingTokenIterator<Base: TokenIteratorProtocol>: TokenIteratorProtocol {
     var base: Base
     let recorder: TokenRecorder

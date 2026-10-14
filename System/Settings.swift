@@ -5,7 +5,6 @@ import Foundation
 
 // AppPaths
 
-/// App working paths. Root is `~/Library/Application Support/Mac-Olama/` (no sandbox, see R13).
 public struct AppPaths: Sendable {
     public static let appFolderName = "Mac-Olama"
 
@@ -15,7 +14,6 @@ public struct AppPaths: Sendable {
         self.root = root
     }
 
-    /// Standard location for the current user.
     public static func standard() -> AppPaths {
         let base =
             FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -28,7 +26,6 @@ public struct AppPaths: Sendable {
     public var database: URL { root.appendingPathComponent("db", isDirectory: true) }
     public var attachments: URL { root.appendingPathComponent("attachments", isDirectory: true) }
     public var logs: URL { root.appendingPathComponent("logs", isDirectory: true) }
-    /// Greyscale avatars behind the model icons, one PNG per Hugging Face account.
     public var icons: URL { root.appendingPathComponent("icons", isDirectory: true) }
 
     public func createAll() throws {
@@ -40,45 +37,44 @@ public struct AppPaths: Sendable {
 
 // SettingsKeys
 
-/// UserDefaults keys; the only place they are listed.
 public enum SettingsKey: String, CaseIterable, Sendable {
     case activeModelID = "activeModelID"
     case activeChatID = "activeChatID"
     case idleUnloadSeconds = "idleUnloadSeconds"  // Double, default 300
     case launchAtLogin = "launchAtLogin"  // Bool, default false
-    case apiServerPort = "apiServerPort"  // Int, default 11434; a busy one blocks the API until another is chosen
+    case apiServerPort = "apiServerPort"  // Int, default 11434
     case toolsEnabled = "toolsEnabled"  // Bool, default false
     case searchProvider = "searchProvider"  // String: "duckduckgo" (default) or "google"
     case fileToolsEnabled = "fileToolsEnabled"  // Bool, default false
     case shortcutsToolEnabled = "shortcutsToolEnabled"  // Bool, default false
     case allowedFolders = "allowedFolders"  // [String] absolute paths the file tools may access
-    case modelContextTokens = "modelContextTokens"  // [model id: Int]; missing or 0 = model maximum (max_position_embeddings)
-    case panelGeometry = "panelGeometry"  // [Double]: left, bottom, width, max height, 1 (format); 4 items = older top-anchored
-    case pendingDownloads = "pendingDownloads"  // Data: JSON list of unfinished downloads, restored at launch
+    case modelContextTokens = "modelContextTokens"  // [model id: Int]; 0 = model maximum
+    case panelGeometry = "panelGeometry"  // [Double]: left, bottom, width, max height, format
+    case pendingDownloads = "pendingDownloads"  // Data: JSON of unfinished downloads
     case lastAppUpdateCheck = "lastAppUpdateCheck"  // Date?
     case lastModelUpdateCheck = "lastModelUpdateCheck"  // Date?
     case sidebarWidth = "sidebarWidth"  // Double: width of the chat list column
-    case remoteTokens = "remoteTokens"  // [model id: token] of models connected by API; empty when a server needs none
-    case extraTools = "extraTools"  // [String]: `ExtraTool` raw values the user switched on (calculator, macInfo, …)
-    case huggingFaceToken = "huggingFaceToken"  // String?: Hugging Face access token for gated models
-    case modelTemperatures = "modelTemperatures"  // [model id: Double]; missing = the temperature the model ships with
-    case apiServerEnabled = "apiServerEnabled"  // Bool: whether other programs may talk to the models through us
-    case apiBindHost = "apiBindHost"  // String: the address the API listens on; "127.0.0.1" = this Mac only
-    case apiCORSMode = "apiCORSMode"  // String: "localhost" (default), "off" or "custom" — which browser origins may call the API
-    case apiCORSOrigins = "apiCORSOrigins"  // String: comma-separated origins used when apiCORSMode == "custom"
-    case hotkeyKeyCode = "hotkeyKeyCode"  // Int: virtual key of the panel's shortcut; 0 = no shortcut
+    case remoteTokens = "remoteTokens"  // [model id: token] for API models
+    case extraTools = "extraTools"  // [String]: enabled `ExtraTool` raw values
+    case huggingFaceToken = "huggingFaceToken"  // String?: Hugging Face token
+    case modelTemperatures = "modelTemperatures"  // [model id: Double]; missing = model default
+    case apiServerEnabled = "apiServerEnabled"  // Bool: API server on
+    case apiBindHost = "apiBindHost"  // String: listen address
+    case apiCORSMode = "apiCORSMode"  // String: localhost, off or custom
+    case apiCORSOrigins = "apiCORSOrigins"  // String: comma-separated custom origins
+    case hotkeyKeyCode = "hotkeyKeyCode"  // Int: panel shortcut key; 0 = none
     case hotkeyModifiers = "hotkeyModifiers"  // Int: Carbon modifier mask of that shortcut
-    case toolIterations = "toolIterations"  // Int: how many times in a row the model may use tools before answering
-    case pageCharacters = "pageCharacters"  // Int: how much of a web page the model is given, in characters
+    case toolIterations = "toolIterations"  // Int: tool rounds before answering
+    case pageCharacters = "pageCharacters"  // Int: web page characters given to the model
     case searchResults = "searchResults"  // Int: how many results a web search returns
-    case reasoningShown = "reasoningShown"  // [String]: models whose thinking is shown in the transcript
-    case greedyDrafters = "greedyDrafters"  // [String]: models whose drafter only verifies greedy decoding
-    case speculativeModels = "speculativeModels"  // [String]: model ids answering with MTP speculation (greedy decoding)
+    case reasoningShown = "reasoningShown"  // [String]: models with visible thinking
+    case greedyDrafters = "greedyDrafters"  // [String]: drafters needing greedy decoding
+    case speculativeModels = "speculativeModels"  // [String]: models using MTP speculation
     case downloadSpeedLimitMBps = "downloadSpeedLimitMBps"  // Int, MB/s cap for model downloads; 0 = unlimited
-    case downloadConcurrentFiles = "downloadConcurrentFiles"  // Int 1...4: files of one download fetched in parallel
-    case preferredLanguage = "preferredLanguage"  // String: English name of the language replies come in; "" = follow the user
+    case downloadConcurrentFiles = "downloadConcurrentFiles"  // Int 1...4: parallel files per download
+    case preferredLanguage = "preferredLanguage"  // String: reply language; empty = user's
     case voiceInputEnabled = "voiceInputEnabled"  // Bool: the microphone button next to the paperclip
-    case voiceAutoSend = "voiceAutoSend"  // Bool: a dictated question goes out by itself after a pause
+    case voiceAutoSend = "voiceAutoSend"  // Bool: send dictated text after a pause
 }
 
 public enum SettingsDefaults {
@@ -88,14 +84,12 @@ public enum SettingsDefaults {
     public static let apiCORSMode = "localhost"
     public static let downloadConcurrentFiles = 2
     public static let toolIterations = 10
-    /// ⌥Space out of the box: free on a stock system and easy to reach with one hand.
     public static let hotkeyKeyCode = 49  // kVK_Space
     public static let hotkeyModifiers = 2048  // optionKey
     public static let pageCharacters = 12_000
     public static let searchResults = 8
     public static let searchProvider = "duckduckgo"
 
-    /// Values for `UserDefaults.register(defaults:)`.
     public static var registration: [String: Any] {
         [
             SettingsKey.idleUnloadSeconds.rawValue: idleUnloadSeconds,
@@ -125,8 +119,6 @@ public enum SettingsDefaults {
 
 // RemoteTokens
 
-/// Optional tokens of models connected by API, kept in the settings like everything else (the customer's call: the
-/// Keychain asked for a password on every rebuild of an ad-hoc signed app). Readable by anything running as this user.
 public enum RemoteTokens {
     public static func token(for modelID: String) -> String? {
         let tokens = UserDefaults.standard.dictionary(forKey: SettingsKey.remoteTokens.rawValue) as? [String: String]

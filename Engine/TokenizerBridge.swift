@@ -5,10 +5,6 @@ import Foundation
 import MLXLMCommon
 import Tokenizers
 
-// Replaces the `#huggingFaceTokenizerLoader()` macro from MLXHuggingFace so the app does not build swift-syntax.
-// Mirrors the macro expansion in mlx-swift-lm 3.31.4 (HuggingFaceIntegrationMacros.swift).
-
-/// Loads a swift-transformers tokenizer from a model folder and adapts it to `MLXLMCommon.Tokenizer`.
 struct LocalTokenizerLoader: MLXLMCommon.TokenizerLoader {
     func load(from directory: URL) async throws -> any MLXLMCommon.Tokenizer {
         TokenizerBridge(try await Tokenizers.AutoTokenizer.from(modelFolder: directory))

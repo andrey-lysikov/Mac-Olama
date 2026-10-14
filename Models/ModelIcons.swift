@@ -6,24 +6,15 @@ import CoreImage
 import SwiftUI
 import os
 
-// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
-// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
-
 // ModelIcons
 
-/// A model's icon is the avatar of its author (the owner of the base model: Google, Qwen…) with the avatar of the community
-/// that built this copy (mlx-community, lmstudio-community…) in the corner. Avatars come from Hugging Face for both hubs
-/// (ModelScope uses the same account names) and are cached in `icons/`. Lists and menus show them greyscale like every
-/// other pictogram; the hub picker shows the logo in colour.
 @MainActor
 @Observable
 final class ModelIcons {
     static let shared = ModelIcons()
 
-    /// Bumped when an avatar arrives: views reading an icon redraw, menus pick it up the next time they are built.
     private(set) var revision = 0
     @ObservationIgnored var directory = AppPaths.standard().icons
-    /// Bounded: every search in the models window brings new accounts. An evicted avatar is read back from `icons/`.
     @ObservationIgnored private let avatars: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
         cache.countLimit = 200
@@ -31,7 +22,6 @@ final class ModelIcons {
     }()
     @ObservationIgnored private var unavailable: Set<String> = []
     @ObservationIgnored private var loading: Set<String> = []
-    /// Drawn icons per owners and size; redrawn when evicted.
     @ObservationIgnored private let composed: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
         cache.countLimit = 300
@@ -39,7 +29,6 @@ final class ModelIcons {
     }()
     nonisolated private static let logger = Logger(subsystem: "ru.lysnet.macolama", category: "icons")
 
-    /// The account's avatar in colour (the hub picker), or nil while it loads (or when the account has none).
     func avatar(_ owner: String) -> NSImage? {
         _ = revision
         let key = owner.lowercased()
@@ -53,8 +42,6 @@ final class ModelIcons {
         return nil
     }
 
-    /// Author's avatar with the community's in the lower right corner, or the community's alone when the author is
-    /// unknown. In colour, as the accounts publish them: the greyscale copy read as a defect, not as restraint.
     func icon(for owners: ModelOwners, size: CGFloat) -> NSImage? {
         let author = owners.author.flatMap(avatar)
         let community = owners.community.flatMap(avatar)
@@ -86,8 +73,6 @@ final class ModelIcons {
         return image
     }
 
-    /// A square image clipped to the icons' rounded-corner shape (radius 0.22 of the side); menus drawn by AppKit
-    /// take it as an NSImage.
     static func rounded(_ image: NSImage, side: CGFloat) -> NSImage {
         NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
             NSBezierPath(roundedRect: rect, xRadius: side * 0.22, yRadius: side * 0.22).addClip()
@@ -96,7 +81,6 @@ final class ModelIcons {
         }
     }
 
-    /// `-colour` in the name: caches written by the build that stored greyscale files are simply ignored.
     private func file(for key: String) -> URL {
         directory.appendingPathComponent(key.replacingOccurrences(of: "/", with: "_") + "-colour.png")
     }
@@ -107,7 +91,7 @@ final class ModelIcons {
             let png = await Self.fetchPNG(owner: owner)
             loading.remove(key)
             guard let png, let image = NSImage(data: png) else {
-                unavailable.insert(key)  // until the next launch: no avatar, or no network right now
+                unavailable.insert(key)  // until next launch
                 return
             }
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -118,7 +102,6 @@ final class ModelIcons {
         }
     }
 
-    /// An account is either an organisation or a user; Hugging Face answers `{"avatarUrl": …}` for the right one.
     nonisolated private static func fetchPNG(owner: String) async -> Data? {
         for kind in ["organizations", "users"] {
             guard let api = URL(string: "https://huggingface.co/api/\(kind)/\(owner)/avatar"),
@@ -134,7 +117,6 @@ final class ModelIcons {
         return nil
     }
 
-    /// Square, `side` pixels: small enough to keep in the cache folder, sharp at 20 pt on Retina.
     nonisolated private static func squarePNG(_ data: Data, side: Int) -> Data? {
         guard let output = CIImage(data: data), output.extent.width > 0, output.extent.height > 0,
             let cg = CIContext().createCGImage(output, from: output.extent),
@@ -154,7 +136,6 @@ final class ModelIcons {
         return NSBitmapImageRep(cgImage: square).representation(using: .png, properties: [:])
     }
 
-    /// For menus built by AppKit: the icon, or the hub's symbol until the avatar has arrived.
     func menuImage(for model: ModelDescriptor, size: CGFloat) -> NSImage? {
         if model.source != .remote, let icon = icon(for: model.owners, size: size) { return icon }
         let image = NSImage(systemSymbolName: model.source.symbol, accessibilityDescription: model.source.displayName)?
@@ -166,7 +147,6 @@ final class ModelIcons {
 
 // ModelIconView
 
-/// The model icon in SwiftUI lists; the hub's symbol stands in until the avatars arrive (and for models served over the API).
 struct ModelIconView: View {
     let owners: ModelOwners?
     let source: ModelSource

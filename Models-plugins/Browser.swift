@@ -5,11 +5,8 @@ import Foundation
 
 // Safari
 
-/// `browser_*`: the user's own Safari, driven through Apple Events (JXA run by osascript, no shell). The model opens,
-/// reads, clicks, types and goes back on its own; password fields are never touched. Off by default, with its own switch in the settings.
 public struct SafariToolProvider: ToolProvider {
     public struct Configuration: Sendable {
-        /// Characters of page text one read returns; the same setting as the page reader's.
         public var pageCharacters: Int
         public var timeout: TimeInterval = 30
         public init(pageCharacters: Int) { self.pageCharacters = pageCharacters }
@@ -111,7 +108,7 @@ public struct SafariToolProvider: ToolProvider {
     }
 
     private func click(_ element: Int, tab: Int?) async throws -> String {
-        _ = try await describe(element, tab: tab)  // a stale number fails here with a clear error, before anything is pressed
+        _ = try await describe(element, tab: tab)  // fails early on a stale element number
         let body = """
             const t = tabAt(\(Self.literal(tab)));
             js(t, \(Self.literal(Self.clickScript(element))));
@@ -159,8 +156,6 @@ public struct SafariToolProvider: ToolProvider {
 
     // Scripts run in the page (internal, so they can be tried in a WebKit view)
 
-    /// browser_read: the text, and every visible control numbered in the page itself, so a later click finds it by
-    /// that number. A field's value is never read: it may be what the user typed.
     static func readScript(limit: Int) -> String {
         """
         (() => {
@@ -193,12 +188,11 @@ public struct SafariToolProvider: ToolProvider {
         """
     }
 
-    /// Helpers every Safari script gets: the tab lookup, a new tab, waiting for a page to load, and the read script.
     private func run(_ body: String) async throws -> String {
         let prelude = """
             const s = Application('Safari');
             const READ = \(Self.literal(Self.readScript(limit: configuration.pageCharacters)));
-            // `do JavaScript` takes the script as its direct parameter and the tab as `in`; called on the tab itself it fails with -2700.
+            // `do JavaScript` needs the tab as `in`; calling it on the tab fails with -2700.
             function js(t, code) { return s.doJavaScript(code, { in: t }); }
             function browserWindows() {
               return s.windows().filter(w => { try { w.currentTab(); return true } catch (e) { return false } });
@@ -236,7 +230,7 @@ public struct SafariToolProvider: ToolProvider {
     private func page(_ body: String, source: String) async throws -> String {
         let out = try await run(body)
         var text = try format(out, source: source)
-        // A video open in the tab: what is said in it comes with the page, which shows only the player and the comments.
+        // Adds the transcript of a video open in the tab.
         if let address = (try? JSONDecoder().decode(Tab.self, from: Data(out.utf8)))?.url.flatMap({ URL(string: $0) }),
             let video = await VideoTranscript.read(address, maxCharacters: configuration.pageCharacters)
         {
@@ -277,15 +271,13 @@ public struct SafariToolProvider: ToolProvider {
         return ToolOutput.wrap(lines.joined(separator: "\n"), source: "browser: \(source)")
     }
 
-    /// What element `id` is, before anything is done to it: its label and the page's host for the question to the
-    /// user, whether pressing it sends a form or downloads, and whether it takes text.
     static func describeScript(_ id: Int) -> String {
         inPage(
             find(id) + """
                 const tag = e.tagName.toLowerCase();
                 const type = (e.getAttribute('type') || (tag === 'button' ? 'submit' : '')).toLowerCase();
                 const button = tag === 'input' && ['submit', 'button', 'reset', 'image'].includes(type);
-                // A field is named by its label, never by its content: a list's text is all its options at once.
+                // Name fields by label, never by content.
                 const field = !button && ['input', 'textarea', 'select'].includes(tag);
                 const label = (e.getAttribute('aria-label')
                   || (field ? e.placeholder || (e.labels && e.labels[0] && e.labels[0].innerText) || e.name : e.innerText || (button ? e.value : ''))
@@ -306,7 +298,6 @@ public struct SafariToolProvider: ToolProvider {
         inPage(find(id) + "e.scrollIntoView({ block: 'center' }); e.click(); return 'ok';")
     }
 
-    /// Sets the value the way typing does, through the element's own setter, so pages built on React and the like see it.
     static func fillScript(_ id: Int, text: String, submit: Bool) -> String {
         inPage(
             find(id) + """
@@ -332,10 +323,8 @@ public struct SafariToolProvider: ToolProvider {
                 """)
     }
 
-    /// A script for the page, as a function: `do JavaScript` runs a plain script, where `return` is not allowed.
     private static func inPage(_ body: String) -> String { "(() => {\n" + body + "\n})()" }
 
-    /// The prologue of a page script that acts on element `id`; a page that changed since the read has lost it.
     private static func find(_ id: Int) -> String {
         "const e = document.querySelector('[data-mo-id=\"\(id)\"]'); if (!e) return 'MISSING';\n"
     }
@@ -345,7 +334,6 @@ public struct SafariToolProvider: ToolProvider {
     private static func literal(_ value: Int?) -> String { value.map(String.init) ?? "null" }
 }
 
-/// Why Safari did not do what the model asked, in words that tell the model (and so the user) what to change.
 enum SafariFailure: Error {
     case javaScriptOff, notAllowed, noWindow, noTab, missing(Int), unreadable(String), other(String)
 

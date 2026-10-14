@@ -9,7 +9,6 @@ import os
 
 // ServicesProvider
 
-/// Handlers for the NSServices declared in Info.plist. `openQuickPanel` is bound to ⌘⇧Space (user-changeable in System Settings).
 @MainActor
 final class ServicesProvider: NSObject {
     private let panel: QuickPanelController
@@ -18,20 +17,16 @@ final class ServicesProvider: NSObject {
         self.panel = panel
     }
 
-    /// NSMessage `openQuickPanel` maps to selector `openQuickPanel:userData:error:`. Every parameter is optional:
-    /// AppKit passes nil for the pasteboard of a no-input service and for userData when Info.plist has no NSUserData.
     @objc func openQuickPanel(_ pasteboard: NSPasteboard?, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString?>?) {
         panel.toggle()
     }
 
-    /// Phase 4: service with NSSendTypes — ask about the selected text.
     @objc func askAboutSelection(_ pasteboard: NSPasteboard?, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString?>?) {
         guard let text = pasteboard?.string(forType: .string), !text.isEmpty else { return }
         panel.show(prefill: text)
     }
 }
 
-/// The addresses this Mac can serve the API on, for the interface picker: loopback first, then each IPv4 address.
 enum NetworkInterfaces {
     static func addresses() -> [(name: String, address: String)] {
         var found: [(String, String)] = []
@@ -55,7 +50,6 @@ enum NetworkInterfaces {
 
 // LaunchAtLogin
 
-/// Launch at login via SMAppService. VERIFY(V9): behaviour for LSUIElement apps outside the App Store.
 @MainActor
 enum LaunchAtLogin {
     private static let logger = Logger(subsystem: "ru.lysnet.macolama", category: "launch-at-login")

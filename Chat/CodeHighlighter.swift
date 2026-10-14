@@ -4,12 +4,6 @@
 import AppKit
 import SwiftUI
 
-// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
-// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
-
-// A small lexer instead of a highlighting package: comments, strings, numbers, keywords, types and attributes cover
-// what makes code readable in a chat. Colours are system colours, so dark mode and accessibility settings apply.
-
 enum CodeHighlighter {
     private struct Syntax {
         var lineComments: [String]
@@ -18,7 +12,6 @@ enum CodeHighlighter {
         var caseInsensitive = false
     }
 
-    /// Colours code of the given fence language; unknown languages get a generic C-like reading.
     static func highlight(_ code: String, language: String?) -> AttributedString {
         let syntax = syntax(for: language?.lowercased() ?? "")
         var out = AttributedString()
@@ -35,7 +28,7 @@ enum CodeHighlighter {
             piece.foregroundColor = Color(nsColor: color)
             out.append(piece)
         }
-        // Allocation-free: this runs for every candidate position of a block, per token during streaming.
+        // Allocation-free: runs per position on every streamed token.
         func starts(_ token: String, at index: Int) -> Bool {
             var j = index
             for ch in token {

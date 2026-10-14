@@ -54,17 +54,6 @@
         }
       }
     },
-    "%@ is up to date." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ — последняя версия."
-          }
-        }
-      }
-    },
     "%@%@" : {
       "localizations" : {
         "en" : {
@@ -225,34 +214,12 @@
         }
       }
     },
-    "Add “%@” to Calendar?" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Добавить «%@» в Календарь?"
-          }
-        }
-      }
-    },
     "Add Folder…" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Добавить папку…"
-          }
-        }
-      }
-    },
-    "Add reminder “%@”?" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Добавить напоминание «%@»?"
           }
         }
       }
@@ -488,6 +455,7 @@
       }
     },
     "Autostart" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -693,17 +661,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Чаты"
-          }
-        }
-      }
-    },
-    "Check a local address?" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Проверить локальный адрес?"
           }
         }
       }
@@ -938,17 +895,6 @@
         }
       }
     },
-    "Click to remove" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Нажмите, чтобы убрать"
-          }
-        }
-      }
-    },
     "Clicking element %@ in Safari…" : {
       "localizations" : {
         "ru" : {
@@ -1015,17 +961,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Контакты"
-          }
-        }
-      }
-    },
-    "Context" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Контекст"
           }
         }
       }
@@ -1140,17 +1075,6 @@
         }
       }
     },
-    "Create the note “%@”?" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Создать заметку «%@»?"
-          }
-        }
-      }
-    },
     "Creating a note…" : {
       "localizations" : {
         "ru" : {
@@ -1197,17 +1121,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Повреждено — скачайте заново или удалите"
-          }
-        }
-      }
-    },
-    "Data" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Данные"
           }
         }
       }
@@ -1682,17 +1595,6 @@
         }
       }
     },
-    "Hide the chat list" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Скрыть список чатов"
-          }
-        }
-      }
-    },
     "How many files of one model are fetched at once" : {
       "localizations" : {
         "ru" : {
@@ -1742,17 +1644,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Токен Hugging Face"
-          }
-        }
-      }
-    },
-    "images" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "картинки"
           }
         }
       }
@@ -1914,17 +1805,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Смотрю последние письма…"
-          }
-        }
-      }
-    },
-    "Looking at the mail…" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Смотрю почту…"
           }
         }
       }
@@ -2533,28 +2413,6 @@
         }
       }
     },
-    "No due date" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Без срока"
-          }
-        }
-      }
-    },
-    "No folders yet" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Папок пока нет"
-          }
-        }
-      }
-    },
     "No model" : {
       "localizations" : {
         "ru" : {
@@ -3075,17 +2933,6 @@
         }
       }
     },
-    "Press “%@” on %@?" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Нажать «%1$@» на %2$@?"
-          }
-        }
-      }
-    },
     "Press the keys" : {
       "localizations" : {
         "ru" : {
@@ -3136,34 +2983,12 @@
         }
       }
     },
-    "Read Files in These Folders" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Читать файлы в этих папках"
-          }
-        }
-      }
-    },
     "Read from a page" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Читать со страницы"
-          }
-        }
-      }
-    },
-    "Read the text on the screen?" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Прочитать текст на экране?"
           }
         }
       }
@@ -3758,17 +3583,6 @@
         }
       }
     },
-    "Show the chat list" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Показать список чатов"
-          }
-        }
-      }
-    },
     "Skipping to the next track…" : {
       "localizations" : {
         "ru" : {
@@ -3927,17 +3741,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "текст, изображения → текст"
-          }
-        }
-      }
-    },
-    "Text: %@" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Текст: %@"
           }
         }
       }
@@ -4252,17 +4055,6 @@
         }
       }
     },
-    "The model may run your shortcuts; it asks before each run" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Модель может запускать ваши быстрые команды; перед каждым запуском спрашивает разрешение"
-          }
-        }
-      }
-    },
     "The model may run yours, asking each time" : {
       "localizations" : {
         "ru" : {
@@ -4393,17 +4185,6 @@
         }
       }
     },
-    "Then the form is sent." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Затем форма будет отправлена."
-          }
-        }
-      }
-    },
     "Thinking · %lld s" : {
       "localizations" : {
         "ru" : {
@@ -4440,17 +4221,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Этого чата больше нет."
-          }
-        }
-      }
-    },
-    "This downloads a file." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Это скачает файл."
           }
         }
       }
@@ -4511,17 +4281,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Репозиторий закрыт. Добавьте токен Hugging Face и примите лицензию на huggingface.co."
-          }
-        }
-      }
-    },
-    "This sends a form." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Это отправит форму."
           }
         }
       }
@@ -4622,17 +4381,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Включаю звук…"
-          }
-        }
-      }
-    },
-    "Type into “%@” on %@?" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ввести текст в «%1$@» на %2$@?"
           }
         }
       }

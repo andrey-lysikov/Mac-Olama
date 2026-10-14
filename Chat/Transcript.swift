@@ -3,20 +3,10 @@
 
 import SwiftUI
 
-// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
-// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
-
-// The message feed shared by the chats window and the quick panel: the folding of tool rounds, the live tail of a
-// running reply, and the pieces of an answer both surfaces render the same way. The surfaces keep their own row
-// layout (bubble in the window, avatar row in the panel) and pass it in as the `row` closure.
-
 // TranscriptRow
 
-/// One transcript line: tool rounds fold into one summary line above the answer they led to, and the stored copy of
-/// the reply being streamed is skipped (the streamed text below stands for it, otherwise it shows as a stray "…").
 struct TranscriptRow<Row: View>: View {
     let message: Message
-    /// Position of the message within `context`, the visible slice the summaries are computed against.
     let position: Int
     let context: [Message]
     let isStreamedPlaceholder: Bool
@@ -41,8 +31,6 @@ struct TranscriptRow<Row: View>: View {
 
 // TranscriptTail
 
-/// The tail of a transcript: the streamed text, live progress of the running reply and the error. The surface passes
-/// the streamed message as `streaming` (its condition differs).
 struct TranscriptTail<Streaming: View>: View {
     let progress: GenerationProgress?
     let engineState: EngineState
@@ -51,8 +39,7 @@ struct TranscriptTail<Streaming: View>: View {
 
     var body: some View {
         streaming()
-        // Under the text, not above it: the tool steps and the thinking counter scrolled out of sight over a long
-        // reply, while the end of the transcript is where the eye stays.
+        // Progress below the text, where the eye stays.
         if let progress {
             GenerationProgressView(progress: progress, engineState: engineState)
         }
@@ -62,7 +49,6 @@ struct TranscriptTail<Streaming: View>: View {
 
 // ErrorLine
 
-/// Why the answer did not come, in red where the answer would have been, and selectable so it can be quoted.
 struct ErrorLine: View {
     let text: String
 
@@ -77,39 +63,30 @@ struct ErrorLine: View {
 
 // TranscriptFollow
 
-/// Keeps the transcript on its end while a reply is thought and written, and lets go as soon as the user scrolls up
-/// to read. The arrow at the bottom right brings it back and it follows again; scrolling down to the end by hand does
-/// the same. `jumpOn` changes when the newest message must come into view regardless: a sent question, another chat.
 struct TranscriptFollow<Jump: Equatable>: ViewModifier {
     let jumpOn: Jump
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var following = true
-    /// The trackpad or the wheel is moving the transcript: only the user decides then, the view never scrolls itself.
     @State private var userScrolling = false
 
-    /// Where the view stands. The offset alone did not tell the user from the reply: text growing under the bottom
-    /// anchor hid a scroll up (and the view pulled back to the end), a reflow shrinking the text looked like one.
     private struct Place: Equatable {
         var offset: CGFloat
         var gap: CGFloat
         var height: CGFloat
     }
 
-    /// Closer than this to the end still counts as the end, so a nudge of the trackpad does not let go.
     private static var slack: CGFloat { 32 }
 
     func body(content: Content) -> some View {
         content
             .scrollPosition($position)
             .defaultScrollAnchor(.bottom, for: .initialOffset)
-            // While following, the anchor holds the end as text grows, without a scroll per token; while the user
-            // reads, it is off, so the lines being read do not slide away under the new ones.
+            // Anchor the end while following; off while the user reads.
             .defaultScrollAnchor(following ? .bottom : nil, for: .sizeChanges)
             .onScrollPhaseChange { _, phase, context in
                 let wasUser = userScrolling
                 userScrolling = phase == .interacting || phase == .decelerating
-                // Wherever the gesture left the view decides: at the end it follows, anywhere above it stays put.
-                // Only a gesture's end: the view's own scroll to the end starts far from it and must not let go.
+                // On gesture end: at the bottom follow, otherwise stay.
                 if wasUser, !userScrolling { following = Self.gap(context.geometry) <= Self.slack }
             }
             .onScrollGeometryChange(for: Place.self) { geometry in
@@ -118,11 +95,10 @@ struct TranscriptFollow<Jump: Equatable>: ViewModifier {
                 if new.gap <= Self.slack {
                     following = true
                 } else if userScrolling || (new.offset < old.offset - 1 && new.height >= old.height - 1) {
-                    // A gesture, or the scroller's knob dragged up (it reports no phase): the text did not shrink,
-                    // so only the user can have moved the view back.
+                    // A gesture or knob drag up means the user scrolled away.
                     following = false
                 } else if following {
-                    // What the anchor does not cover: the streamed tail swapped for the stored reply, a tool round.
+                    // Cases the anchor misses: tail swap, tool round.
                     position.scrollTo(edge: .bottom)
                 }
             }
@@ -155,7 +131,6 @@ struct TranscriptFollow<Jump: Equatable>: ViewModifier {
 }
 
 extension View {
-    /// See `TranscriptFollow`.
     func followsTranscriptEnd(jumpOn: some Equatable) -> some View {
         modifier(TranscriptFollow(jumpOn: jumpOn))
     }
@@ -163,9 +138,6 @@ extension View {
 
 // ReasoningBlock
 
-/// What the model said to itself on the way to this answer, shown quieter than the answer — only for the models
-/// whose thinking the user asked to see (the eye mark in the models list). Reacts to the eye at once: the mark
-/// toggles a setting this view reads, so every transcript shows or hides the thinking without a reload.
 struct ReasoningBlock: View {
     let message: Message
     let fontSize: CGFloat
@@ -190,13 +162,10 @@ struct ReasoningBlock: View {
 
 // AnswerBody
 
-/// The answer of an assistant message: the visible Markdown, or the "no answer" line for an empty finished reply.
 struct AnswerBody: View {
     let message: Message
-    /// The reply without the model's private channels, computed once by the caller (it also feeds the copy button).
     let answer: String
     let fontSize: CGFloat
-    /// The panel pads the "no answer" line; the window shows it flush.
     var noAnswerPadding: CGFloat = 0
 
     var body: some View {
@@ -210,7 +179,6 @@ struct AnswerBody: View {
 
 // PaceText
 
-/// The one line of numbers under a finished reply: `21t/s (8.2k/33k)`. Red when the reply ran into its token limit.
 struct PaceText: View {
     let pace: String
     var atLimit = false

@@ -3,24 +3,15 @@
 
 import Foundation
 
-// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
-// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
-
-// Markdown would mangle LaTeX, so formulas outside code become placeholders before parsing and SwiftMath typesets them.
-// `unicode(_:)` is the plain-text fallback for formulas SwiftMath cannot parse (√40, x², ≤).
-
-/// A formula found in a reply; `display` for `$$…$$` and `\[…\]`.
 struct Formula: Hashable, Sendable {
     var latex: String
     var display: Bool
 }
 
 enum MathText {
-    /// Tokens are private-use characters around the formula's index: Markdown leaves them alone.
     static let tokenStart: Character = "\u{E000}"
     static let tokenEnd: Character = "\u{E001}"
 
-    /// Replaces `$…$`, `$$…$$`, `\(…\)` and `\[…\]` in Markdown source with tokens; fenced code and code spans stay untouched.
     static func extract(_ markdown: String) -> (source: String, formulas: [Formula]) {
         guard markdown.contains("$") || markdown.contains("\\(") || markdown.contains("\\[") else { return (markdown, []) }
         var formulas: [Formula] = []
@@ -43,7 +34,6 @@ enum MathText {
         return (String(out.dropLast()), formulas)  // the loop added a newline after the last line too
     }
 
-    /// Prose between code fences: finds the formulas, skipping code spans and backslash escapes.
     private static func scanProse(_ text: String, into formulas: inout [Formula]) -> String {
         let c = Array(text)
         var out = ""
@@ -106,8 +96,6 @@ enum MathText {
         return out
     }
 
-    /// Pandoc's rule, so prices stay text: `$` followed by a non-space, closed by `$` after a non-space and not before a digit,
-    /// on the same line and before any code span.
     private static func inlineEnd(_ c: [Character], from start: Int) -> Int? {
         guard start + 1 < c.count, !c[start + 1].isWhitespace else { return nil }
         var j = start + 1
@@ -125,7 +113,6 @@ enum MathText {
         return nil
     }
 
-    /// LaTeX math → Unicode text.
     static func unicode(_ latex: String) -> String {
         var parser = Parser(c: Array(latex))
         return parser.sequence(closing: nil).split(separator: "\n", omittingEmptySubsequences: false)
@@ -184,7 +171,6 @@ enum MathText {
             while i < c.count, c[i].isWhitespace { i += 1 }
         }
 
-        /// A command argument: a group, a command, or one character.
         mutating func argument() -> String {
             skipSpaces()
             guard i < c.count else { return "" }
@@ -278,7 +264,6 @@ enum MathText {
         }
     }
 
-    /// Parentheses only where the argument is more than one number or name, so √40 stays √40 and √(a + b) is unambiguous.
     static func wrapped(_ text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         let simple = trimmed.count <= 1 || trimmed.allSatisfy { $0.isLetter || $0.isNumber || $0 == "." || $0 == "," }

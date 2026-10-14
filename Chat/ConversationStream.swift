@@ -5,25 +5,14 @@ import AppKit
 import Observation
 import SwiftUI
 
-// The streaming logic shared by the chats window and the quick panel lives here once: composer,
-// question queue, attachments, the event loop of a running reply and its transcript.
-
-/// What a surface (chats window, quick panel) provides to the shared coordinator.
 @MainActor
 protocol ConversationStreamDelegate: AnyObject {
-    /// The chat the question goes to, created on demand; nil aborts the send (the question returns to the composer).
     func chatIDForSending(question: QueuedQuestion) async -> UUID?
-    /// The model that should answer: the surface's own picker, or the app-wide choice.
     func modelIDForSending() -> String?
-    /// Whether the surface currently shows this chat; a reply streaming into another chat must not overwrite the transcript.
     func displaysChat(_ chatID: UUID) -> Bool
-    /// A run ended, whatever the outcome: the surface refreshes what it owns (chat list, flags).
-    func streamDidFinish(chatID: UUID)
     var acceptsImages: Bool { get }
 }
 
-/// Adopted by the surfaces' view models: the coordinator holds the shared state, and these defaults let the views
-/// keep their old property names. `@Observable` tracks the coordinator's own properties, so observation still works.
 @MainActor
 protocol ConversationStreamHosting: AnyObject {
     var stream: ConversationStreamCoordinator { get }
@@ -56,13 +45,11 @@ extension ConversationStreamHosting {
     func pasteFromClipboard() -> Bool { stream.pasteFromClipboard() }
     func attach(image: NSImage) { stream.attach(image: image) }
     func attach(fileURL: URL) { stream.attach(fileURL: fileURL) }
-    /// A copied or dropped link: the page text becomes a document attachment.
     func attach(webURL url: URL) { stream.attach(webURL: url) }
     func removeImage(_ id: UUID) { stream.removeImage(id) }
     func removeDocument(_ name: String) { stream.removeDocument(name) }
 }
 
-/// The question being written: its text and attachments, before it is sent.
 @MainActor
 @Observable
 final class ComposerDraft {
@@ -84,8 +71,7 @@ final class ConversationStreamCoordinator {
     let container: AppContainer
     weak var delegate: (any ConversationStreamDelegate)?
 
-    // What is typed and attached but not sent is one draft, kept by the container: the panel and the chats window
-    // show the same chat, so what was begun in one is there to finish in the other.
+    // Unsent draft shared by the panel and the chats window via the container.
     var input: String {
         get { container.draft.input }
         set { container.draft.input = newValue }
@@ -101,35 +87,24 @@ final class ConversationStreamCoordinator {
     var errorMessage: String?
     private(set) var messages: [Message] = []
     private(set) var streamingText = ""
-    /// Tokens not on screen yet. The views re-read the whole reply (markup, reasoning, Markdown) on every change, so it
-    /// changes about 30 times a second rather than per token: per token that work grows with the square of the reply.
     private var unshownText = ""
     private var unshownTokens = 0
     private var lastShown = ContinuousClock.now
-    /// Steps and thinking of the running reply, shown above it; nil when nothing runs here.
     private(set) var progress: GenerationProgress? { didSet { publishProgress() } }
-    /// Questions sent while the model was busy; they go out one by one after the current reply.
     private(set) var queuedQuestions: [QueuedQuestion] = []
-    /// Thinking time of replies finished in this session, for their summary line (not stored with the message).
     private(set) var thoughtSeconds: [UUID: Int] = [:]
     private(set) var isGenerating = false
 
-    /// This surface is writing the current reply (its own token stream and progress).
     var streamsHere: Bool { progress != nil }
-    /// The streamed reply without the model's private channels; notes about tools are separate state.
     var visibleStreamingText: String { AnswerText.visible(streamingText) }
 
-    /// Context the chat takes, estimated: exact counts for generated replies, ~3 characters per token for everything
-    /// else. Shared so the window and the panel show the same number for the same chat.
     func contextUsed(systemPrompt: String?) -> Int {
         let system = (systemPrompt?.count ?? 0) / 3
         let history = messages.reduce(0) { $0 + ($1.role == .assistant ? $1.completionTokens ?? $1.text.count / 3 : $1.text.count / 3) }
         return system + history + (streamingText.count + input.count) / 3
     }
 
-    /// Cached so the answer-started check is not an O(n) rescan of the reply on every token.
     private var answerStarted = false
-    /// Bumped on every new run and on reset; the tail of a cancelled task must not write stale state.
     private var generation = 0
     private var streamTask: Task<Void, Never>?
 
@@ -145,8 +120,6 @@ final class ConversationStreamCoordinator {
         (try? await container.chatStore.messages(chatID: chatID)) ?? []
     }
 
-    /// The chat-store loop shared by the surfaces; which callback does what is the only difference between them.
-    /// The surface stores the returned task and cancels it in `deinit`; the callbacks should capture it weakly.
     func observeStoreChanges(
         onChats: (@MainActor () async -> Void)? = nil,
         onMessages: @escaping @MainActor (UUID) async -> Void,
@@ -170,8 +143,6 @@ final class ConversationStreamCoordinator {
 
     // Composer
 
-    /// Sends the composer, or queues the question while a reply is running.
-    /// `surfaceBusy`: the surface knows the chat is busy elsewhere (panel or API streaming into it).
     func send(chatID: UUID?, surfaceBusy: Bool = false) {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !pendingImages.isEmpty || !pendingDocuments.isEmpty else { return }
@@ -189,13 +160,11 @@ final class ConversationStreamCoordinator {
         queuedQuestions.removeAll { $0.id == id }
     }
 
-    /// Kicks the next waiting question once the chat is free again (a reply that ran on another surface ended).
     func drainQueue() {
         guard !isGenerating, errorMessage == nil, !queuedQuestions.isEmpty else { return }
         ask(queuedQuestions.removeFirst())
     }
 
-    /// Deletes the tail from the last user message (its tool rounds included) and asks it again.
     func regenerate(chatID: UUID) {
         guard messages.last?.role == .assistant, let userIndex = messages.lastIndex(where: { $0.role == .user }) else { return }
         let tail = Array(messages[userIndex...])
@@ -220,7 +189,6 @@ final class ConversationStreamCoordinator {
         }
     }
 
-    /// Cancels the running reply and wipes all composer and streaming state; the old task's tail cannot write back.
     func reset() {
         streamTask?.cancel()
         streamTask = nil
@@ -248,7 +216,6 @@ final class ConversationStreamCoordinator {
         pendingImages.append(PendingImage(data: png, mimeType: "image/png", thumbnail: image))
     }
 
-    /// Images go to the VLM, everything readable becomes an attached document (works with text-only models too).
     func attach(fileURL: URL) {
         switch DocumentExtractor.extract(url: fileURL) {
         case .image(let image): attach(image: image)
@@ -257,7 +224,6 @@ final class ConversationStreamCoordinator {
         }
     }
 
-    /// A copied or dropped link: the page text becomes a document attachment.
     func attach(webURL url: URL) {
         Task {
             do {
@@ -276,7 +242,6 @@ final class ConversationStreamCoordinator {
         pendingDocuments.removeAll { $0.name == name }
     }
 
-    /// A copied image or file becomes an attachment; returns false when only text is on the pasteboard.
     func pasteFromClipboard() -> Bool {
         switch PasteboardAttachments.read() {
         case .files(let urls): urls.forEach { attach(fileURL: $0) }
@@ -294,11 +259,8 @@ final class ConversationStreamCoordinator {
 
     // Run loop
 
-    /// The chat the running reply streams into; nil while idle. Stop must aim here, not at the selection.
     private(set) var streamingChatID: UUID? { didSet { publishProgress() } }
 
-    /// The other surface shows the same chat and has no stream of its own to read the steps from: "Reading the
-    /// mail…", the thinking time and the speed reach it through the container.
     private func publishProgress() {
         if let streamingChatID { container.liveProgress[streamingChatID] = progress }
     }
@@ -307,7 +269,7 @@ final class ConversationStreamCoordinator {
         streamTask?.cancel()
         generation += 1
         let gen = generation
-        // Set synchronously: a send() racing the async chat resolution must queue, not start a second run.
+        // Set synchronously so a racing send() queues.
         isGenerating = true
         errorMessage = nil
         streamingText = ""
@@ -376,13 +338,11 @@ final class ConversationStreamCoordinator {
             await reloadIfDisplayed(chatID, generation: gen)
             // A fresh send may have started during the reload; its run owns the state now.
             guard generation == gen else { return }
-            delegate?.streamDidFinish(chatID: chatID)
-            // The next waiting question goes out; after a failure the queue waits, the user sees the error first.
+            // Send the next queued question; pause after a failure.
             if errorMessage == nil, !queuedQuestions.isEmpty { ask(queuedQuestions.removeFirst()) }
         }
     }
 
-    /// Puts the tokens received since the last update on screen, and counts them in the progress line.
     private func showUnshown() {
         guard unshownTokens > 0 else { return }
         streamingText += unshownText
@@ -403,7 +363,6 @@ final class ConversationStreamCoordinator {
         messages = loaded
     }
 
-    /// A send that failed before anything was stored: the question returns to the composer instead of vanishing.
     private func restoreToComposer(_ question: QueuedQuestion) {
         if input.isEmpty { input = question.text }
         for image in question.images {

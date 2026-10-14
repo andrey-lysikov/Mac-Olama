@@ -4,13 +4,8 @@
 import CryptoKit
 import Foundation
 
-// ToolProvider
-
-/// Tool provider for tool calling: web search, files, Shortcuts, the calculator, this Mac, the network, the weather,
-/// where this Mac is.
 public protocol ToolProvider: Sendable {
     var specs: [ToolSpec] { get }
-    /// Executes a call and returns the result text for the model.
     func execute(_ call: ToolCall) async throws -> String
 }
 
@@ -19,11 +14,9 @@ public protocol ToolProvider: Sendable {
 public enum ConversationEvent: Sendable, Equatable {
     case started(messageID: UUID)
     case token(String)
-    /// Tokens the engine has generated in the current round, including those it has not turned into text yet.
     case generated(Int)
     case toolCallStarted(ToolCall)
     case toolCallFinished(ToolCall, resultPreview: String)
-    /// What was streamed so far is dropped: an empty answer after tool rounds is being asked for once more.
     case retrying
     case finished(Message)
     case failed(String)
@@ -49,37 +42,23 @@ extension ConversationError: CustomStringConvertible {
     }
 }
 
-// Without this, anything showing `localizedDescription` gets "the operation could not be completed" instead.
+// Gives `localizedDescription` a real message.
 extension ConversationError: LocalizedError {
     public var errorDescription: String? { description }
 }
 
-/// Single entry point for generation used by the panel, chats window, intents and API.
-/// Owns the active chat, builds context, runs the tool-calling loop and persists partial replies.
 public actor ConversationService {
     public struct Configuration: Sendable {
         public var maxToolIterations: Int
-        /// The least the reply may have when history is trimmed; the actual budget grows with the context window.
         public var reservedTokensForReply: Int
-        /// Cap per attached document when injected into the prompt.
         public var maxDocumentCharacters = 24_000
-        /// User-chosen context window per model id, in tokens; a missing entry = the model's own maximum.
         public var contextTokensByModel: [String: Int] = [:]
-        /// Temperature chosen per model in the models section; a request that brings its own sampling wins.
         public var temperatureByModel: [String: Double] = [:]
-        /// What each checkpoint asks to be sampled with (`ModelDefaults.sampling`); unset fields fall to the engine.
         public var checkpointSamplingByModel: [String: SamplingParams] = [:]
-        /// Models answering with multi-token prediction.
         public var speculativeModelIDs: Set<String> = []
-        /// Of those, the ones whose drafter only works without sampling: the library drops speculation at any other
-        /// temperature, so these answer greedily. Drafters that verify sampled tokens are not listed here.
         public var greedyModelIDs: Set<String> = []
-        /// Models allowed to reason before answering — the ones whose thinking the user asked to see. A family whose
-        /// template makes thinking optional (Gemma 4, Qwen3) only thinks when it is on this list.
         public var reasoningModelIDs: Set<String> = []
-        /// English name of the language every reply comes in ("Russian"); empty = the model follows the user.
         public var preferredLanguage = ""
-        /// Web research reformulates queries and reads several pages, each a tool round.
         public init(maxToolIterations: Int = 10, reservedTokensForReply: Int = 1024) {
             self.maxToolIterations = maxToolIterations
             self.reservedTokensForReply = reservedTokensForReply
@@ -117,13 +96,11 @@ public actor ConversationService {
 
     // Chats
 
-    /// Active chat of the panel; creates one if missing or deleted.
     public func activeChat(origin: ChatOrigin) async throws -> Chat {
         if let id = activeChatID, let chat = try await store.chat(id: id) { return chat }
         return try await newChat(origin: origin)
     }
 
-    /// Clear: a new chat becomes active, the old one stays in the list.
     @discardableResult
     public func newChat(origin: ChatOrigin, modelID: String? = nil, systemPrompt: String? = nil) async throws -> Chat {
         let chat = Chat(modelID: modelID ?? activeModelID, systemPrompt: systemPrompt, origin: origin)
@@ -142,7 +119,6 @@ public actor ConversationService {
         runningTasks[chatID] != nil
     }
 
-    /// Chats with a reply being written right now, whichever surface (window, panel, API) asked for it.
     public var generatingChatIDs: Set<UUID> { Set(runningTasks.keys) }
 
     public func cancel(chatID: UUID) async {
@@ -152,8 +128,6 @@ public actor ConversationService {
 
     // Send
 
-    /// Sends a prompt and streams events. Generation continues even if the subscriber goes away.
-    /// `modelID`: the model the UI shows for this chat; it wins over what the store still holds and is saved to the chat.
     public func send(
         chatID: UUID, text: String, images: [ImageInput] = [], documents: [DocumentInput] = [],
         sampling: SamplingParams? = nil, keepAlive: KeepAlive = .default, modelID shownModelID: String? = nil
@@ -185,7 +159,7 @@ public actor ConversationService {
             if model.source != .remote, let chosen = configuration.temperatureByModel[model.id] { resolvedSampling.temperature = chosen }
             resolvedSampling.maxTokens = replyBudget(for: model)
         }
-        // A drafter that cannot verify sampled tokens has the last word, or speculation would quietly switch off.
+        // Greedy-only drafters force their temperature.
         if configuration.speculativeModelIDs.contains(model.id), configuration.greedyModelIDs.contains(model.id) {
             resolvedSampling.temperature = 0
         }
@@ -257,8 +231,7 @@ public actor ConversationService {
                     assistant.tokensPerSecond = usage.tokensPerSecond
                 }
 
-                // A small model sometimes derails after tool rounds: it opens a new turn (`<|im_start|>…`) instead of
-                // answering, and nothing visible is left. Sampling once more usually gives the answer.
+                // Retry once when a small model derails into a new turn after tools.
                 if pendingCalls.isEmpty, finish != .cancelled, iterations > 0, !retriedEmptyAnswer,
                     AnswerText.visible(assistant.text).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 {
@@ -291,7 +264,7 @@ public actor ConversationService {
             assistant.isPartial = (finish == .cancelled)
             try await store.update(assistant)
             continuation.yield(.finished(assistant))
-            // A reply cut off at the token limit looks like no reply at all when it was all reasoning: say so.
+            // Explain a reply cut off while still reasoning.
             if finish == .length {
                 continuation.yield(.failed(String(localized: "The answer stopped at the limit of \(sampling.maxTokens ?? 0) tokens.")))
             }
@@ -302,8 +275,6 @@ public actor ConversationService {
         }
     }
 
-    /// Why the model did not answer, in words the chat can show: our own errors say it themselves, a network failure
-    /// is named as one, and anything else falls back to the system's description.
     public static func describe(_ error: Error) -> String {
         switch error {
         case let engine as EngineError: engine.description
@@ -317,8 +288,6 @@ public actor ConversationService {
 
     // Context
 
-    /// What the model cannot know by itself: today's date and its tools. Without it a model answers from stale
-    /// training data and rarely thinks of searching.
     static func guidance(toolSpecs: [ToolSpec], now: Date = .now) -> String {
         let date = now.formatted(Date.FormatStyle(date: .complete, time: .omitted).locale(Locale(identifier: "en_US")))
         var lines = [
@@ -439,9 +408,6 @@ public actor ConversationService {
         return lines.joined(separator: "\n")
     }
 
-    /// How long a reply may run: a quarter of the window this model works with, never below the reserve and never
-    /// above 32k. A flat number makes no sense across models — a reasoning model spends thousands of tokens before
-    /// the visible answer, and with a 4k window there is nothing to spend.
     func replyBudget(for model: ModelDescriptor) -> Int {
         Self.replyBudget(context: effectiveContext(for: model), atLeast: configuration.reservedTokensForReply)
     }
@@ -454,7 +420,7 @@ public actor ConversationService {
         let budgetTokens = max(512, effectiveContext(for: model) - replyBudget(for: model))
         var result: [EngineMessage] = []
         var used = 0
-        // One system message only: several chat templates accept a single one. The chat's own prompt comes last, so it wins.
+        // Single system message; the chat prompt comes last.
         let language = configuration.preferredLanguage
         let system = [
             language.isEmpty ? "" : "Always reply in \(language) unless the user explicitly asks for another language.",
@@ -462,8 +428,7 @@ public actor ConversationService {
         ].filter { !$0.isEmpty }.joined(separator: "\n\n")
         result.append(EngineMessage(role: .system, content: system))
         used += Self.estimateTokens(system)
-        // The current turn (the last question and the tool rounds after it) always goes in whole; long pages must not push
-        // the question itself out, so each tool result of the turn gets an equal share of the budget.
+        // Current turn goes in whole; tool results share the budget equally.
         let turnStart = history.lastIndex { $0.role == .user } ?? history.startIndex
         let turnToolResults = history[turnStart...].filter { $0.role == .tool }.count
         let toolShareCharacters = max(1500, budgetTokens * 4 / (turnToolResults + 2))
@@ -473,8 +438,7 @@ public actor ConversationService {
             // The map a tool stored for the feed is not for the model: it would only eat the context.
             if message.role == .tool { content = ToolMapNote.strip(content) }
             let inCurrentTurn = index >= turnStart
-            // Earlier turns' reasoning is not sent back: templates drop it anyway, and it only eats the context. Inside the
-            // current turn it stays, as the templates keep it: the prompt then continues what the engine has cached.
+            // Drop earlier turns' reasoning; keep it in the current turn for cache continuity.
             if message.role == .assistant, !inCurrentTurn { content = AnswerText.visible(content) }
             if inCurrentTurn, message.role == .tool, content.count > toolShareCharacters {
                 // Keep the closing untrusted-data marker, it tells the model where the external text ends.
@@ -504,10 +468,6 @@ public actor ConversationService {
         return result
     }
 
-    /// Where the history sent to the model starts. When it does not fit, the start moves forward in steps of about a
-    /// quarter of the window, always to a question: step boundaries are fixed points of the history, so the prompt
-    /// keeps the same beginning for several turns and the engine continues its cache instead of prefilling the whole
-    /// history every turn, as dropping one message at a time would make it.
     static func firstKeptMessage(costs: [Int], isQuestion: [Bool], room: Int, step: Int) -> Int {
         let total = costs.reduce(0, +)
         if total <= room { return 0 }
@@ -523,7 +483,6 @@ public actor ConversationService {
         return costs.count
     }
 
-    /// Smaller of the user setting and the model's max_position_embeddings (8192 when the model does not say).
     func effectiveContext(for model: ModelDescriptor) -> Int {
         let modelMax = model.contextLength ?? 8192
         // A model served elsewhere has the window its server reported; there is no choice to apply.
@@ -537,7 +496,6 @@ public actor ConversationService {
 
     static func estimateTokens(_ text: String) -> Int { max(1, text.utf8.count / 4) }
 
-    /// Appends attached documents to the user text as delimited blocks the model treats as data.
     func contentWithDocuments(_ message: Message) -> String {
         let docs = message.attachments.filter { $0.kind == .document }
         guard !docs.isEmpty else { return message.text }
@@ -556,7 +514,7 @@ public actor ConversationService {
     static func makeTitle(from text: String) -> String {
         let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Enough for the three lines a chat row shows in the sidebar at its narrowest; the row cuts what is longer.
+        // Enough for three sidebar lines.
         return trimmed.count > 120 ? String(trimmed.prefix(117)) + "…" : trimmed
     }
 
@@ -570,7 +528,6 @@ public actor ConversationService {
         try store(Data(document.text.utf8), ext: "txt", kind: .document, chatID: chatID, displayName: document.name)
     }
 
-    /// Content-addressed: same data, same file, so re-sending an attachment stores nothing new.
     private func store(_ data: Data, ext: String, kind: Attachment.Kind, chatID: UUID, displayName: String? = nil) throws -> Attachment {
         let hash = SHA256.hash(data: data).hex
         let relative = "\(chatID.uuidString)/\(hash).\(ext)"
@@ -589,13 +546,9 @@ public actor ConversationService {
 
 // AnswerText
 
-/// What of a reply belongs on screen. Chat templates carry a model's private channels (reasoning, tool syntax) in the
-/// same token stream as the answer, so the transcript has to drop them instead of showing the raw markup.
 enum AnswerText {
-    /// Reasoning blocks of the model families that write one; the content never reaches the transcript or the next prompt.
-    /// Harmony (`<|channel|>analysis`) and Gemma 4 (`<|channel>thought`) channels are handled by label below.
     static let reasoningBlocks: [(open: String, close: String)] = [
-        ("<think>", "</think>"),  // Qwen3, DeepSeek-R1, QwQ, GLM, MiniMax, Phi-4-reasoning, Nemotron, ERNIE, Hunyuan
+        ("<think>", "</think>"),  // Qwen3, DeepSeek-R1, QwQ, GLM, MiniMax, Phi-4, Nemotron, ERNIE, Hunyuan
         ("<thinking>", "</thinking>"), ("<reasoning>", "</reasoning>"),
         ("[THINK]", "[/THINK]"),  // Magistral
         ("<seed:think>", "</seed:think>"),  // Seed-OSS
@@ -604,15 +557,10 @@ enum AnswerText {
         ("<|begin_of_thought|>", "<|end_of_thought|>"),  // OpenThoughts, Sky-T1
         ("Here are my reasoning steps:", "[BEGIN FINAL RESPONSE]"),  // Apriel
     ]
-    /// Wrappers some models put around the answer itself: the tags go, the text stays.
     private static let answerWrappers = ["<answer>", "</answer>", "<response>", "</response>", "[END FINAL RESPONSE]"]
-    /// Channels a model talks to itself in; their content never reaches the transcript.
     private static let privateChannels: Set<String> = ["analysis", "thought", "thinking", "reasoning", "commentary", "critic"]
-    /// Channels that do carry the answer. Anything unlabelled is treated as answer text too.
     private static let answerChannels: Set<String> = ["final", "message", "answer", "response", "output"]
 
-    /// The answer without private channels, tool-call syntax and template tokens. Safe on a partial reply:
-    /// an unterminated reasoning block hides everything after it.
     static func visible(_ raw: String) -> String {
         var text = stripChannels(stripAngleChannels(raw))
         for (open, close) in reasoningBlocks {
@@ -620,7 +568,7 @@ enum AnswerText {
             if let end = text.range(of: close), !text[..<end.lowerBound].contains(open) { text = String(text[end.upperBound...]) }
             text = stripBlocks(text, open: open, close: close)
         }
-        // Tool results a model echoes back are search/page text, not its answer. VERIFY(gemma4): `<|tool_call>` pair spelling.
+        // Echoed tool results are not the answer. VERIFY(gemma4): `<|tool_call>` spelling.
         for (open, close) in [
             ("<tool_call>", "</tool_call>"), ("<tool_response>", "</tool_response>"), ("<|tool_call>", "<tool_call|>"),
             ("<|tool_response>", "<tool_response|>"), ("<untrusted_content", "</untrusted_content>"),
@@ -633,13 +581,11 @@ enum AnswerText {
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// What the model said to itself: the content of its reasoning blocks and private channels, in order. Empty when
-    /// the reply has none. Shown only where the user asked to see the thinking; it never goes back into a prompt.
     static func reasoning(_ raw: String) -> String {
         var parts: [String] = []
         for (open, close) in reasoningBlocks {
             var rest = Substring(raw)
-            // A template that opened the block in the prompt leaves only the closing tag: everything before it is thought.
+            // Only a closing tag: everything before it is thought.
             if let end = rest.range(of: close), !rest[..<end.lowerBound].contains(open) {
                 parts.append(String(rest[..<end.lowerBound]))
                 rest = rest[end.upperBound...]
@@ -664,16 +610,12 @@ enum AnswerText {
             .joined(separator: "\n\n")
     }
 
-    /// One plain line about a tool the model reached for, so the transcript says what it went to do instead of
-    /// showing the call itself.
     struct Activity: Equatable, Identifiable, Hashable {
         var text: String
         var symbol: String
         var id: String { text }
     }
 
-    /// The line names what the call is about, taken from its arguments: the query, the file, the place, the title.
-    /// `searchProvider` is `SettingsKey.searchProvider`, so the line can name the engine the answer came from.
     static func activity(for call: ToolCall, searchProvider: String) -> Activity {
         let shown = Shown(call)
         func line(_ text: String, _ symbol: String) -> Activity { Activity(text: text, symbol: symbol) }
@@ -906,11 +848,8 @@ enum AnswerText {
         }
     }
 
-    /// The line once the tool has answered, for the calls whose arguments do not say what they reached: an email is
-    /// asked for by its id and a Safari tab by its number, and the subject or the page's title comes with the result.
-    /// nil keeps the line the call started with.
     static func detail(for call: ToolCall, result: String) -> String? {
-        // The result opens with the untrusted-content tag; what is wanted is the first line under it.
+        // First line after the untrusted-content tag.
         func first(after prefix: String) -> String? {
             guard let line = result.split(separator: "\n").first(where: { $0.hasPrefix(prefix) }) else { return nil }
             let text = line.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
@@ -934,7 +873,6 @@ enum AnswerText {
         }
     }
 
-    /// The arguments of a call as a line shows them: text on one short line, a file by its name, a page by its host.
     private struct Shown {
         private let values: [String: Any]
 
@@ -948,7 +886,6 @@ enum AnswerText {
             return line.isEmpty ? nil : line.count > limit ? String(line.prefix(limit)) + "…" : line
         }
 
-        /// A number as the model wrote it, whether as 20, 2.5 or "20".
         func number(_ key: String) -> String? {
             if let value = values[key] as? String { return Double(value) == nil ? nil : value }
             // JSON's true and false arrive as numbers too.
@@ -958,22 +895,18 @@ enum AnswerText {
 
         func flag(_ key: String) -> Bool { values[key] as? Bool ?? false }
 
-        /// The last part of a path: the folders before it only push the name out of the line.
         func file(_ key: String) -> String? {
             guard let path = text(key, limit: 400), !path.contains("://") else { return nil }
             let name = (path as NSString).lastPathComponent
             return name.isEmpty ? path : name
         }
 
-        /// The host of an address, without "www.".
         func page(_ key: String) -> String? {
             guard let value = text(key, limit: 2000), let host = URL(string: value)?.host(), !host.isEmpty else { return nil }
             return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
         }
     }
 
-    /// The private channels of the Gemma 4 form, in order, for the thinking the transcript shows. Mirrors what
-    /// `stripAngleChannels` drops, so what is hidden from the answer is exactly what is shown as thinking.
     private static func angleChannelThoughts(_ text: String) -> [String] {
         let open = "<|channel>"
         let close = "<channel|>"
@@ -984,15 +917,13 @@ enum AnswerText {
             let inner = rest[start.upperBound...]
             let end = inner.range(of: close)
             let (label, body) = splitLabel(String(end.map { inner[inner.startIndex..<$0.lowerBound] } ?? inner))
-            // Unlabelled and still open: the block is being written, and `visible` hides it, so it counts as thinking.
+            // Open unlabelled block counts as thinking.
             if label.map(privateChannels.contains) ?? (end == nil) { parts.append(body) }
             rest = end.map { inner[$0.upperBound...] } ?? ""
         }
         return parts
     }
 
-    /// Gemma 4 form: `<|channel>thought …<channel|>answer`, the bar only on the inner side of each marker. The first word
-    /// names the channel as in the pipe form. An unclosed block with no known label yet is still being written: hide it.
     private static func stripAngleChannels(_ text: String) -> String {
         let open = "<|channel>"
         let close = "<channel|>"
@@ -1012,15 +943,13 @@ enum AnswerText {
         return result.replacingOccurrences(of: close, with: "")
     }
 
-    /// `<|channel|>final<|message|>…` in full form, `<|channel|>thought …` in the degraded one models often emit:
-    /// either way the channel names itself first, so each segment can be kept or dropped by that name.
     private static func stripChannels(_ text: String) -> String {
         let marker = "<|channel|>"
         guard text.contains(marker) else { return text }
         var result = ""
         for (index, segment) in text.components(separatedBy: marker).enumerated() {
             guard index > 0 else {
-                result += segment  // whatever came before the first channel is plain answer text
+                result += segment  // text before the first channel is answer
                 continue
             }
             let (label, body) = splitLabel(segment)
@@ -1035,7 +964,7 @@ enum AnswerText {
             let label = segment[segment.startIndex..<message.lowerBound].trimmingCharacters(in: .whitespaces).lowercased()
             return (label.isEmpty ? nil : label, String(segment[message.upperBound...]))
         }
-        // No message token: the first word is the label only when it is a channel name — otherwise it is the answer.
+        // First word is a label only if it names a channel.
         let body = segment.drop { $0.isWhitespace }
         let end = body.firstIndex { $0.isWhitespace } ?? body.endIndex
         let word = body[body.startIndex..<end].lowercased()
@@ -1043,7 +972,6 @@ enum AnswerText {
         return (word, String(body[end...]))
     }
 
-    /// Removes each `open…close` block. An open block with no close (the model is still writing it) takes the rest.
     private static func stripBlocks(_ text: String, open: String, close: String) -> String {
         var result = text
         while let start = result.range(of: open) {
@@ -1058,6 +986,5 @@ enum AnswerText {
 }
 
 extension SHA256Digest {
-    /// Lowercase hex, as Hugging Face (`lfs.sha256`) and ModelScope (`Sha256`) list file hashes.
     var hex: String { map { String(format: "%02x", $0) }.joined() }
 }

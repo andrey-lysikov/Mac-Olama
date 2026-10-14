@@ -5,24 +5,16 @@ import AVFoundation
 import Speech
 import SwiftUI
 
-// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
-// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
-
 // VoiceInput
 
-/// Dictation into the composer, recognized on this Mac by the system's speech analyzer: the words appear as they are
-/// said, and the question then goes out like a typed one, so a spoken command reaches the plugins the same way.
 @MainActor
 @Observable
 final class VoiceInput {
     enum State: Equatable { case idle, preparing, listening, failed(String) }
 
     private(set) var state: State = .idle
-    /// What has been said so far: the settled words, then the guess for the ones still being spoken.
     private(set) var transcript = ""
-    /// Loudness of the last moment, 0…1, for the button's waveform.
     private(set) var level: Double = 0
-    /// Called with the whole transcript once listening stops, by the button or by a pause.
     @ObservationIgnored var onFinish: ((String) -> Void)?
 
     @ObservationIgnored private var settled = ""
@@ -34,7 +26,6 @@ final class VoiceInput {
     @ObservationIgnored private var lastVoice = ContinuousClock.now
     @ObservationIgnored private var heardVoice = false
 
-    /// Quieter than this counts as silence; a pause this long after speech ends the dictation.
     private static let voiceLevel = 0.06
     private static let pause: Duration = .seconds(2)
     private static let longest: Duration = .seconds(120)
@@ -144,7 +135,6 @@ final class VoiceInput {
         }
     }
 
-    /// Stops after a pause once something was said, and after two minutes in any case.
     private func watchForSilence() {
         let started = ContinuousClock.now
         silenceWatch = Task { [weak self] in
@@ -175,8 +165,6 @@ final class VoiceInput {
 
     // Audio
 
-    /// The microphone into the analyzer, converted to the format it wants. Not on the main actor: the tap runs on the
-    /// audio thread, and a closure made on the main actor would be taken for a main-actor one and trap there.
     private nonisolated static func tap(
         _ engine: AVAudioEngine, into feed: AsyncStream<AnalyzerInput>.Continuation, as format: AVAudioFormat,
         level: @escaping @Sendable (Double) -> Void
@@ -193,7 +181,6 @@ final class VoiceInput {
         }
     }
 
-    /// The preferred reply language names the dictation language too; without one, the system's language.
     static func locale(for language: String) -> Locale {
         let known = [
             "English": "en-US", "Russian": "ru-RU", "German": "de-DE", "French": "fr-FR", "Spanish": "es-ES", "Italian": "it-IT",
@@ -204,7 +191,6 @@ final class VoiceInput {
     }
 }
 
-/// Owned by the audio thread once the tap starts: the converter is touched there only, one buffer at a time.
 private final class AudioPipe: @unchecked Sendable {
     let converter: AVAudioConverter
     let format: AVAudioFormat
@@ -234,7 +220,6 @@ private final class AudioPipe: @unchecked Sendable {
         if error == nil, converted.frameLength > 0 { feed.yield(AnalyzerInput(buffer: converted)) }
     }
 
-    /// Root mean square of the first channel.
     func loudness(of buffer: AVAudioPCMBuffer) -> Double {
         guard let samples = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return 0 }
         var sum: Float = 0
@@ -245,15 +230,12 @@ private final class AudioPipe: @unchecked Sendable {
 
 // VoiceInputButton
 
-/// The microphone next to the paperclip: press to speak, press again or pause to stop. The words go into the field
-/// after what was typed; with sending after a pause on, the question then goes out by itself.
 struct VoiceInputButton: View {
     @Binding var text: String
     var disabled: Bool
     var onSend: () -> Void
     @Environment(AppContainer.self) private var container
     @State private var voice = VoiceInput()
-    /// What was typed before speaking; the dictation goes after it.
     @State private var typed = ""
     @State private var showsFailure = false
 

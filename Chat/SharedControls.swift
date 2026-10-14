@@ -5,15 +5,8 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
-// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
-
-// Small controls and modifiers shared by the chats window, the quick panel and the models section.
-
 // SymbolButton
 
-/// List actions are bare pictograms, not framed buttons. The style is a parameter because a modifier applied
-/// outside this view would lose to the default one applied closer to the image.
 struct SymbolButton: View {
     let symbol: String
     let help: String
@@ -35,8 +28,6 @@ struct SymbolButton: View {
 
 // CopyButton
 
-/// The copy pictogram under replies and on code cards: puts `text` on the pasteboard.
-/// Button style and colour come from the surroundings, as before the extraction.
 struct CopyButton: View {
     let text: String
 
@@ -53,7 +44,6 @@ struct CopyButton: View {
 
 // Attachment chips
 
-/// A document attachment as a chip; the cross removes a pending one.
 struct DocumentChip: View {
     let name: String
     var onRemove: (() -> Void)?
@@ -72,7 +62,6 @@ struct DocumentChip: View {
     }
 }
 
-/// An image attachment as a rounded thumbnail; the cross removes a pending one.
 struct AttachmentThumbnail: View {
     let image: NSImage
     let side: CGFloat
@@ -95,8 +84,6 @@ struct AttachmentThumbnail: View {
 
 // ZoomableThumbnail
 
-/// A sent picture: the magnifier shown on hover or a double click opens it large, a double click on the large one puts
-/// it away. The context menu copies it and it can be dragged out, from the thumbnail and from the large one.
 struct ZoomableThumbnail: View {
     let image: NSImage
     let side: CGFloat
@@ -141,7 +128,6 @@ struct ZoomableThumbnail: View {
         }
     }
 
-    /// The picture at its own size, shrunk to fit most of the screen, never blown up past it.
     private var zoomedSize: CGSize {
         let screen = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1280, height: 800)
         let size = image.size
@@ -153,8 +139,6 @@ struct ZoomableThumbnail: View {
 
 // ChoiceMenu
 
-/// A borderless menu of plain rows, no check mark: its label already shows the choice in use. Shared by the
-/// per-model context and temperature menus.
 struct ChoiceMenu<Item: Hashable, Row: View, Footer: View, MenuLabel: View>: View {
     let items: [Item]
     let choose: (Item) -> Void
@@ -203,12 +187,10 @@ extension ChoiceMenu where Footer == EmptyView {
 
 // Attachment drop
 
-/// Document types the attach dialogs and drops accept; images are added when the model understands them.
 enum AttachableTypes {
     static let documents: [UTType] = [.pdf, .text, .sourceCode, .json, .rtf]
 }
 
-/// The three shapes a drop can take: a file, a web link (its page text becomes a document), a raw image.
 private struct AttachmentDropModifier: ViewModifier {
     var acceptsImages = true
     let onFile: @MainActor (URL) -> Void
@@ -242,7 +224,6 @@ private struct AttachmentDropModifier: ViewModifier {
 }
 
 extension View {
-    /// Dropping a file, a link or an image on the composer attaches it; shared by the chats window and the panel.
     func attachmentDrop(
         acceptsImages: Bool = true,
         onFile: @escaping @MainActor (URL) -> Void,
@@ -252,8 +233,6 @@ extension View {
         modifier(AttachmentDropModifier(acceptsImages: acceptsImages, onFile: onFile, onWeb: onWeb, onImage: onImage))
     }
 
-    /// A new attachment (paste, drop, file picker, link) puts the caret in the field, ready for the question.
-    /// `count` is the total number of pending attachments; only growth moves the focus.
     func focusOnNewAttachment(count: Int, focus: @escaping @MainActor () -> Void) -> some View {
         onChange(of: count) { old, new in
             guard new > old else { return }
@@ -261,14 +240,10 @@ extension View {
         }
     }
 
-    /// The rounded Liquid Glass card of the composer, the models card and the settings groups.
     func glassCard(radius: CGFloat = 22) -> some View {
         glassEffect(.regular, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
     }
 
-    /// The glass capsule around a search field, as the stock apps draw it: interactive, so it answers the pointer the
-    /// way the glass buttons beside it do. As tall as those buttons: `.buttonStyle(.glass)` pads a 30 pt label to 38 pt,
-    /// and a text field cannot take a button style, so the height is spelled out.
     func searchCapsule() -> some View {
         padding(.horizontal, 12).frame(height: 38).glassEffect(.regular.interactive(), in: Capsule())
     }
@@ -277,8 +252,6 @@ extension View {
 // Byte counts
 
 extension Int64 {
-    /// `ByteCountFormatter` written once: file sizes in lists, menus and download lines.
     var fileSizeText: String { ByteCountFormatter.string(fromByteCount: self, countStyle: .file) }
-    /// Memory amounts (powers of two), as the fit verdicts read them.
     var memorySizeText: String { ByteCountFormatter.string(fromByteCount: self, countStyle: .memory) }
 }

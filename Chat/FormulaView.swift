@@ -5,21 +5,13 @@ import AppKit
 import SwiftMath
 import SwiftUI
 
-// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
-// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
-
-// SwiftMath typesets LaTeX into vector images; inline ones sit on the text baseline inside SwiftUI `Text`, so formulas
-// flow with paragraphs, list items and table cells. A formula SwiftMath cannot parse falls back to `MathText.unicode`.
-
 @MainActor
 enum FormulaRenderer {
     struct Rendered {
         let image: NSImage
-        /// Distance from the image's bottom edge to the formula's baseline.
         let baseline: CGFloat
     }
 
-    /// A streamed reply is re-rendered on every token: typeset each formula once per size and appearance.
     private static var cache: [String: Rendered?] = [:]
 
     static func render(_ formula: Formula, fontSize: CGFloat, dark: Bool) -> Rendered? {
@@ -40,12 +32,10 @@ enum FormulaRenderer {
         return rendered
     }
 
-    /// The plain-text fallback for a formula SwiftMath cannot parse (√40, x², ≤).
     static func fallback(_ formula: Formula) -> Text {
         Text(verbatim: MathText.unicode(formula.latex))
     }
 
-    /// The image is drawn once with a fixed colour, so the system label colour is resolved for the current appearance.
     private static func labelColor(dark: Bool) -> NSColor {
         var color = NSColor.labelColor
         NSAppearance(named: dark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
@@ -54,10 +44,9 @@ enum FormulaRenderer {
         return color
     }
 
-    /// `Text` for an attributed string whose formula runs are typeset.
     static func text(_ attributed: AttributedString, fontSize: CGFloat, dark: Bool) -> Text {
         guard attributed.runs.contains(where: { $0[FormulaAttribute.self] != nil }) else { return Text(attributed) }
-        // `Text + Text` is deprecated; an interpolation built in code joins the pieces; its empty catalog key is marked non-translatable.
+        // Joins pieces by interpolation since `Text + Text` is deprecated.
         var joined = LocalizedStringKey.StringInterpolation(literalCapacity: 0, interpolationCount: attributed.runs.count)
         for run in attributed.runs {
             let piece: Text
@@ -76,8 +65,6 @@ enum FormulaRenderer {
     }
 }
 
-/// A display formula on its own: larger, centred, scaled down when wider than the reply (no nested scroll view, see
-/// `CodeBlockView`).
 struct FormulaBlockView: View {
     let formula: Formula
     let fontSize: CGFloat

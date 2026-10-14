@@ -4,26 +4,20 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// The shortcut that opens the panel while another app is in front. `RegisterEventHotKey` is the one way to catch a
-/// combination system-wide without the accessibility permission a global event monitor would need, and unlike the
-/// `NSServices` shortcut it can be set here instead of in System Settings, where our service cannot be given one.
 @MainActor
 final class GlobalHotkey {
     static let shared = GlobalHotkey()
 
-    /// The combination as the app stores it: a virtual key code and the Carbon modifier mask.
     struct Combination: Equatable {
         var keyCode: Int
         var modifiers: Int
         var isSet: Bool { keyCode > 0 && modifiers != 0 }
     }
 
-    /// Modifiers offered in the settings, in the order the system writes them.
     static let modifierMasks: [(symbol: String, mask: Int)] = [
         ("⌃", controlKey), ("⌥", optionKey), ("⇧", shiftKey), ("⌘", cmdKey),
     ]
 
-    /// Names for the keys a combination is likely to use; anything else is shown by its own character.
     static let keys: [(title: String, code: Int)] = {
         var keys: [(String, Int)] = [
             ("Space", kVK_Space), ("Return", kVK_Return), ("Tab", kVK_Tab), ("⌫", kVK_Delete), ("Esc", kVK_Escape),
@@ -49,8 +43,6 @@ final class GlobalHotkey {
     private var handler: EventHandlerRef?
     private var action: (() -> Void)?
 
-    /// Installs the combination, replacing whatever was registered before. An empty one leaves the app without a
-    /// shortcut, which is how it ships.
     func register(_ combination: Combination, action: @escaping () -> Void) {
         unregister()
         guard combination.isSet else { return }
@@ -70,7 +62,6 @@ final class GlobalHotkey {
         action = nil
     }
 
-    /// The C handler carries no context, so it reaches the one instance that registered a key.
     private nonisolated(unsafe) static weak var active: GlobalHotkey?
 
     private static let callback: EventHandlerUPP = { _, _, _ in
@@ -78,20 +69,17 @@ final class GlobalHotkey {
         return noErr
     }
 
-    /// How a combination reads in the settings: ⌃⌥⇧⌘ and then the key, as menus write it.
     static func describe(_ combination: Combination) -> String? {
         guard combination.isSet else { return nil }
         let modifiers = modifierMasks.filter { combination.modifiers & $0.mask != 0 }.map(\.symbol).joined()
         return modifiers + name(ofKey: combination.keyCode)
     }
 
-    /// A key's own name, or the character it types when the table does not name it.
     static func name(ofKey code: Int) -> String {
         if let known = keys.first(where: { $0.code == code })?.title { return known }
         return character(ofKey: code) ?? "#\(code)"
     }
 
-    /// What the key types with no modifiers, asked of the current keyboard layout.
     private static func character(ofKey code: Int) -> String? {
         guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
             let pointer = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)
@@ -110,7 +98,6 @@ final class GlobalHotkey {
         return String(utf16CodeUnits: characters, count: length).uppercased()
     }
 
-    /// The Carbon mask behind the flags of a key event.
     static func carbonModifiers(from flags: NSEvent.ModifierFlags) -> Int {
         var mask = 0
         if flags.contains(.command) { mask |= cmdKey }

@@ -8,7 +8,6 @@ import os
 
 // NotificationService
 
-/// All user-facing messages go through Notification Center; the app never shows alert windows.
 @MainActor
 final class NotificationService: NSObject, UNUserNotificationCenterDelegate, ToolConfirmation {
     static let shared = NotificationService()
@@ -31,14 +30,12 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
         case openPrivacy = "OPEN_PRIVACY"
     }
 
-    /// Pending Allow/Deny questions keyed by notification id; resolved from the delegate callback.
     private var pendingConfirmations: [String: CheckedContinuation<Bool, Never>] = [:]
     private static let confirmationTimeout: TimeInterval = 90
 
     private let logger = Logger(subsystem: "ru.lysnet.macolama", category: "notifications")
     private weak var container: AppContainer?
 
-    /// The last answer `authorize()` got: true when notifications are refused and every message goes nowhere.
     private(set) var isDenied = false
 
     func configure(container: AppContainer) {
@@ -81,8 +78,6 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
         ])
     }
 
-    /// Asked right before each notification, never at launch: macOS shows its question only while there is no answer,
-    /// so the user meets it with the first message the app has, and after that the stored answer comes back at once.
     func authorize() async -> Bool {
         do {
             isDenied = !(try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]))
@@ -93,7 +88,6 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
         return !isDenied
     }
 
-    /// For a notification the user must see: after a refusal the Notifications pane opens, every time until allowed.
     func ensureAllowed() async -> Bool {
         guard await authorize() else {
             openSettings()
@@ -102,8 +96,6 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
         return true
     }
 
-    /// A refused permission, asked again: Allow (or a tap) opens its privacy pane. One notification per pane, replaced
-    /// on each call. With notifications refused too, the pane opens at once: nothing else of the system could ask.
     func askAccess(to pane: PrivacySettings.Pane) {
         guard let url = pane.url else { return }
         Task { @MainActor in
@@ -118,7 +110,6 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
         }
     }
 
-    /// Opens Notifications for this app in System Settings; the switch there is the only way back from a refusal.
     func openSettings() {
         let id = Bundle.main.bundleIdentifier ?? ""
         guard let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(id)") else { return }
@@ -139,14 +130,12 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
         }
     }
 
-    /// Tool confirmation: a notification with Allow/Deny; no answer within the timeout counts as Deny.
     func confirm(title: String, detail: String) async -> Bool {
         // Without notifications the question would never show and silently time out as Deny.
         guard await ensureAllowed() else { return false }
         let id = "confirm-\(UUID().uuidString)"
         return await withCheckedContinuation { continuation in
-            // The body may run off the main thread (a tool calls in from the conversation's task), so it hops explicitly:
-            // `MainActor.assumeIsolated` here trapped. The question is sent only from inside, so no answer can come first.
+            // Hop to the main actor explicitly; callers may be off-main.
             Task { @MainActor in askConfirmation(id: id, title: title, detail: detail, continuation: continuation) }
         }
     }
@@ -189,7 +178,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
             case .openChats:
                 WindowManager.shared.open(.chats)
             case nil:
-                // Default tap: confirmation → deny; app update → release page; model update → download window; otherwise → chats.
+                // Default tap: confirm → deny, app → release, model → library, else chats.
                 if pendingConfirmations[requestID] != nil {
                     resolveConfirmation(id: requestID, allowed: false)
                 } else if let s = info["url"] as? String, let url = URL(string: s) {
@@ -206,15 +195,12 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
 
 // UpdateChecker
 
-/// Daily checks of the app (GitHub Releases) and the models (hub revision); `force` skips the daily guard and always reports.
-/// Observable so the model list reacts to `pendingModelUpdates` and `checkingModels`.
 @MainActor
 @Observable
 final class UpdateChecker {
     static let latestReleaseURL = URL(string: "https://github.com/andrey-lysikov/Mac-Olama/releases/latest")!
     private static let apiURL = URL(string: "https://api.github.com/repos/andrey-lysikov/Mac-Olama/releases/latest")!
     private static let startupDelay: TimeInterval = 600
-    /// Once a day, as the app promises; the stored date of the last check keeps a restart from checking again.
     private static let pollInterval: TimeInterval = 24 * 3600
 
     private struct Release: Decodable {
@@ -227,9 +213,7 @@ final class UpdateChecker {
     private var timer: Timer?
     private var appTask: Task<Void, Never>?
     private var modelsTask: Task<Void, Never>?
-    /// repoID → new revision found by the last check; drives the "Update" menu entries.
     private(set) var pendingModelUpdates: [String: String] = [:]
-    /// Models whose single check (the update pictogram) is in flight; the pictogram spins for them.
     private(set) var checkingModels: Set<String> = []
 
     init(container: AppContainer) {
@@ -240,7 +224,6 @@ final class UpdateChecker {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
     }
 
-    /// The daily check is always on; there is no setting to disable it.
     func start() {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
@@ -252,7 +235,6 @@ final class UpdateChecker {
         }
     }
 
-    /// A check of the app is in flight; the About section's button waits for it.
     var isCheckingApp: Bool { appTask != nil }
 
     func stop() {
@@ -288,7 +270,7 @@ final class UpdateChecker {
     }
 
     private func finishApp(release: Release?, installed: String, force: Bool) {
-        // Only an answer counts as today's check: offline at launch, the next 6-hour tick tries again.
+        // Only an answer counts; offline retries in 6 hours.
         guard let release else {
             if force {
                 NotificationService.shared.send(
@@ -351,9 +333,6 @@ final class UpdateChecker {
         }
     }
 
-    /// Update pictogram of one downloaded model: compare its saved revision with the hub and download the new one if there is any.
-    /// What the last check said. Notifications can be switched off, and a pictogram that merely stops spinning tells
-    /// the user nothing, so the row shows this too.
     enum ModelCheckResult: Equatable { case upToDate, unreachable, noRevision }
 
     private(set) var modelCheckResults: [String: ModelCheckResult] = [:]
@@ -377,7 +356,7 @@ final class UpdateChecker {
                 return
             }
             guard Self.isKnown(manifest.revision) else {
-                // Downloaded before revisions were recorded: there is nothing to compare, so no claim is made.
+                // No recorded revision, no claim.
                 self.modelCheckResults[model.repoID] = .noRevision
                 return
             }
@@ -390,7 +369,6 @@ final class UpdateChecker {
         }
     }
 
-    /// Hugging Face: the commit sha; ModelScope: the time of the last update (its model API has no commit id).
     private static func latestRevision(of reference: ModelReference, client: HubClient, modelScope: ModelScopeClient) async -> String? {
         switch reference {
         case .huggingFace(let repo): (try? await client.info(repoID: repo))?.sha
@@ -399,17 +377,14 @@ final class UpdateChecker {
         }
     }
 
-    /// A branch name instead of a revision means the hub did not report one at download time: nothing to compare.
     private static func isKnown(_ revision: String) -> Bool { !revision.isEmpty && revision != "main" && revision != "master" }
 
-    /// Re-downloads the repo; the downloader replaces the model folder atomically on completion.
     func updateModel(repoID: String) {
         pendingModelUpdates[repoID] = nil
         modelCheckResults[repoID] = nil
         container.download(repoID: repoID)
     }
 
-    /// Versions are two-part (`1.4`); a third component is still understood so an accidental `1.4.1` tag compares sanely.
     nonisolated static func versionNumber(_ value: String) -> Int {
         let scale = [1_000_000, 1_000, 1]
         let components = value.split(whereSeparator: { !$0.isNumber }).prefix(scale.count)

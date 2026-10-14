@@ -4,28 +4,21 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
-// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
-
 // QuickPanelView
 
 struct QuickPanelView: View {
     @Bindable var viewModel: QuickPanelViewModel
     var onClose: () -> Void
-    /// Reports the height the content wants, so the controller can grow the panel upwards as the answer streams in.
     var onHeightChange: (CGFloat) -> Void = { _ in }
-    /// Makes the panel key, so a file dropped from Finder can hand the keyboard to the field.
     var onMakeKey: () -> Void = {}
-    /// The file dialog is run by the controller: it has to sit above the panel and keep the panel from auto-closing.
     var onChooseFiles: () -> Void = {}
     @Environment(AppContainer.self) private var container
     @State private var transcriptHeight: CGFloat = 0
-    /// Field plus attachment chips: whatever of the height limit is left goes to the transcript.
     @State private var controlsHeight: CGFloat = 52
     @FocusState private var inputFocused: Bool
 
     var body: some View {
-        // Like a chat: the transcript above, the newest exchange at its bottom, right over the field.
+        // Transcript above, newest exchange right over the field.
         VStack(spacing: 0) {
             if hasTranscript {
                 transcript
@@ -46,19 +39,18 @@ struct QuickPanelView: View {
                 controlsHeight = $0
             }
         }
-        // Measured at its own height, not the window's: otherwise a wrapping field squeezes into the current panel
-        // instead of growing it.
+        // Measure at the content's own height so the panel grows.
         .fixedSize(horizontal: false, vertical: true)
         .onGeometryChange(for: CGFloat.self) {
             $0.size.height
         } action: {
             onHeightChange($0)
         }
-        // The window decides the width. If it is ever shorter than the content, the top of the transcript is cut, never the field.
+        // Width comes from the window; if short, the transcript is cut, never the field.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        // Belt and braces: the hosting view already drops the title-bar safe area (`safeAreaRegions`).
+        // Also dropped by the hosting view's `safeAreaRegions`.
         .ignoresSafeArea()
-        // Any empty spot of the panel moves it; the field, buttons and the scrolling transcript keep their own clicks.
+        // Empty areas drag the panel.
         .background { Color.clear.contentShape(Rectangle()).gesture(WindowDragGesture()) }
         // Nothing draws past the rounded panel, whatever a reply contains.
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -92,11 +84,10 @@ struct QuickPanelView: View {
 
     // Input
 
-    // The model is the one picked in the status menu; the row holds only the field and its pictograms.
+    // Model comes from the status menu.
     private var inputRow: some View {
         HStack(alignment: .center, spacing: 10) {
-            // It starts a new chat and leaves the old one in the list, so it is drawn as the chats window's
-            // new-chat button, not as an eraser.
+            // New chat button, styled like the chats window's.
             Button(action: viewModel.clear) {
                 Image(systemName: "square.and.pencil")
             }
@@ -143,8 +134,6 @@ struct QuickPanelView: View {
         .padding(.vertical, 6)
     }
 
-    /// What is left of the context window, among the pictograms: smaller than they are, so the row keeps its height,
-    /// orange once nine tenths are taken.
     @ViewBuilder
     private var contextUsage: some View {
         if let limit = viewModel.contextLimit, limit > 0 {
@@ -172,7 +161,6 @@ struct QuickPanelView: View {
 
     // Transcript
 
-    /// Question-and-answer groups in chat order; the answer being streamed belongs to the last one.
     private var exchanges: [[Message]] {
         var groups: [[Message]] = []
         for message in viewModel.messages where message.role != .system && message.role != .tool {
@@ -182,11 +170,10 @@ struct QuickPanelView: View {
     }
 
     private var transcript: some View {
-        // From all the messages: the maps ride on the tool results, which the feed itself does not show.
+        // All messages: maps ride on hidden tool results.
         let maps = TranscriptMaps.byAnswer(viewModel.messages)
         return ScrollView {
-            // Not lazy: in a viewport that starts one point tall a lazy stack renders only its bottom rows and guesses
-            // the rest, so the question went missing and the measured height was wrong.
+            // Not lazy: a lazy stack in a tiny viewport mismeasured rows.
             VStack(alignment: .leading, spacing: 14) {
                 ForEach(Array(exchanges.enumerated()), id: \.offset) { index, exchange in
                     if index > 0 { Divider() }
@@ -214,7 +201,7 @@ struct QuickPanelView: View {
                     }
                 }
             }
-            // The extra top inset keeps the first lines clear of the rounded glass edge when scrolled to the start.
+            // Top inset clears the rounded glass edge.
             .padding(.horizontal, 16).padding(.top, 20).padding(.bottom, 12)
             .onGeometryChange(for: CGFloat.self) {
                 $0.size.height
@@ -222,15 +209,12 @@ struct QuickPanelView: View {
                 transcriptHeight = $0
             }
         }
-        // Growing text, a tool round, the finished reply and the queue taking height are followed there, and only
-        // while the user has not scrolled up to read. Applied to the scroll view itself, inside the frame below.
+        // Follow the end while the user has not scrolled up.
         .followsTranscriptEnd(jumpOn: viewModel.transcriptToken)
-        // A scroll view has no height of its own: it follows the text until the panel reaches its height limit,
-        // then the text scrolls inside it.
+        // Grows with the text up to the panel's limit, then scrolls.
         .frame(height: min(max(transcriptHeight, 1), max(viewModel.heightLimit - controlsHeight - 1, 64)))
     }
 
-    /// The stored copy of the reply being written: the streamed text below stands for it, otherwise it shows as a stray "…".
     private func isStreamedPlaceholder(_ message: Message) -> Bool {
         viewModel.isGenerating && message.id == viewModel.messages.last?.id && message.role == .assistant && message.toolCalls.isEmpty
     }
@@ -239,7 +223,6 @@ struct QuickPanelView: View {
 
 // FieldCaret
 
-/// A programmatic focus selects the whole text of a field; typing would replace it. The caret goes to the end instead.
 @MainActor
 enum FieldCaret {
     static func moveToEnd() {
@@ -249,7 +232,6 @@ enum FieldCaret {
 
 // EngineActivityControl
 
-/// Engine activity inside the input row: nothing when idle, a progress ring while loading, a Stop pictogram while generating.
 struct EngineActivityControl: View {
     let state: EngineState
     var onStop: () -> Void
@@ -269,9 +251,7 @@ struct EngineActivityControl: View {
             .frame(width: 16, height: 16)
             .help(String(localized: "Loading model… \(progress.formatted(.percent.precision(.fractionLength(0))))"))
         case .generating(_, _, let tps):
-            // The spinner says the model is working, the button next to it stops the answer.
-            // Neither a spinner nor a counter here: the transcript above shows the reply being written, with its own
-            // progress line. This row keeps the one thing it is for — stopping the answer.
+            // This row only stops the answer; progress is in the transcript.
             HStack(spacing: 8) {
                 Button(action: onStop) {
                     Image(systemName: "stop.circle.fill")
@@ -291,7 +271,6 @@ struct EngineActivityControl: View {
 
 // AttachmentStrip
 
-/// Thumbnails and document chips of a stored message; shared by the panel and the chats window.
 struct AttachmentStrip: View {
     let attachments: [Attachment]
     @Environment(AppContainer.self) private var container
@@ -313,7 +292,6 @@ struct AttachmentStrip: View {
 
 // NoAnswerLine
 
-/// A finished reply with nothing to show (the model only thought, or derailed): said plainly instead of a blank space.
 struct NoAnswerLine: View {
     var body: some View {
         Label(String(localized: "The model gave no answer. Ask again or rephrase the question."), systemImage: "exclamationmark.bubble")
@@ -323,38 +301,32 @@ struct NoAnswerLine: View {
 
 // MessageView
 
-/// One message: plain text for the user, Markdown (code, tables) for the assistant.
 struct MessageView: View {
-    /// The same reading size as the chats window, the system's text size included.
     @ScaledMetric(relativeTo: .body) private var scaledText: CGFloat = ChatMessageView.textSize
     let message: Message
-    /// What the tools and the thinking did on the way to this answer, one line above it.
     var summary: String?
-    /// Routes and places the tools found on the way; lower than in the window, the panel grows with its text.
     var maps: [TranscriptMap] = []
     @Environment(AppContainer.self) private var container
 
-    /// Reasoning channels and tool syntax are the model talking to itself; only the answer is shown and copied.
     private var answer: String { AnswerText.visible(message.text) }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            // Half again the size they were: in the panel the mark says at a glance whose turn is being read.
+            // Larger mark for whose turn it is.
             Image(systemName: message.role == .user ? "person.fill" : "sparkles")
                 .font(.system(size: 20))
                 .foregroundStyle(message.role == .user ? .secondary : Color.accentColor)
-                // The box is one line tall, so the mark sits on the first line of the text instead of below it.
+                // One line tall so the mark aligns with the first line.
                 .frame(width: 30, height: scaledText * 1.3)
             VStack(alignment: .leading, spacing: 6) {
                 AttachmentStrip(attachments: message.attachments)
                 if message.role == .user {
-                    // No inset on either side: the question and the answer start at one line, right after the mark.
+                    // Text starts right after the mark.
                     Text(message.text).textSelection(.enabled).font(.system(size: scaledText))
                 } else {
                     if let summary { ProgressSummaryLine(text: summary) }
                     ReasoningBlock(message: message, fontSize: scaledText)
-                    // A reply that asked for tools has no answer of its own: its text is a preamble or echoed results.
-                    // Same reading size as the chats window.
+                    // Tool-asking replies have no answer of their own.
                     if message.toolCalls.isEmpty {
                         AnswerBody(message: message, answer: answer, fontSize: scaledText, noAnswerPadding: 10)
                         ForEach(Array(maps.enumerated()), id: \.offset) { _, map in TranscriptMapView(map: map, height: 170) }
@@ -367,7 +339,7 @@ struct MessageView: View {
                     PaceText(pace: pace)
                 }
             }
-            // The column takes the width the panel has, so wide code or formulas scroll instead of widening the row.
+            // Fill the width so wide content scrolls.
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
             Spacer(minLength: 0)

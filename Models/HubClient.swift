@@ -5,20 +5,16 @@ import Foundation
 
 // HubModels
 
-/// Hugging Face search result (subset of `/api/models` fields).
 public struct HubModelSummary: Codable, Sendable, Identifiable, Hashable {
     public var id: String  // "mlx-community/Qwen3-8B-4bit"
     public var author: String?
     public var downloads: Int?
-    public var likes: Int?
     public var tags: [String]?
-    public var pipelineTag: String?
     public var lastModified: Date?
     public var gated: GatedValue?
 
     enum CodingKeys: String, CodingKey {
-        case id, author, downloads, likes, tags, gated
-        case pipelineTag = "pipeline_tag"
+        case id, author, downloads, tags, gated
         case lastModified
     }
 
@@ -27,7 +23,6 @@ public struct HubModelSummary: Codable, Sendable, Identifiable, Hashable {
     public var displayName: String { id.split(separator: "/").last.map(String.init) ?? id }
 }
 
-/// HF returns `gated` as false | "auto" | "manual".
 public enum GatedValue: EitherCodable, Sendable, Hashable {
     case bool(Bool), string(String)
     public init(first: Bool) { self = .bool(first) }
@@ -39,7 +34,6 @@ public enum GatedValue: EitherCodable, Sendable, Hashable {
     public var isGated: Bool { if case .bool(let b) = self { b } else { true } }
 }
 
-/// Repo details with file list (`/api/models/{id}?blobs=true`).
 public struct HubModelInfo: Codable, Sendable, Hashable {
     public struct Sibling: Codable, Sendable, Hashable {
         public var rfilename: String
@@ -78,27 +72,23 @@ public struct HubModelInfo: Codable, Sendable, Hashable {
     public var totalBytes: Int64 { siblings.reduce(0) { $0 + $1.byteSize } }
 }
 
-/// Model facts read from `config.json`: kind, context, quantization. Nothing here is keyed on model names.
 public struct HubModelClassification: Sendable, Equatable {
     public var kind: ModelKind
     public var architectures: [String]
     public var modelType: String?
     public var contextLength: Int?
     public var quantization: String?
-    /// What a token costs in the attention cache, from the same config.
     public var kvCache: KVCacheProfile?
 
     public static func classify(configJSON: Data) -> HubModelClassification {
         guard let config = ModelConfig(data: configJSON) else {
             return HubModelClassification(kind: .llm, architectures: [])
         }
-        // The root, not the `text_config` fallback: a multimodal `text_config` may carry its own `model_type`.
+        // Root `model_type`; `text_config` may carry its own.
         let obj = config.root
         let modelType = obj["model_type"] as? String
         let architectures = obj["architectures"] as? [String] ?? []
-        // A vision model declares its image tower in the config (`vision_config`, `vision_tower`, `mm_vision_tower`, …).
-        // That is a fact about the checkpoint; guessing from architecture class names ("…VL…") is not. Numbers such as
-        // `vision_start_token_id` only name prompt markers: a text-only conversion keeps them without any tower.
+        // Vision model: the config declares an image tower; class names are not trusted.
         let hasVision = obj.contains { key, value in key.lowercased().contains("vision") && !(value is NSNumber) }
         let kind: ModelKind = hasVision ? .vlm : .llm
         let context = config.int("max_position_embeddings")
@@ -127,10 +117,7 @@ public enum HubError: Error, Equatable {
 
 // HTTPJSON
 
-/// Shared HTTP plumbing of the JSON APIs (the hubs, the remote engines): one request builder, one status check.
 enum HTTPJSON {
-    /// A GET request, or a JSON POST when `jsonBody` is given. `accept`/`userAgent` are nil for endpoints whose
-    /// requests must stay byte-identical to what they were (remote inference servers, port probes).
     static func request(
         _ url: URL, token: String? = nil, jsonBody: Data? = nil, timeout: TimeInterval? = nil,
         accept: String? = "application/json", userAgent: String? = HTTP.appUserAgent
@@ -148,8 +135,6 @@ enum HTTPJSON {
         return r
     }
 
-    /// Maps a status code to `HubError`. `gatedOnAuth` is off for hubs without tokens, where 401/403 stays a plain
-    /// server error instead of "needs a token".
     static func validate(status: Int, url: URL, allowing: Set<Int> = [200], gatedOnAuth: Bool = true) throws {
         if allowing.contains(status) { return }
         if gatedOnAuth, status == 401 || status == 403 { throw HubError.gatedRepositoryRequiresToken(url.path) }
@@ -160,7 +145,6 @@ enum HTTPJSON {
 
 // HubClient
 
-/// Hugging Face Hub client: search, metadata, config.json. Weights are fetched by `ModelDownloader`.
 public struct HubClient: Sendable {
     public let baseURL: URL
     public let token: String?
@@ -185,7 +169,6 @@ public struct HubClient: Sendable {
 
     // URLs
 
-    /// `api/models`, most downloaded first. `leading`/`trailing` keep each caller's exact query order.
     private func modelsURL(_ leading: [URLQueryItem], trailing: [URLQueryItem] = [], limit: Int) -> URL {
         var c = URLComponents(url: baseURL.appendingPathComponent("api/models"), resolvingAgainstBaseURL: false)!
         c.queryItems =
@@ -197,15 +180,12 @@ public struct HubClient: Sendable {
         return c.url!
     }
 
-    /// Only MLX builds: the app runs nothing else.
     public func searchURL(query: String, author: String? = nil, limit: Int = 30) -> URL {
         var trailing = [URLQueryItem(name: "filter", value: "mlx")]
         if let author { trailing.append(URLQueryItem(name: "author", value: author)) }
         return modelsURL([URLQueryItem(name: "search", value: query)], trailing: trailing, limit: limit)
     }
 
-    /// MTP drafters published for a base model: the hub is asked for repositories tagged with that base model, built
-    /// for MLX and marked as prediction heads. Nothing is derived from the model's name.
     public func drafterURL(baseModel: String, limit: Int = 10) -> URL {
         modelsURL(
             [
@@ -225,13 +205,10 @@ public struct HubClient: Sendable {
         baseURL.appendingPathComponent("\(repoID)/resolve/\(revision)/\(path)")
     }
 
-    /// Accepts `org/repo`, `https://huggingface.co/org/repo` or `.../org/repo/tree/main` and returns `org/repo`.
     public static func parseRepoID(_ input: String) -> String? {
         parseRepoID(input, host: "huggingface.co", pathPrefix: nil)
     }
 
-    /// The same for any hub: `org/repo`, or a link on `host` whose path may start with `pathPrefix`
-    /// (ModelScope keeps repositories under `/models/org/repo`).
     static func parseRepoID(_ input: String, host: String, pathPrefix: String?) -> String? {
         var s = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.isEmpty { return nil }
@@ -276,8 +253,6 @@ public struct HubClient: Sendable {
         try Self.decoder.decode(HubModelInfo.self, from: try await get(infoURL(repoID: repoID)))
     }
 
-    /// Any file of a repository. `head` asks for its first bytes only, enough to read a safetensors header without
-    /// pulling the weights behind it.
     public func file(repoID: String, path: String, revision: String = "main", head: Int? = nil) async throws -> Data {
         let url = fileURL(repoID: repoID, path: path, revision: revision)
         guard let head else { return try await get(url) }
@@ -298,7 +273,6 @@ public struct HubClient: Sendable {
         HubModelClassification.classify(configJSON: try await config(repoID: repoID))
     }
 
-    /// The first paragraph of prose in the repository's model card, nil when the card has none.
     public func cardSummary(repoID: String) async throws -> String? {
         ModelCardSummary.summary(readme: String(decoding: try await get(fileURL(repoID: repoID, path: "README.md")), as: UTF8.self))
     }
@@ -306,9 +280,6 @@ public struct HubClient: Sendable {
 
 // ModelCardSummary
 
-/// A short description of a model, read from its README: the first plain paragraph long enough to say something.
-/// Front matter, headings, lists, tables, code, HTML and badges are skipped; MLX conversion boilerplate too, since
-/// it describes the copy, not the model.
 public enum ModelCardSummary {
     static let minimumLength = 80
     static let maximumLength = 260
@@ -340,8 +311,6 @@ public enum ModelCardSummary {
         return nil
     }
 
-    /// Headings, lists, tables, quotes, HTML, images and link rows; a bold label ("**Authors**: …") too, while a sentence
-    /// that merely starts in bold stays prose.
     private static func isNotProse(_ line: String) -> Bool {
         if line.hasPrefix("**") { return line.range(of: #"^\*\*[^*]+(\*\*\s*:|:\*\*)"#, options: .regularExpression) != nil }
         if ["#", "<", "|", "!", "-", "*", "+", ">", "["].contains(where: line.hasPrefix) { return true }

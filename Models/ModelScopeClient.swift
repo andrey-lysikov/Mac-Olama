@@ -5,8 +5,6 @@ import Foundation
 
 // ModelReference
 
-/// A downloadable model on one of the hubs. Hugging Face and ModelScope share repository names (`org/repo`), so a
-/// ModelScope repository is written `modelscope:org/repo` wherever a single string has to name it.
 public enum ModelReference: Sendable, Hashable {
     case huggingFace(repoID: String)
     case modelScope(repoID: String)
@@ -18,7 +16,6 @@ public enum ModelReference: Sendable, Hashable {
         }
     }
 
-    /// Stored in `ModelManifest.repoID` and used as the download's key: `org/repo` or `modelscope:org/repo`.
     public var repoID: String {
         switch self {
         case .huggingFace(let id): id
@@ -26,7 +23,6 @@ public enum ModelReference: Sendable, Hashable {
         }
     }
 
-    /// The repository on its own hub, without the prefix.
     public var hubRepoID: String {
         switch self {
         case .huggingFace(let id), .modelScope(let id): id
@@ -35,7 +31,6 @@ public enum ModelReference: Sendable, Hashable {
 
     public var directoryName: String { ModelDescriptor.directoryName(forRepo: repoID) }
 
-    /// The repository's page on its hub's website.
     public var pageURL: URL? {
         switch self {
         case .huggingFace(let id): URL(string: "https://huggingface.co/\(id)")
@@ -43,7 +38,6 @@ public enum ModelReference: Sendable, Hashable {
         }
     }
 
-    /// The inverse of `directoryName` (`org--repo`, `modelscope--org--repo`): lets a broken folder be downloaded again.
     public init?(directoryName: String) {
         var parts = directoryName.components(separatedBy: "--")
         if parts.first == "remote" { return nil }  // a remote model is reconnected, not downloaded
@@ -54,7 +48,6 @@ public enum ModelReference: Sendable, Hashable {
         self = modelScope ? .modelScope(repoID: id) : .huggingFace(repoID: id)
     }
 
-    /// `org/repo` or a huggingface.co link → Hugging Face; `modelscope:org/repo` or a modelscope.cn link → ModelScope.
     public static func parse(_ input: String) -> ModelReference? {
         let s = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.hasPrefix(ModelScopeClient.prefix) {
@@ -64,7 +57,6 @@ public enum ModelReference: Sendable, Hashable {
         return HubClient.parseRepoID(s).map { .huggingFace(repoID: $0) }
     }
 
-    /// Reconstructs a reference from a manifest (`source` + `repoID`); nil for a remote model, which has nothing to download.
     public init?(manifest: ModelManifest) {
         switch manifest.source ?? .huggingFace {
         case .huggingFace: self = .huggingFace(repoID: manifest.repoID)
@@ -78,7 +70,6 @@ public enum ModelReference: Sendable, Hashable {
 
 // RepoFile
 
-/// One file of a hub repository, as the downloader needs it: where it goes, how big it is, what it hashes to.
 public struct RepoFile: Sendable, Hashable {
     public var path: String
     public var size: Int64
@@ -93,7 +84,6 @@ public struct RepoFile: Sendable, Hashable {
 
 // ModelScope
 
-/// A search result or repository summary from ModelScope (`/api/v1/dolphin/models`, `/api/v1/models/{id}`).
 public struct ModelScopeModel: Sendable, Hashable, Identifiable {
     public var id: String  // "lmstudio-community/gemma-4-12B-it-MLX-4bit"
     public var tags: [String]
@@ -120,8 +110,6 @@ public struct ModelScopeModel: Sendable, Hashable, Identifiable {
     }
 }
 
-/// ModelScope (modelscope.cn, Alibaba): the same MLX builds as Hugging Face under the same names, a JSON API of its
-/// own, SHA-256 for every file and Range downloads. No token: gated repositories are not supported here.
 public struct ModelScopeClient: Sendable {
     public static let prefix = "modelscope:"
     public let baseURL: URL
@@ -130,7 +118,6 @@ public struct ModelScopeClient: Sendable {
         self.baseURL = baseURL
     }
 
-    /// Accepts `org/repo` or `https://modelscope.cn/models/org/repo[/files…]` and returns `org/repo`.
     public static func parseRepoID(_ input: String) -> String? {
         let s = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: s), let host = url.host, host.hasSuffix("modelscope.cn") else { return HubClient.parseRepoID(s) }
@@ -141,7 +128,6 @@ public struct ModelScopeClient: Sendable {
         baseURL.appendingPathComponent("models/\(repoID)/resolve/master/\(path)")
     }
 
-    /// Only MLX builds: the app runs nothing else.
     public func search(query: String, limit: Int = 40) async throws -> [ModelScopeModel] {
         let body: [String: Any] = [
             "PageSize": limit, "PageNumber": 1, "SortBy": "Default", "Target": "", "SingleCriterion": [], "Criterion": [],
@@ -189,7 +175,6 @@ public struct ModelScopeClient: Sendable {
         }
     }
 
-    /// Every answer is `{"Code": 200, "Data": {…}}`.
     private static func dataObject(_ data: Data) -> [String: Any]? {
         (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["Data"] as? [String: Any]
     }
@@ -197,8 +182,7 @@ public struct ModelScopeClient: Sendable {
     // Requests
 
     private static func request(_ url: URL) -> URLRequest {
-        // Shorter than the 60 s default, as everywhere else here: the hub is reachable from some networks only, and a
-        // search that cannot get through has to say so rather than spin for a minute.
+        // Short timeout: the hub is unreachable from some networks.
         HTTPJSON.request(url, timeout: 10)
     }
 

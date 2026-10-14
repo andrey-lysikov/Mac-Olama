@@ -4,13 +4,8 @@
 import AppKit
 import SwiftUI
 
-// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
-// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
-
 // StatusItemController
 
-/// Menu bar icon: left click opens the panel, right click the menu. Follows `AppContainer.engineState` through the tooltip
-/// and shimmers (fades to half and back) while an answer is waiting that neither the panel nor the chats window showed.
 @MainActor
 final class StatusItemController: NSObject, NSMenuDelegate {
     private let container: AppContainer
@@ -20,8 +15,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var blinkTimer: Timer?
     private var blinkStart = ContinuousClock.now
     private var seenAnswers = 0
-    /// The same mark the answers carry in the transcript, so the status item reads as "the model" at a glance.
-    /// A template image: the menu bar tints it for light and dark bars and for the highlight.
     private static let icon: NSImage? = {
         let configuration = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
         let image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: String(localized: "Mac-Olama"))?
@@ -46,7 +39,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         observeState()
     }
 
-    // No deinit: the controller lives as long as the app; the observation task only holds `self` weakly.
+    // Lives as long as the app; the task holds `self` weakly.
 
     // Clicks
 
@@ -56,12 +49,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         if event.type == .rightMouseUp || event.modifierFlags.contains(.control) { showMenu() } else { activate() }
     }
 
-    /// A left click shows one thing at a time: the chats window when it is already open, the panel otherwise.
-    /// The menu items stay explicit — they open whichever of the two the user picked.
     private func activate() {
         panel.statusItemWindow = item.button?.window  // in case the button had no window yet at launch
         guard WindowManager.shared.isOpen(.chats) else {
-            panel.show()  // an open panel stays open and takes the keyboard; Esc or a click elsewhere closes it
+            panel.show()  // stays open until Esc or a click elsewhere
             return
         }
         panel.hide()
@@ -120,8 +111,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     private var answerIsVisible: Bool { panel.isVisible || WindowManager.shared.isOnScreen(.chats) }
 
-    /// Opening the panel or the chats window some other way (shortcut, Dock) also counts as seeing the answer.
-    /// A soft shimmer, not a blink: the icon fades smoothly down to half and back, once every 1.6 s.
     private func blink() {
         guard let button = item.button, !answerIsVisible else { return stopBlinking() }
         let phase = blinkStart.duration(to: .now) / .milliseconds(1600)
@@ -134,7 +123,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         item.button?.alphaValue = 1
     }
 
-    /// The icon stays still; state is conveyed by the tooltip alone (the only motion is the unseen-answer blink).
     private func render(_ state: EngineState) {
         guard let button = item.button else { return }
         button.image = Self.icon
@@ -159,8 +147,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
 // StatusMenuBuilder
 
-/// Right-click menu, rebuilt on every open so it always reflects current state. All settings live here (no settings window).
-/// The API server is always on (localhost, no token) and therefore has no menu entry.
 @MainActor
 struct StatusMenuBuilder {
     let container: AppContainer
@@ -185,7 +171,7 @@ struct StatusMenuBuilder {
                 #selector(MenuActions.toggleLaunchAtLogin), actions))
         menu.addItem(
             item(String(localized: "Check for Updates"), "arrow.triangle.2.circlepath", #selector(MenuActions.checkUpdates), actions))
-        // Everything with a value to pick or a list to edit lives in the window's settings section, not here.
+        // Values and lists live in the settings section.
         menu.addItem(item(String(localized: "Settings"), "gearshape", #selector(MenuActions.openSettings), actions))
         menu.addItem(.separator())
         menu.addItem(item(String(localized: "About"), "info.circle", #selector(MenuActions.openAbout), actions))
@@ -205,7 +191,7 @@ struct StatusMenuBuilder {
             sub.addItem(header(group.source.displayName))
             for model in group.models {
                 let fit = container.fit(for: model)
-                // An unknown size (a model served over the API) is left out, and so is the fit estimate built on it.
+                // Size and fit omitted when unknown (API models).
                 var title = model.name
                 if model.sizeBytes > 0 {
                     title += "  —  \(model.sizeBytes.fileSizeText)  " + String(repeating: "★", count: fit.stars)
@@ -214,7 +200,7 @@ struct StatusMenuBuilder {
                 let mi = NSMenuItem(title: title, action: #selector(MenuActions.selectModel(_:)), keyEquivalent: "")
                 mi.target = actions
                 mi.representedObject = model.id
-                // The model's icon (author, with the community that built it in the corner); the checkmark marks the model in use.
+                // Model icon; the checkmark marks the active model.
                 Self.setModelIcon(model, on: mi)
                 mi.toolTip = model.kind == .vlm ? String(localized: "Understands images and text") : String(localized: "Text only")
                 mi.state = model.id == container.activeModel?.id ? .on : .off
@@ -222,7 +208,7 @@ struct StatusMenuBuilder {
                     mi.isEnabled = false
                     mi.toolTip = String(localized: "The server does not answer")
                 }
-                if fit.fit == .no, mi.isEnabled {  // an explicit colour would override the disabled grey
+                if fit.fit == .no, mi.isEnabled {  // explicit colour would override disabled grey
                     mi.attributedTitle = NSAttributedString(string: mi.title, attributes: [.foregroundColor: NSColor.systemRed])
                 }
                 sub.addItem(mi)
@@ -249,12 +235,11 @@ struct StatusMenuBuilder {
         return mi
     }
 
-    /// SF Symbol shown before a menu item; template, so it follows the menu appearance. Unknown names fall back to a dot.
     private static func setSymbol(_ name: String, on item: NSMenuItem) {
         let base =
             NSImage(systemSymbolName: name, accessibilityDescription: item.title)
             ?? NSImage(systemSymbolName: "circle.fill", accessibilityDescription: item.title)
-        // An explicit configuration gives every pictogram the same optical size next to the menu font.
+        // Same optical size for all menu pictograms.
         let image = base?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .regular))
         image?.isTemplate = true
         item.image = image
@@ -271,7 +256,6 @@ struct StatusMenuBuilder {
         }
     }
 
-    /// Registry header: disabled, small caps-like secondary text.
     private func header(_ title: String) -> NSMenuItem {
         let mi = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         mi.isEnabled = false
@@ -294,7 +278,6 @@ struct StatusMenuBuilder {
 
 // MenuActions
 
-/// NSMenuItem targets (selectors require NSObject).
 @MainActor
 final class MenuActions: NSObject {
     private let container: AppContainer

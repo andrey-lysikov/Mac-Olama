@@ -6,10 +6,6 @@ import Markdown
 import UniformTypeIdentifiers
 import WebKit
 
-// A whole chat saved as a file: Markdown as it was written, or a page and a PDF that look like the transcript.
-// Only what the transcript shows goes out: questions with their attachments and the answers, without tool calls,
-// tool results and the model's private reasoning.
-
 @MainActor
 enum ChatExport {
     enum Format: Int, CaseIterable {
@@ -32,7 +28,6 @@ enum ChatExport {
         }
     }
 
-    /// One question or answer as the file shows it.
     struct Entry {
         var isUser: Bool
         var author: String
@@ -42,7 +37,6 @@ enum ChatExport {
         var documents: [String] = []
     }
 
-    /// The standard save dialog with the format under the name; the last format chosen is offered again.
     static func run(chat: Chat, container: AppContainer, window: NSWindow?) {
         let panel = NSSavePanel()
         let picker = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -70,7 +64,6 @@ enum ChatExport {
 
     private static let formatKey = "chatExportFormat"
 
-    /// The popup changes the extension the dialog saves with.
     @MainActor
     private final class FormatChooser: NSObject {
         let panel: NSSavePanel
@@ -80,7 +73,6 @@ enum ChatExport {
         }
     }
 
-    /// The chat's title as a file name: one line, without what a path may not hold.
     static func fileName(for chat: Chat) -> String {
         let title = chat.title.components(separatedBy: .newlines).joined(separator: " ")
             .components(separatedBy: CharacterSet(charactersIn: "/:\\")).joined(separator: " ")
@@ -105,8 +97,6 @@ enum ChatExport {
         }
     }
 
-    /// Questions and answers in order. A reply written over several tool rounds is several stored messages; the
-    /// rounds that only called tools have no text and are left out, as the transcript leaves them out.
     static func entries(of messages: [Message], container: AppContainer) -> [Entry] {
         messages.compactMap { message in
             switch message.role {
@@ -150,8 +140,6 @@ enum ChatExport {
 
     // HTML
 
-    /// One self-contained page: the styles and the attached pictures are inside it. Scripts are switched off by the
-    /// page's own policy, since an answer may carry HTML of its own.
     static func html(chat: Chat, entries: [Entry]) -> String {
         let title = escape(fileName(for: chat))
         var body = "<h1>\(title)</h1>\n<p class=\"date\">\(escape(stamp(chat.updatedAt)))</p>\n"
@@ -217,8 +205,6 @@ enum ChatExport {
         """
 }
 
-/// Lays the page out in an off-screen web view and prints it into a file: pages of paper with margins, as Safari's
-/// "Export as PDF" does not give (that one is a single endless page).
 @MainActor
 private final class PDFWriter: NSObject, WKNavigationDelegate {
     private var loaded: CheckedContinuation<Void, Never>?
@@ -247,7 +233,7 @@ private final class PDFWriter: NSObject, WKNavigationDelegate {
         let operation = view.printOperation(with: info)
         operation.showsPrintPanel = false
         operation.showsProgressPanel = false
-        // A web view prints only through the modal call: its pages are produced by the web process, asynchronously.
+        // Web views print only via the modal call.
         operation.view?.frame = view.bounds
         let done = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
             printed = continuation
@@ -268,7 +254,6 @@ private final class PDFWriter: NSObject, WKNavigationDelegate {
         loaded = nil
     }
 
-    /// AppKit calls this on the thread the print job ran on, not the main one.
     @objc nonisolated private func printOperationDidRun(_ operation: NSPrintOperation, success: Bool, contextInfo: UnsafeMutableRawPointer?) {
         Task { @MainActor in
             printed?.resume(returning: success)

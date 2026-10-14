@@ -8,7 +8,6 @@ import os
 
 // AppContainer
 
-/// Dependency root and UI-facing state mirror. Everything here is @MainActor (app target default isolation).
 @MainActor
 @Observable
 final class AppContainer {
@@ -28,42 +27,29 @@ final class AppContainer {
     // UI mirror
     private(set) var engineState: EngineState = .unloaded
     private(set) var models: [ModelDescriptor] = []
-    /// Model folders that cannot be loaded; the models section offers to download them again or delete them.
     private(set) var brokenModels: [ModelCatalog.BrokenModel] = []
     private(set) var apiStatus: APIStatus = .disabled
     private(set) var downloads: [ActiveDownload] = [] { didSet { persistDownloads() } }
-    /// The chats window shows the model library instead of a chat (set from the menu, notifications and the sidebar).
-    /// What the chats window shows on the right: the chat, the model library or the settings.
     enum Section: Equatable { case chat, models, settings, about }
     var section: Section = .chat
-    /// Raised whenever an action turns out to need a Hugging Face token; the model library answers by opening the token popover.
     var tokenPromptRequested = false
-    /// Chats on screen right now (the panel's and the one open in the chats window): a model picked in the menu goes to them.
     var panelChatID: UUID?
-    /// Bumped when the panel or the chats window gets a complete answer; the status item blinks if nobody sees it.
     private(set) var answersFinished = 0
     var windowChatID: UUID?
-    /// A chat the chats window should show when it comes up (the panel's "Open in Chats"); the window clears it.
     var requestedWindowChatID: UUID?
 
-    /// Steps and thinking of the replies being written right now, by chat: the surface that streams a reply puts them
-    /// here, and the other one, opened on the same chat meanwhile, shows them too.
     var liveProgress: [UUID: GenerationProgress] = [:]
-    /// The unsent question, shared by the panel and the chats window.
     let draft = ComposerDraft()
 
-    /// Opens the chats window on this chat instead of whichever it showed last.
     func openInChats(_ chatID: UUID?) {
         section = .chat
         requestedWindowChatID = chatID
         WindowManager.shared.open(.chats)
     }
-    /// Models connected by API whose server did not answer the last check; menus and pickers show them disabled.
     private(set) var unavailableModelIDs: Set<String> = []
     private var lastAvailabilityCheck: ContinuousClock.Instant?
     private var availabilityTask: Task<Void, Never>?
     var activeModel: ModelDescriptor? { models.first { $0.id == settings.activeModelID } }
-    /// Installed models grouped by hub (Hugging Face, ModelScope, API), empty hubs omitted.
     var modelsBySource: [(source: ModelSource, models: [ModelDescriptor])] {
         ModelSource.allCases.compactMap { src in
             let list = models.filter { $0.source == src }
@@ -78,27 +64,22 @@ final class AppContainer {
     }
 
     struct ActiveDownload: Identifiable, Equatable {
-        /// `needsToken`: gated repository and no token saved; `needsAccess`: the saved token's account has no access to it.
         enum Phase: Equatable { case queued, running, paused, finished, failed(String), needsToken, needsAccess }
         var id: String { repoID }
         var repoID: String
-        // Display metadata for the pinned row in the models window; absent for downloads started elsewhere.
+        // Display metadata for the download row.
         var title: String?
         var quantization: String?
         var sizeBytes: Int64?
         var progress: DownloadProgress?
         var phase: Phase = .queued
-        /// Set on an MTP drafter: the repo id of the model it belongs to. Its files go inside that model's folder.
         var drafterFor: String?
         var error: String? { if case .failed(let message) = phase { message } else { nil } }
         var finished: Bool { phase == .finished }
         var isRunning: Bool { phase == .running }
-        /// Still owed work: queued, running or paused.
         var isActive: Bool { phase == .queued || phase == .running || phase == .paused }
     }
 
-    /// Set when the chat database could not be opened. `recovered`: a fresh database took over
-    /// (old one backed up); otherwise the session runs on the in-memory store.
     struct StoreFailure: Equatable {
         var message: String
         var backup: URL?
@@ -108,12 +89,8 @@ final class AppContainer {
     let storeFailure: StoreFailure?
 
     private var apiServer: APIServer?
-    /// Serializes restarts: each waits for the previous stop/probe/bind cycle to finish.
     private var apiRestartTask: Task<Void, Never>?
     private var apiGeneration = 0
-    /// The port actually bound; may differ from the setting when the chosen one was busy. Never written back.
-    /// The chosen port is held by another program: the settings draw it red and keep the API switch off until a
-    /// free one is chosen.
     private(set) var apiPortBusy = false
     private var stateTask: Task<Void, Never>?
     private var watcher: DirectoryWatcher?
@@ -121,7 +98,6 @@ final class AppContainer {
     private var downloaderNeedsRebuild = false
     private var persistedDownloads: [StoredDownload] = []
 
-    /// What survives a restart: enough to show the row again and continue from the `.part` files on disk.
     private struct StoredDownload: Codable, Equatable {
         var repoID: String
         var title: String?
@@ -186,7 +162,7 @@ final class AppContainer {
             restartAPI()
             updates.start()
         }
-        // A Mac that slept had no network: the connected servers are asked about once, when it comes back.
+        // Re-check remote servers after wake.
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -206,7 +182,7 @@ final class AppContainer {
 
     func refreshModels() async {
         var list = await catalog.refresh()
-        // A drafter downloaded on its own is not a chat model: attach it to its model, or keep it out of the list.
+        // Attach a standalone drafter to its model or hide it.
         if await attachStrayDrafters(in: list) { list = await catalog.refresh() }
         let strays = await Self.drafterFolders(in: list)
         strayDrafters = strays
@@ -225,9 +201,6 @@ final class AppContainer {
         }
     }
 
-    /// Checks the servers of models connected by API: once at launch, once after the Mac wakes, every minute while the
-    /// models section is open, and on the check button of an unavailable model. Local models are on disk and need none.
-    /// `force` skips the 30 s that keeps two checks in a row from both going out.
     func checkModelAvailability(force: Bool = false) {
         let remotes = models.filter { $0.source == .remote }
         guard availabilityTask == nil else { return }
@@ -236,13 +209,12 @@ final class AppContainer {
         let targets = remotes.compactMap { model in (try? RemoteEndpoint.load(from: model.directory)).map { (model, $0) } }
         availabilityTask = Task {
             defer { availabilityTask = nil }
-            // nil probe = up but refused us (no token sent); a probe = up, with what the server serves now.
+            // nil probe = up but refused; else what it serves now.
             let results = await withTaskGroup(of: (ModelDescriptor, RemoteEndpoint, RemoteEngine.Probe?, up: Bool).self) { group in
-                let logger = logger  // the probes run in a task group, so the logger travels with them
+                let logger = logger  // captured for the task group
                 for (model, endpoint) in targets {
                     group.addTask {
-                        // With its token, so a server that only answers authenticated requests is checked properly;
-                        // one that refuses us is still up.
+                        // Probe with the token; a refusal still means the server is up.
                         do {
                             let probe = try await RemoteEngine.probe(
                                 baseURL: endpoint.baseURL, model: endpoint.model, token: RemoteTokens.token(for: model.id))
@@ -273,12 +245,10 @@ final class AppContainer {
         }
     }
 
-    /// llama-server answers under any name with whatever model it was restarted with: the connected model follows it —
-    /// new name, context, tools and vision. The folder (the model's id) stays, so chats, the menu choice and the token keep it.
     private func updateRemote(_ model: ModelDescriptor, endpoint: RemoteEndpoint, probe: RemoteEngine.Probe) -> Bool {
         let repoID = "\(endpoint.hostAndPort)/\(probe.model)"
         let kind: ModelKind = probe.supportsVision ? .vlm : .llm
-        // llama-server answers `/props` with `{}` on some builds: what it does not report keeps the value it had.
+        // Keep old values for fields `/props` omits.
         let contextLength = probe.contextLength ?? model.contextLength
         let same =
             probe.model == endpoint.model && repoID == model.repoID && kind == model.kind && contextLength == model.contextLength
@@ -297,7 +267,7 @@ final class AppContainer {
             return false
         }
         logger.info("remote \(model.repoID, privacy: .public): renamed to \(repoID, privacy: .public)")
-        if engineState.modelID == model.id { Task { await engineManager.unload() } }  // next question reconnects with the new model
+        if engineState.modelID == model.id { Task { await engineManager.unload() } }  // reconnect with the new model on next question
         return true
     }
 
@@ -309,8 +279,6 @@ final class AppContainer {
         answersFinished += 1
     }
 
-    /// The status menu choice: the app-wide model, and the chats on screen switch to it too, since each chat keeps its own
-    /// model and would otherwise go on answering with the old one.
     func chooseModel(_ model: ModelDescriptor) {
         setActiveModel(model)
         let chatIDs = Set([panelChatID, windowChatID].compactMap { $0 })
@@ -345,8 +313,6 @@ final class AppContainer {
         }
     }
 
-    /// "Connect by API": checks that the server answers and has the model, then adds it to the library like a downloaded one.
-    /// `address` may omit the scheme (`localhost:8080`); the optional token is saved with the settings.
     func connectRemote(model: String, address: String, token: String) async throws {
         let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let base = URL(string: trimmed.contains("://") ? trimmed : "http://" + trimmed), base.host() != nil else {
@@ -360,7 +326,7 @@ final class AppContainer {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try endpoint.save(to: directory)
         RemoteTokens.set(token, for: endpoint.directoryName)
-        // The manifest goes last: a folder watcher refreshing in between would otherwise list a half-written model.
+        // Write the manifest last so watchers never see a partial model.
         try ModelManifest(
             repoID: "\(endpoint.hostAndPort)/\(probe.model)", revision: "", source: .remote, kind: probe.supportsVision ? .vlm : .llm,
             files: [], contextLength: probe.contextLength, supportsTools: probe.supportsTools
@@ -368,7 +334,6 @@ final class AppContainer {
         await refreshModels()
     }
 
-    /// Queues the broken model again: the downloader resumes its `.part` files and replaces the folder when done.
     func redownload(_ broken: ModelCatalog.BrokenModel) {
         guard let reference = ModelReference(directoryName: broken.id) else { return }
         download(reference)
@@ -394,7 +359,6 @@ final class AppContainer {
         }
     }
 
-    /// Context window is a property of each model. 0 = model maximum. Applies to history trimming and the engine's KV cache bound.
     func setContextTokens(_ tokens: Int, for model: ModelDescriptor) {
         var map = settings.modelContextTokens
         map[model.id] = tokens > 0 ? tokens : nil
@@ -402,16 +366,12 @@ final class AppContainer {
         applyConversationConfiguration()
     }
 
-    /// What the checkpoint asks for, when it says anything; otherwise MLX's own default. The second value says which
-    /// of the two it is. nil for a model served elsewhere: its server decides, and nothing here knows its choice.
     func defaultTemperature(for model: ModelDescriptor) -> (value: Double, fromModel: Bool)? {
         if model.source == .remote { return nil }
         if let value = checkpointSampling[model.id]?.temperature { return (value, true) }
         return MLXEngine.librarySampling.temperature.map { ($0, false) }
     }
 
-    /// The temperature chosen for this model, or nil while it follows the checkpoint.
-    /// Always nil for a model served elsewhere: its server decides.
     func temperature(for model: ModelDescriptor) -> Double? {
         model.source == .remote ? nil : settings.modelTemperatures[model.id]
     }
@@ -423,19 +383,16 @@ final class AppContainer {
         applyConversationConfiguration()
     }
 
-    /// The window a model runs with: its saved choice capped by what the model supports. A model served elsewhere
-    /// has the window its server reported.
     func contextTokens(for model: ModelDescriptor) -> Int? {
         guard model.source != .remote, let chosen = settings.modelContextTokens[model.id], chosen > 0 else { return model.contextLength }
         return model.contextLength.map { min(chosen, $0) } ?? chosen
     }
 
-    /// What an API client gets for a model it does not configure: the chat's window, temperature, reasoning and MTP.
     func apiDefaults(for model: ModelDescriptor) -> APIModelDefaults {
         let speculates = settings.speculativeModels.contains(model.id)
         var sampling = checkpointSampling[model.id] ?? SamplingParams()
         if let chosen = temperature(for: model) { sampling.temperature = chosen }
-        // As in the chat: a drafter that verifies only greedy decoding sets the temperature, or speculation switches off.
+        // Greedy-only drafter forces the temperature.
         if speculates, settings.greedyDrafters.contains(model.id) { sampling.temperature = 0 }
         return APIModelDefaults(
             contextTokens: contextTokens(for: model), sampling: sampling, thinks: settings.reasoningShown.contains(model.id),
@@ -461,8 +418,6 @@ final class AppContainer {
 
     func unloadNow() { Task { await engineManager.unload() } }
 
-    /// "Unload After → Never" means the model is resident: load it right away and keep it. With any timeout the model
-    /// is loaded only by the first message in the panel or a chat.
     func keepModelLoadedIfPinned() {
         guard settings.idleUnloadSeconds == 0, let model = activeModel, engineState.modelID != model.id else { return }
         Task { await engineManager.prewarm(model) }
@@ -476,18 +431,15 @@ final class AppContainer {
 
     // Downloads (shared by the download window, menu, notifications and the update checker)
 
-    /// Accepts `org/repo` or a huggingface.co link (Hugging Face), `modelscope:org/repo` or a modelscope.cn link (ModelScope).
     func download(repoID: String, title: String? = nil, quantization: String? = nil, sizeBytes: Int64? = nil) {
         guard let ref = ModelReference.parse(repoID) else { return }
         download(ref, title: title, quantization: quantization, sizeBytes: sizeBytes)
     }
 
-    /// Queues the model. Only one download runs at a time; the rest wait in order below it.
     func download(_ reference: ModelReference, title: String? = nil, quantization: String? = nil, sizeBytes: Int64? = nil) {
         enqueue(ActiveDownload(repoID: reference.repoID, title: title, quantization: quantization, sizeBytes: sizeBytes))
     }
 
-    /// Replaces any old row for this repo with a queued one and lets the queue advance.
     private func enqueue(_ download: ActiveDownload) {
         guard downloaderIsIdle(repoID: download.repoID) else { return }
         downloads.removeAll { $0.repoID == download.repoID }
@@ -497,10 +449,9 @@ final class AppContainer {
 
     // Persistence: a download interrupted by quitting the app continues on the next launch.
 
-    /// Called on every change of `downloads`; progress ticks do not alter the stored projection, so they cost no disk writes.
     private func persistDownloads() {
         let stored = downloads.filter { !$0.finished }.map {
-            // Anything not actively queued or running comes back paused, so a failed model never restarts on its own.
+            // Restored downloads come back paused unless active.
             StoredDownload(
                 repoID: $0.repoID, title: $0.title, quantization: $0.quantization, sizeBytes: $0.sizeBytes,
                 paused: !($0.phase == .running || $0.phase == .queued), drafterFor: $0.drafterFor)
@@ -510,7 +461,6 @@ final class AppContainer {
         settings.pendingDownloads = try? JSONEncoder().encode(stored)
     }
 
-    /// Running and queued downloads resume automatically; paused ones wait for the Continue pictogram.
     private func restoreDownloads() {
         guard downloads.isEmpty, let data = settings.pendingDownloads,
             let stored = try? JSONDecoder().decode([StoredDownload].self, from: data)
@@ -524,8 +474,6 @@ final class AppContainer {
         startNextDownloadIfIdle()
     }
 
-    /// Half-finished transfers whose download is no longer listed: cancelled, abandoned or left by a crash. Their
-    /// `.part` files are only useful to a download that still exists, so they are dropped once, at launch.
     private func removeOrphanedStaging() {
         let fm = FileManager.default
         let wanted = Set(downloads.compactMap { ModelReference.parse($0.repoID)?.directoryName })
@@ -542,7 +490,6 @@ final class AppContainer {
         }
     }
 
-    /// Rows in display order: the running download first, then paused and queued ones, then failed and finished.
     var orderedDownloads: [ActiveDownload] {
         func rank(_ d: ActiveDownload) -> Int {
             switch d.phase {
@@ -558,8 +505,7 @@ final class AppContainer {
 
     private func startNextDownloadIfIdle() {
         rebuildDownloaderIfIdle()
-        // A paused, preempted or cancelled transfer may still be winding down; its task calls back here when it ends,
-        // so nothing else may start while any task is alive — otherwise two transfers would share the bandwidth.
+        // Start nothing while any transfer task is still winding down.
         guard downloadTasks.isEmpty, !downloads.contains(where: \.isRunning),
             let next = downloads.firstIndex(where: { $0.phase == .queued }),
             let reference = ModelReference.parse(downloads[next].repoID)
@@ -599,7 +545,7 @@ final class AppContainer {
                     }
                 }
             } catch {
-                // Pause and cancel both stop the transfer; the row's phase says which one it was. Partial files stay for resume.
+                // Pause and cancel both stop; partial files are kept.
                 if let i = self.downloads.firstIndex(where: { $0.repoID == repoID }), self.downloads[i].phase == .running {
                     if case HubError.gatedRepositoryRequiresToken = error {
                         self.downloads[i].phase = self.hubClient.token == nil ? .needsToken : .needsAccess
@@ -619,23 +565,17 @@ final class AppContainer {
         }
     }
 
-    /// Downloads report themselves through Notification Center only while the models section is not open: with it on
-    /// screen the row says the same thing, whether or not the window has focus.
     private func notifyAboutDownload(title: String, body: String, category: NotificationService.Category = .info) {
         guard !(section == .models && WindowManager.shared.isOpen(.chats)) else { return }
         NotificationService.shared.send(title: title, body: body, category: category)
     }
 
-    // Multi-token prediction: a drafter installed next to a model lets it answer several tokens per round.
+    // MTP drafters installed next to their models.
 
-    /// What each checkpoint asks to be sampled with, read once per catalog refresh; models that say nothing are absent.
     private var checkpointSampling: [String: SamplingParams] = [:]
 
-    /// Drafter repositories installed as if they were models: they cannot answer anything, so they are shown apart and
-    /// wait for their model. Attaching happens by itself once that model is installed.
     private(set) var strayDrafters: [ModelDescriptor] = []
 
-    /// The folders of `list` that hold a drafter rather than a chat model.
     private static func drafterFolders(in list: [ModelDescriptor]) async -> [ModelDescriptor] {
         var found: [ModelDescriptor] = []
         for model in list where model.source != .remote {
@@ -644,15 +584,13 @@ final class AppContainer {
         return found
     }
 
-    /// Moves every stray drafter into the folder of the model it was published for. True when something moved, so the
-    /// catalog is read again.
     private func attachStrayDrafters(in list: [ModelDescriptor]) async -> Bool {
         let strays = await Self.drafterFolders(in: list)
         guard !strays.isEmpty else { return false }
         let chatModels = list.filter { model in model.source != .remote && !strays.contains { $0.id == model.id } }
         var moved = false
         for drafter in strays {
-            // The drafter names the model it was split from; `google/gemma-4-12B-it-assistant` belongs to `…-it`.
+            // Drafter name derived from its base model.
             let base = drafter.baseModel?.lowercased().replacingOccurrences(of: "-assistant", with: "")
             guard let base,
                 let target = chatModels.first(where: {
@@ -679,7 +617,6 @@ final class AppContainer {
         return moved
     }
 
-    /// Sent whenever a drafter ends up installed for a model, whichever way it arrived.
     private func notifySpeculationOn(_ model: ModelDescriptor) {
         notifyAboutDownload(
             title: String(localized: "Faster answers are on"),
@@ -692,10 +629,6 @@ final class AppContainer {
         Task { await refreshModels() }
     }
 
-    /// Whether the switch belongs in this model's row at all. Every local model may have a drafter published for it —
-    /// Qwen declares its heads in the config, Gemma says nothing and ships an assistant model — so the popover asks
-    /// the hub rather than the row guessing. Drafters are found by the base model the hub records; without one there
-    /// is nothing to look for, so the switch stays only to manage a drafter already installed.
     func canSpeculate(_ model: ModelDescriptor) -> Bool {
         guard model.source != .remote else { return false }
         return model.baseModel?.isEmpty == false || drafterIsInstalled(for: model)
@@ -703,43 +636,33 @@ final class AppContainer {
 
     func drafterIsInstalled(for model: ModelDescriptor) -> Bool { MTPDrafter.isInstalled(forModel: model.directory) }
 
-    /// Which repository the installed drafter came from, as its own manifest recorded it.
     func installedDrafterRepo(for model: ModelDescriptor) -> String? {
         try? ModelManifest.load(from: MTPDrafter.directory(forModel: model.directory)).repoID
     }
 
     func isSpeculative(_ model: ModelDescriptor) -> Bool { settings.speculativeModels.contains(model.id) }
 
-    /// How long a reply of this model may run, so the transcript can say what the count is measured against.
     func replyLimit(forModel id: String) -> Int? {
         guard let model = models.first(where: { $0.id == id }), let context = contextTokens(for: model) ?? model.contextLength
         else { return nil }
         return ConversationService.replyBudget(context: context, atLeast: ConversationService.Configuration().reservedTokensForReply)
     }
 
-    /// Whether the transcript shows what this model says to itself before answering. Off unless asked: the thinking
-    /// is long, and it is not the answer.
     func showsReasoning(modelID: String) -> Bool { settings.reasoningShown.contains(modelID) }
 
-    /// Adds or removes `id` in one of the sorted id lists kept in settings.
     private func toggle(_ id: String, in keyPath: ReferenceWritableKeyPath<AppSettings, [String]>, on: Bool) {
         var ids = Set(settings[keyPath: keyPath])
         if on { ids.insert(id) } else { ids.remove(id) }
         settings[keyPath: keyPath] = Array(ids).sorted()
     }
 
-    /// The eye also decides whether the model reasons at all: a template with optional thinking (Gemma 4, Qwen3) is
-    /// told to think only for the models whose thinking is on show, so hidden thinking is never paid for in tokens.
     func setShowsReasoning(_ shown: Bool, for model: ModelDescriptor) {
         toggle(model.id, in: \.reasoningShown, on: shown)
         applyConversationConfiguration()
     }
 
-    /// Whether this model's drafter only verifies greedy decoding — then the temperature is not the user's to choose.
-    /// Qwen's prediction heads work that way; Gemma's assistant drafter verifies sampled tokens just as well.
     func drafterNeedsGreedy(_ model: ModelDescriptor) -> Bool { settings.greedyDrafters.contains(model.id) }
 
-    /// Speculation needs both parts: the drafter's weights and greedy decoding, which is what the switch turns on.
     func setSpeculative(_ on: Bool, for model: ModelDescriptor) {
         MTPDrafter.logger.info("\(model.repoID, privacy: .public): speculation \(on ? "on" : "off", privacy: .public)")
         toggle(model.id, in: \.speculativeModels, on: on)
@@ -747,9 +670,6 @@ final class AppContainer {
         forgetDrafter(of: model)
     }
 
-    /// Drafters the hub publishes for this model. A drafter is recognised by its architecture — Hugging Face lists the
-    /// `model_type` among a repository's tags, and the library's registry says which of those only a drafter uses.
-    /// Two questions are asked: repositories tagged with this base model, and repositories named after it.
     func drafterCandidates(for model: ModelDescriptor) async -> [String] {
         guard let base = model.baseModel, !base.isEmpty else {
             MTPDrafter.logger.info("\(model.repoID, privacy: .public): no base model recorded, nothing to look for")
@@ -773,7 +693,6 @@ final class AppContainer {
         return fitting
     }
 
-    /// The drafter architecture of a hub repository, from its tags, or from its config when the tags are silent.
     private func drafterType(of candidate: HubModelSummary, client: HubClient) async -> String? {
         for tag in candidate.tags ?? [] where await MTPDrafter.isDrafterType(tag) { return tag }
         guard let config = try? await client.config(repoID: candidate.id), let type = MTPDrafter.modelType(inConfig: config),
@@ -782,8 +701,6 @@ final class AppContainer {
         return type
     }
 
-    /// The drafter being installed for a model right now, and what came of the last attempt: notifications may be
-    /// switched off for the app, so the models section says it itself.
     private(set) var drafterVerdicts: [String: String] = [:]
 
     func drafterDownload(for model: ModelDescriptor) -> ActiveDownload? {
@@ -792,10 +709,9 @@ final class AppContainer {
 
     func drafterVerdict(for model: ModelDescriptor) -> String? { drafterVerdicts[model.repoID] }
 
-    /// Queues a drafter repository for this model; it lands in the model's own folder, so it is never a model itself.
     func installDrafter(repoID: String, for model: ModelDescriptor) {
         drafterVerdicts[model.repoID] = nil
-        // The name always comes from the hub's own listing, so a parse failure is a bug, not something to report.
+        // Hub-provided name; a parse failure is a bug.
         guard let reference = ModelReference.parse(repoID) else {
             MTPDrafter.logger.error("not a repository name: \(repoID, privacy: .public)")
             return
@@ -818,8 +734,6 @@ final class AppContainer {
         setSpeculative(false, for: model)
     }
 
-    /// A downloaded folder counts as a drafter only if the engine can build one from it; otherwise it is thrown away
-    /// rather than left to fail at generation time.
     private func finishDrafter(at folder: URL, repoID: String, modelRepoID: String) async {
         guard let model = models.first(where: { $0.repoID == modelRepoID }) else { return }
         let traits = await MTPDrafter.inspect(folder: folder, target: model.directory)
@@ -840,13 +754,12 @@ final class AppContainer {
         notifySpeculationOn(model)
     }
 
-    /// The engine keeps the drafter with the loaded model, so a change takes effect on the next load.
     private func forgetDrafter(of model: ModelDescriptor) {
         guard engineState.modelID == model.id else { return }
         Task { await engineManager.unload() }
     }
 
-    // Base models (for the icons): models downloaded before `baseModel` was stored get it from their hub once.
+    // Backfill `baseModel` for older downloads.
 
     private var baseModelLookups: Set<String> = []
 
@@ -871,7 +784,6 @@ final class AppContainer {
         }
     }
 
-    /// Runs `body` with the index of this repo's row, if the row exists and its phase passes `allowed`.
     private func withDownload(
         _ repoID: String, phase allowed: (ActiveDownload.Phase) -> Bool = { _ in true }, _ body: (Int) -> Void
     ) {
@@ -879,8 +791,6 @@ final class AppContainer {
         body(i)
     }
 
-    /// Stops the transfer but keeps the row and the partial files; the queue moves on to the next model.
-    /// A model that is only waiting its turn can be paused too, so it stops being picked up when the queue advances.
     func pauseDownload(repoID: String) {
         withDownload(repoID, phase: { $0 == .running || $0 == .queued }) { i in
             let wasRunning = downloads[i].isRunning
@@ -889,8 +799,6 @@ final class AppContainer {
         }
     }
 
-    /// Continue: this model goes to the head of the queue and starts right away. Whatever was running goes back into the
-    /// queue (not paused), so it picks up where it stopped as soon as this one is done.
     func resumeDownload(repoID: String) {
         withDownload(repoID, phase: { $0 == .paused || $0 == .queued }) { i in
             var entry = downloads.remove(at: i)
@@ -900,14 +808,13 @@ final class AppContainer {
                 startNextDownloadIfIdle()
                 return
             }
-            // Its task calls `startNextDownloadIfIdle` once the transfer winds down, and by then our row is at the head.
+            // The finished task starts the next download, which is this one.
             let preempted = downloads[running].repoID
             downloads[running].phase = .queued
             Task { await downloader.cancel(repoID: preempted) }
         }
     }
 
-    /// Removes the row; a running transfer is stopped first.
     func cancelDownload(repoID: String) {
         withDownload(repoID) { i in
             let wasRunning = downloads[i].isRunning
@@ -933,8 +840,7 @@ final class AppContainer {
         case HubError.checksumMismatch(let file): String(localized: "Checksum mismatch for \(file). Try again.")
         case HubError.unsafePath(let path): String(localized: "The repository lists an unsafe file path (\(path)) and cannot be installed.")
         case HubError.cancelled: String(localized: "Cancelled.")
-        // A hub that cannot be reached at all (ModelScope is blocked on some networks): the reason is the network,
-        // not the search, so it is worded the same whichever way the connection failed.
+        // Unreachable hub reported as a network problem.
         case let error as URLError
         where [
             URLError.Code.timedOut, .cannotConnectToHost, .cannotFindHost, .networkConnectionLost, .notConnectedToInternet,
@@ -956,7 +862,6 @@ final class AppContainer {
         rebuildDownloaderIfIdle()
     }
 
-    /// Saves the token from the popover and puts every download that was waiting for it back at the head of the queue.
     func saveHuggingFaceTokenAndRetry(_ token: String) {
         setHuggingFaceToken(token)
         guard hubClient.token != nil else { return }
@@ -970,18 +875,17 @@ final class AppContainer {
         startNextDownloadIfIdle()
     }
 
-    // The downloader captures the client (and its token); swap it only between transfers so pause/cancel keep reaching the live one.
+    // Swap the hub client only between transfers.
     private func rebuildDownloaderIfIdle() {
         guard downloaderNeedsRebuild, downloadTasks.isEmpty else { return }
         downloader = ModelDownloader(client: hubClient, paths: paths)
         downloaderNeedsRebuild = false
-        // The fresh downloader starts with no speed cap and default concurrency: re-apply the user's limits.
+        // Re-apply user limits to a fresh downloader.
         applyDownloadLimits()
     }
 
     // Tools
 
-    /// Writes one setting and rebuilds the tool providers from it.
     private func updateToolSetting<V>(_ keyPath: ReferenceWritableKeyPath<AppSettings, V>, to value: V) {
         settings[keyPath: keyPath] = value
         updateTools()
@@ -997,7 +901,7 @@ final class AppContainer {
 
     func setToolEnabled(_ tool: ExtraTool, _ enabled: Bool) {
         toggle(tool.rawValue, in: \.extraTools, on: enabled)
-        // macOS asks for the permission now, while the user is in the settings, not when a model first needs it.
+        // Request permission while in settings.
         if enabled {
             switch tool {
             case .location: LocationService.shared.requestPermission()
@@ -1010,15 +914,12 @@ final class AppContainer {
         updateTools()
     }
 
-    /// The shortcut that opens the panel from any app. Set here, not in System Settings: a service's shortcut cannot
-    /// be given to this app there. `hotkeyChanged` is the app delegate re-registering it.
     var hotkey: GlobalHotkey.Combination {
         .init(keyCode: settings.hotkeyKeyCode, modifiers: settings.hotkeyModifiers)
     }
 
     var hotkeyChanged: (() -> Void)?
 
-    /// Registers the stored combination again: the settings field switches it off while it listens for a new one.
     func restoreHotkey() { hotkeyChanged?() }
 
     func setHotkey(_ combination: GlobalHotkey.Combination) {
@@ -1027,7 +928,6 @@ final class AppContainer {
         hotkeyChanged?()
     }
 
-    /// How many rounds of tools the model may take before it has to answer: each round is a search or a page read.
     func setToolIterations(_ rounds: Int) {
         settings.toolIterations = min(max(rounds, 1), 20)
         applyConversationConfiguration()
@@ -1040,20 +940,16 @@ final class AppContainer {
     func setVoiceInputEnabled(_ enabled: Bool) { settings.voiceInputEnabled = enabled }
     func setVoiceAutoSend(_ sends: Bool) { settings.voiceAutoSend = sends }
 
-    /// Writes one API setting and restarts the server; an unchanged value restarts nothing.
     private func updateAPISetting<V: Equatable>(_ keyPath: ReferenceWritableKeyPath<AppSettings, V>, to value: V) {
         guard settings[keyPath: keyPath] != value else { return }
         settings[keyPath: keyPath] = value
         restartAPI()
     }
 
-    /// Whether other programs may reach the models through this app at all.
     func setAPIEnabled(_ enabled: Bool) { updateAPISetting(\.apiServerEnabled, to: enabled) }
 
-    /// The interface the API answers on. "127.0.0.1" keeps it on this Mac; "0.0.0.0" opens it to the network.
     func setAPIBindHost(_ host: String) { updateAPISetting(\.apiBindHost, to: host) }
 
-    /// The port the local API listens on. Changing it restarts the server, or clears a busy port's block.
     func setAPIPort(_ port: Int) { updateAPISetting(\.apiServerPort, to: min(max(port, 1024), 65535)) }
 
     func setDownloadSpeedLimit(_ mbps: Int) {
@@ -1066,7 +962,6 @@ final class AppContainer {
         applyDownloadLimits()
     }
 
-    /// Pushes the download limits from settings into the downloader; a running download picks them up mid-flight.
     func applyDownloadLimits() {
         let bytesPerSecond = Int64(settings.downloadSpeedLimitMBps) * 1_000_000
         let files = settings.downloadConcurrentFiles
@@ -1076,7 +971,6 @@ final class AppContainer {
         }
     }
 
-    /// Queues a restart behind any in-flight one; stale restarts are skipped so only the last settings win.
     func restartAPI() {
         let previous = apiRestartTask
         apiGeneration += 1
@@ -1088,7 +982,6 @@ final class AppContainer {
         }
     }
 
-    /// Which browser origins may call the API. Applies to the running server without a restart.
     var corsPolicy: CORSPolicy { CORSPolicy.parse(mode: settings.apiCORSMode, origins: settings.apiCORSOrigins) }
 
     func setCORSMode(_ mode: String) {
@@ -1114,7 +1007,6 @@ final class AppContainer {
         updateToolSetting(\.allowedFolders, to: settings.allowedFolders.filter { $0 != path })
     }
 
-    /// Rebuilds the composite tool provider from settings. Web, files and Shortcuts are independent switches.
     func updateTools() {
         var providers: [any ToolProvider] = []
         if settings.toolsEnabled {
@@ -1131,7 +1023,7 @@ final class AppContainer {
                         allowedFolders: settings.allowedFolders.map { URL(fileURLWithPath: $0) }, confirmation: NotificationService.shared))
             )
         }
-        // A tool switched on in the settings is the user's permission: only file changes (delete, move, archive) still ask.
+        // Enabled tools are permitted; only file changes still ask.
         for tool in ExtraTool.allCases where isToolEnabled(tool) {
             switch tool {
             case .calculator: providers.append(JavaScriptToolProvider())
@@ -1167,10 +1059,8 @@ final class AppContainer {
         Task { await conversation.setTools(tools) }
     }
 
-    // API server: only on the port the user chose. A busy port is shown in the settings and blocks the switch; the
-    // server never moves to another port by itself, since clients are configured with this one.
+    // API server only on the chosen port; a busy port blocks the switch.
 
-    /// What to type into another program: the chosen address, or this Mac's own when the server listens everywhere.
     var apiURL: URL {
         let host = settings.apiBindHost == "0.0.0.0" ? (NetworkInterfaces.addresses().first?.address ?? "127.0.0.1") : settings.apiBindHost
         return URL(string: "http://\(host):\(settings.apiServerPort)")!
@@ -1208,8 +1098,6 @@ final class AppContainer {
         apiStatus = .running(port: port)
     }
 
-    /// Looks at the chosen port again when the settings show it: the program holding it may have quit. A port that
-    /// has come free starts the API if it is switched on.
     func checkAPIPort() {
         guard apiServer == nil else { return }
         let busy = !HTTPServer.portIsFree(host: settings.apiBindHost, port: settings.apiServerPort)
@@ -1229,7 +1117,6 @@ final class AppContainer {
     }
 }
 
-/// Watches the models folder via DispatchSource; a cheap single-directory alternative to FSEvents.
 final class DirectoryWatcher {
     private let source: DispatchSourceFileSystemObject
     private let fd: Int32
@@ -1249,7 +1136,6 @@ final class DirectoryWatcher {
 
 // AppSettings
 
-/// The single settings object. UserDefaults is the source of truth; keys live in `SettingsKey`.
 @MainActor
 @Observable
 final class AppSettings {
@@ -1264,7 +1150,6 @@ final class AppSettings {
     private func bool(_ key: SettingsKey) -> Bool { access(keyPath: \.token); return defaults.bool(forKey: key.rawValue) }
     private func double(_ key: SettingsKey) -> Double { access(keyPath: \.token); return defaults.double(forKey: key.rawValue) }
     private func int(_ key: SettingsKey) -> Int { access(keyPath: \.token); return defaults.integer(forKey: key.rawValue) }
-    /// An unset numeric key reads as 0; these settings treat that as "use the default".
     private func int(_ key: SettingsKey, or fallback: Int) -> Int { let value = int(key); return value > 0 ? value : fallback }
     private func stringArray(_ key: SettingsKey) -> [String] {
         access(keyPath: \.token)
@@ -1277,7 +1162,6 @@ final class AppSettings {
     private func date(_ key: SettingsKey) -> Date? { access(keyPath: \.token); return defaults.object(forKey: key.rawValue) as? Date }
     private func data(_ key: SettingsKey) -> Data? { access(keyPath: \.token); return defaults.data(forKey: key.rawValue) }
     private func set(_ value: Any?, _ key: SettingsKey) { withMutation(keyPath: \.token) { defaults.set(value, forKey: key.rawValue) } }
-    /// Single observation token: any settings change invalidates observers of any setting (cheap, settings are few).
     private var token = 0
 
     var activeModelID: String? {

@@ -3,13 +3,6 @@
 
 import SwiftUI
 
-// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
-// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
-
-// How long a reply takes is unknown in advance, so progress is shown as what has really happened: finished tool steps,
-// the running one, and the thinking stretch with its time and hidden tokens. A finished reply keeps one summary line.
-
-/// What a running reply has done so far. Fed by `ConversationEvent`s in the panel and the chats window.
 struct GenerationProgress: Equatable {
     struct Step: Equatable, Identifiable {
         let id: Int
@@ -18,25 +11,14 @@ struct GenerationProgress: Equatable {
     }
 
     private(set) var steps: [Step] = []
-    /// Start of the current stretch without visible text (prompt processing, reasoning); nil while a tool runs or the answer streams.
     private(set) var thinkingSince: Date? = .now
-    /// Hidden tokens of the current stretch, shown next to its time.
     private(set) var thinkingTokens = 0
-    /// First hidden token of the current stretch: the speed is counted from it, so prompt processing does not drag it down.
     private(set) var firstThinkingToken: Date?
-    /// Hidden tokens of the whole reply: without them the model did not reason, and the summary does not claim it did.
     private(set) var hiddenTokens = 0
     private(set) var thoughtSeconds: TimeInterval = 0
-    /// Every token of the current round, hidden and visible: the live counter keeps one running total instead of
-    /// restarting when the answer begins, so the numbers do not vanish on a model that goes straight to answering.
-    /// A tool round starts it over: the model first reads the tool's result, and the old count read as "0/s".
-    /// The engine's own count wins when it is higher: a tool call being written reaches the stream only at its end.
     private(set) var tokens = 0
-    /// The engine's latest count for the round; nil for engines that do not report one.
     private var generatedCount: Int?
-    /// First token of the round; the speed is measured from it, so prompt processing does not drag it down.
     private(set) var firstToken: Date?
-    /// Start of the visible answer; nil while the model thinks or a tool runs.
     private(set) var answeringSince: Date?
 
     mutating func toolStarted(_ activity: AnswerText.Activity) {
@@ -45,7 +27,6 @@ struct GenerationProgress: Equatable {
         steps.append(Step(id: steps.count, activity: activity))
     }
 
-    /// `detail`: what the step turned out to be about, when only the tool's answer says it.
     mutating func toolFinished(detail: String? = nil) {
         if let last = steps.indices.last {
             steps[last].done = true
@@ -60,10 +41,9 @@ struct GenerationProgress: Equatable {
         answeringSince = nil
     }
 
-    /// `answerStarted`: the visible answer is no longer empty, so the thinking stretch is over.
     mutating func token(answerStarted: Bool) {
         if firstToken == nil { firstToken = .now }
-        // A chunk the engine has already counted adds nothing; before its first count arrives, chunks are the count.
+        // Chunks count only until the engine's first count.
         if generatedCount == nil { tokens += 1 }
         if answerStarted {
             endThinking()
@@ -75,7 +55,6 @@ struct GenerationProgress: Equatable {
         }
     }
 
-    /// The engine's count for the current round; the text stream lags behind it or says nothing for a while.
     mutating func generated(_ count: Int) {
         generatedCount = count
         guard count > tokens else { return }
@@ -89,16 +68,14 @@ struct GenerationProgress: Equatable {
         thinkingSince = nil
     }
 
-    /// Seconds to remember for the summary of the finished reply, nil when the model answered without reasoning.
     var reportedThoughtSeconds: Int? { hiddenTokens > 0 ? max(1, Int(thoughtSeconds.rounded())) : nil }
 }
 
 extension AnswerText {
-    /// One line for a finished reply: what the tools did and how long the model thought.
     static func summary(of calls: [ToolCall], thoughtSeconds: Int?) -> String? {
         let searches = calls.filter { $0.name == "web_search" }.count
         let pages = calls.filter { $0.name == "fetch_url" }.count
-        // The other tools by name, each once, in the order they ran: a count alone did not say what was done.
+        // Other tools by name, once each, in order.
         var others: [String] = []
         for call in calls where call.name != "web_search" && call.name != "fetch_url" && !others.contains(call.name) {
             others.append(call.name)
@@ -111,7 +88,6 @@ extension AnswerText {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    /// Tool calls made on the way to `messages[index]`: the tool-asking replies right before it (tool results are skipped).
     static func toolCalls(before index: Int, in messages: [Message]) -> [ToolCall] {
         var calls: [ToolCall] = []
         var i = index - 1
@@ -122,7 +98,6 @@ extension AnswerText {
         return calls
     }
 
-    /// A tool-asking reply folds into the summary above the answer it led to; it stays visible only if no answer followed.
     static func isFoldedIntoAnswer(_ index: Int, in messages: [Message]) -> Bool {
         var i = index + 1
         while i < messages.count, isToolStep(messages[i]) { i += 1 }
@@ -136,14 +111,13 @@ extension AnswerText {
 
 // Views
 
-/// Live progress of the running reply: steps with a checkmark or a spinner, then the model loading or thinking.
 struct GenerationProgressView: View {
     let progress: GenerationProgress
     let engineState: EngineState
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Once the answer is being written the steps are behind it: they go, and only the speed stays under the text.
+            // While the answer streams, only the speed stays.
             if progress.answeringSince == nil {
                 ForEach(progress.steps) { step in
                     HStack(spacing: 8) {
@@ -162,7 +136,7 @@ struct GenerationProgressView: View {
             } else if let since = progress.thinkingSince {
                 LiveLine(thinking: true, since: since, tokens: progress.tokens, firstToken: progress.firstToken)
             } else if let since = progress.answeringSince {
-                // The answer is being written: the same counter carries on, so the numbers stay on screen to the end.
+                // The counter continues through the answer.
                 LiveLine(thinking: false, since: since, tokens: progress.tokens, firstToken: progress.firstToken)
             }
         }
@@ -170,9 +144,7 @@ struct GenerationProgressView: View {
     }
 }
 
-/// "Thinking · 14 s · Tokens: 27/s (380)", then "Answering · …" once the answer starts, ticking every second.
 private struct LiveLine: View {
-    /// The stretch before the visible answer; after it the same line keeps counting under its own name.
     let thinking: Bool
     let since: Date
     let tokens: Int
@@ -189,7 +161,6 @@ private struct LiveLine: View {
         }
     }
 
-    /// No tokens yet means the prompt is still being processed, and there is no speed to name.
     private func text(seconds: Int) -> String {
         switch (thinking, tokens > 0) {
         case (true, true): String(localized: "Thinking · \(seconds) s · Tokens: \(speed(at: .now))/s (\(tokens))")
@@ -199,14 +170,12 @@ private struct LiveLine: View {
         }
     }
 
-    /// Tokens per second since the first one; the first second is counted whole so a burst does not show a wild number.
     private func speed(at date: Date) -> Int {
         guard let firstToken else { return 0 }
         return Int((Double(tokens) / max(date.timeIntervalSince(firstToken), 1)).rounded())
     }
 }
 
-/// What a finished reply did on its way, in one line above the answer.
 struct ProgressSummaryLine: View {
     let text: String
 
@@ -217,17 +186,13 @@ struct ProgressSummaryLine: View {
 
 // Questions asked while the model is still busy
 
-/// A question sent while a reply is being written: it waits and goes out, in order, once the reply is finished,
-/// so each one sees the answers before it.
 struct QueuedQuestion: Identifiable, Equatable {
     let id = UUID()
-    /// The chat the question belongs to (chats window); the panel always asks in its own chat.
     var chatID: UUID?
     var text: String
     var images: [ImageInput]
     var documents: [DocumentInput]
 
-    /// What the bubble shows: the text, or the attachments when there is no text.
     var summary: String {
         guard text.isEmpty else { return text }
         var parts = documents.map(\.name)
@@ -236,9 +201,7 @@ struct QueuedQuestion: Identifiable, Equatable {
     }
 }
 
-/// Waiting questions under the running reply, each with a way to take it back.
 struct QueuedQuestionsView: View {
-    /// A waiting question reads at the size of the answers, the system's text size included.
     @ScaledMetric(relativeTo: .body) private var scaledText: CGFloat = ChatMessageView.textSize
     let questions: [QueuedQuestion]
     var onRemove: (UUID) -> Void

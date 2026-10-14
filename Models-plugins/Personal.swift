@@ -5,17 +5,12 @@ import AppKit
 import Contacts
 import Foundation
 
-// The user's own records: contacts, notes and mail. Mail is read, never changed; an outgoing email is only ever a
-// draft the user sends themselves.
-
 // Contacts
 
 enum ContactsAccess {
-    /// Asks when the user turns the switch on, so macOS prompts then and never in the middle of an answer.
     static func request() { CNContactStore().requestAccess(for: .contacts) { _, _ in } }
 }
 
-/// `contacts_search`: phone numbers, emails and addresses from the user's Contacts, by name, email or phone. Read only.
 public struct ContactsToolProvider: ToolProvider {
     public var limit = 10
 
@@ -34,7 +29,7 @@ public struct ContactsToolProvider: ToolProvider {
     public func execute(_ call: ToolCall) async throws -> String {
         guard let query = ToolArguments(call.argumentsJSON).string("query")?.trimmingCharacters(in: .whitespaces), !query.isEmpty
         else { return toolFailure(missing: "query") }
-        // Asked on every call without access: macOS shows its question while it has none, its privacy pane after a refusal.
+        // Request access on every call until granted; after a refusal open the privacy pane.
         if CNContactStore.authorizationStatus(for: .contacts) != .authorized {
             _ = try? await CNContactStore().requestAccess(for: .contacts)
         }
@@ -82,7 +77,6 @@ public struct ContactsToolProvider: ToolProvider {
         return (["Contacts matching \"\(query)\":"] + people).joined(separator: "\n")
     }
 
-    /// "home", "work", "mobile": the label Contacts stores, in words.
     private static func label(_ raw: String?) -> String {
         guard let raw, !raw.isEmpty else { return "" }
         return " (" + CNLabeledValue<NSString>.localizedString(forLabel: raw) + ")"
@@ -91,9 +85,6 @@ public struct ContactsToolProvider: ToolProvider {
 
 // Notes
 
-/// What the Notes and Mail scripts search with. A query is words, not a phrase: each is cut to a stem, so «Левшину»
-/// finds «Левшина», and a text counts by how many of them it has. Both sides are compared in Latin letters, so the
-/// same «Левшина» finds the sender "Levshina, Anna".
 private let searchPrelude = #"""
     const LATIN = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n',
       о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'kh', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'shch', ъ: '', ы: 'y', ь: '',
@@ -114,7 +105,6 @@ private let searchPrelude = #"""
     }
     """#
 
-/// `notes_search`, `notes_read` and `notes_create`: the Notes app through Apple Events.
 public struct NotesToolProvider: ToolProvider {
     public var maxCharacters = 8000
 
@@ -144,7 +134,7 @@ public struct NotesToolProvider: ToolProvider {
         switch call.name {
         case "notes_search":
             guard let query = args.string("query"), !query.isEmpty else { return toolFailure(missing: "query") }
-            // Every title and text in two Apple Events, matched here: Notes' own `whose` knows only the exact phrase.
+            // Fetch titles and texts, match here; Notes' `whose` is exact-only.
             out = try await JXA.run(
                 prelude: searchPrelude,
                 """
@@ -199,7 +189,6 @@ public struct NotesToolProvider: ToolProvider {
         return ToolOutput.wrap(out, source: "notes: \(call.name)")
     }
 
-    /// Notes stores HTML and names a note after its first line: the title as a heading, then one line per paragraph.
     static func html(title: String, text: String) -> String {
         func escape(_ s: String) -> String {
             s.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(
@@ -212,8 +201,6 @@ public struct NotesToolProvider: ToolProvider {
 
 // Mail
 
-/// `mail_search`, `mail_read`, `mail_attachment` and `mail_draft`: the Mail app through Apple Events. Messages are read and never changed;
-/// an email is opened as a draft for the user to read and send, and nothing is sent from here.
 public struct MailToolProvider: ToolProvider {
     public var maxCharacters = 8000
     public var maxAttachmentCharacters = 20_000
@@ -268,8 +255,7 @@ public struct MailToolProvider: ToolProvider {
         let query = args.string("query")?.trimmingCharacters(in: .whitespaces) ?? ""
         let sent = args.string("mailbox") == "sent"
         let days = args.double("days").map { max(1, Int($0)) }
-        // A whole mailbox, tens of thousands of emails, comes in one Apple Event per property and is matched here;
-        // Mail's own `whose` takes half a minute on the same mailbox.
+        // Fetch the mailbox per property and match here; Mail's `whose` is far slower.
         let out = try await JXA.run(
             prelude: searchPrelude,
             """
@@ -326,12 +312,10 @@ public struct MailToolProvider: ToolProvider {
         return ToolOutput.wrap(out.clipped(to: maxCharacters), source: "mail: mail_read")
     }
 
-    /// The id comes back as the model copied it: a number, or the same in quotes.
     private static func id(_ args: ToolArguments) -> Int? {
         args.int("id") ?? args.string("id").flatMap { Int($0.trimmingCharacters(in: .whitespaces)) }
     }
 
-    /// The opening of a script about one email: `m` is the message with this id, looked for in the inbox and in Sent.
     private static func find(_ id: Int) -> String {
         """
         const M = Application('Mail');
@@ -344,11 +328,10 @@ public struct MailToolProvider: ToolProvider {
         """
     }
 
-    /// Mail hands a file over only by saving it, so it is saved to a folder of our own, read and removed.
     private func attachment(_ args: ToolArguments) async throws -> String {
         guard let id = Self.id(args) else { return toolFailure(missing: "id") }
         let wanted = args.string("name")?.trimmingCharacters(in: .whitespaces) ?? ""
-        // Mail is sandboxed and may refuse a folder it was not given; Downloads it may always write to.
+        // Mail may only write to Downloads.
         let folders = [
             FileManager.default.temporaryDirectory,
             FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first,
@@ -414,8 +397,6 @@ public struct MailToolProvider: ToolProvider {
     }
 }
 
-/// The text of a file that came by mail, whatever it is: a document's own text, a spreadsheet's cells, a
-/// presentation's slides, or what is recognized in a picture or a scan. nil for a kind that has no text to read.
 enum AttachmentText {
     static func read(_ url: URL, maxCharacters: Int) async throws -> String? {
         let ext = url.pathExtension.lowercased()
@@ -423,7 +404,7 @@ enum AttachmentText {
         case "xlsx", "xlsm": return try await spreadsheet(url)
         case "pptx": return try await slides(url)
         case "doc", "docx", "odt", "rtfd", "webarchive", "html", "htm":
-            // The HTML reader is WebKit's and wants the main thread; the rest go the same way for one path.
+            // WebKit HTML reader needs the main thread.
             return await MainActor.run { (try? NSAttributedString(url: url, options: [:], documentAttributes: nil))?.string }
         default: break
         }
@@ -439,18 +420,16 @@ enum AttachmentText {
         var configuration = FileToolProvider.Configuration(allowedFolders: [])
         configuration.maxFileCharacters = .max
         let out = try await FileToolProvider(configuration: configuration).recognizeText(url)
-        // It answers as a tool does: the text between the untrusted-content lines, or a plain line when there is none.
+        // Tool-style answer: untrusted-wrapped text or a plain line.
         let lines = out.components(separatedBy: "\n")
         guard lines.first?.hasPrefix("<untrusted_content") == true, let end = lines.lastIndex(of: "</untrusted_content>") else { return "" }
         return lines[1..<end].joined(separator: "\n")
     }
 
-    /// One file, or the files matching a pattern, out of an Office document, which is a zip of XML.
     private static func unzip(_ url: URL, _ member: String) async throws -> String {
         try await ToolProcess.run("/usr/bin/unzip", ["-p", url.path, member], timeout: 30)
     }
 
-    /// Rows of every sheet, cells separated by tabs. Text cells point into the shared strings; numbers stand in place.
     private static func spreadsheet(_ url: URL) async throws -> String {
         let shared = try await unzip(url, "xl/sharedStrings.xml").matches(of: /<si>(.*?)<\/si>/.dotMatchesNewlines()).map {
             String($0.1).matches(of: /<t[^>]*>(.*?)<\/t>/.dotMatchesNewlines()).map { String($0.1) }.joined().xmlUnescaped
@@ -472,7 +451,6 @@ enum AttachmentText {
         return rows.joined(separator: "\n")
     }
 
-    /// The text of every slide, a paragraph to a line.
     private static func slides(_ url: URL) async throws -> String {
         try await unzip(url, "ppt/slides/slide*.xml").matches(of: /<a:p>(.*?)<\/a:p>/.dotMatchesNewlines()).map {
             String($0.1).matches(of: /<a:t>(.*?)<\/a:t>/.dotMatchesNewlines()).map { String($0.1) }.joined().xmlUnescaped
@@ -481,7 +459,6 @@ enum AttachmentText {
 }
 
 extension String {
-    /// The five entities XML itself has; Office writes no others into its text.
     fileprivate var xmlUnescaped: String {
         replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">").replacingOccurrences(of: "&quot;", with: "\"")
             .replacingOccurrences(of: "&apos;", with: "'").replacingOccurrences(of: "&amp;", with: "&")

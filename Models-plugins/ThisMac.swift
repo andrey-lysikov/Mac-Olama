@@ -6,12 +6,8 @@ import Foundation
 import ScreenCaptureKit
 import Vision
 
-// Tools that answer from this Mac instead of the model's memory, and act on it: its own state, network checks, the
-// user's Shortcuts, the volume, the appearance and apps, Music, the clipboard and the text on the screen.
-
 // Mac info
 
-/// `mac_info`: the state of this Mac, read with public APIs and stock read-only command-line tools.
 public struct MacInfoToolProvider: ToolProvider {
     public init() {}
 
@@ -94,8 +90,6 @@ public struct MacInfoToolProvider: ToolProvider {
 
 // Network
 
-/// `network_check`: ping, traceroute, DNS, an HTTP request, a TCP port and the speed test macOS ships. Fixed programs, no
-/// shell; the host is checked to be a plain name or address.
 public struct NetworkToolProvider: ToolProvider {
     public init() {}
 
@@ -141,8 +135,6 @@ public struct NetworkToolProvider: ToolProvider {
         return ToolOutput.wrap(text.isEmpty ? "No output." : text, source: "network_check: \(action) \(host)")
     }
 
-    /// A plain host name or IPv4 address: letters, digits, dots, hyphens; never a leading dash (an option).
-    /// Colons survive validation only to be rejected explicitly as unsupported IPv6.
     static func validHost(_ host: String) -> String? {
         let host = host.hasPrefix("[") && host.hasSuffix("]") ? String(host.dropFirst().dropLast()) : host
         guard !host.isEmpty, host.count <= 253, !host.hasPrefix("-"),
@@ -151,7 +143,6 @@ public struct NetworkToolProvider: ToolProvider {
         return host
     }
 
-    /// This Mac, its network and link-local ranges: checking them from a page's suggestion would probe the user's own net.
     static func isLocal(_ host: String) -> Bool {
         let h = host.lowercased()
         if h == "localhost" || h.hasSuffix(".local") || h.hasSuffix(".localhost") || h == "::1" { return true }
@@ -165,7 +156,6 @@ public struct NetworkToolProvider: ToolProvider {
         }
     }
 
-    /// Status, time, final address after redirects and the headers that describe the server.
     static func http(_ url: URL?) async -> String {
         guard let url, ["http", "https"].contains(url.scheme ?? "") else { return "error: not an http(s) address" }
         var request = URLRequest(url: url, timeoutInterval: 15)
@@ -195,7 +185,6 @@ public struct NetworkToolProvider: ToolProvider {
 
 // Shortcuts
 
-/// Runs user-created Shortcuts via `/usr/bin/shortcuts`. The user builds the shortcut; macOS asks for its permissions.
 public struct ShortcutToolProvider: ToolProvider {
     public struct Configuration: Sendable {
         public var binary = URL(fileURLWithPath: "/usr/bin/shortcuts")
@@ -254,7 +243,6 @@ public struct ShortcutToolProvider: ToolProvider {
 
 // System control
 
-/// `mac_control`: the volume, dark or light appearance, and opening an app. Small, undoable changes, so none asks.
 public struct MacControlToolProvider: ToolProvider {
     public init() {}
 
@@ -284,7 +272,7 @@ public struct MacControlToolProvider: ToolProvider {
             switch action {
             case "volume": change = "app.setVolume(null, { outputVolume: \(level ?? 50) });"
             case "mute", "unmute": change = "app.setVolume(null, { outputMuted: \(action == "mute") });"
-            // Only a change goes through System Events: reading the appearance needs no permission to control it.
+            // Only changes go through System Events.
             case "dark_mode", "light_mode":
                 change = "Application('System Events').appearancePreferences.darkMode = \(action == "dark_mode");"
             default: change = ""
@@ -308,10 +296,9 @@ public struct MacControlToolProvider: ToolProvider {
         }
     }
 
-    /// An app by the name the user sees, in their language too ("Калькулятор"), found by Spotlight.
     private static func open(_ name: String) async -> String {
         let quoted = name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
-        // The name shown is localized ("Калькулятор"), the bundle's file name is not ("Calculator.app"): either one will do.
+        // Match the localized display name or the bundle file name.
         let query =
             "kMDItemContentType == 'com.apple.application-bundle' && (kMDItemDisplayName == '\(quoted)'cd || kMDItemFSName == '\(quoted).app'cd)"
         let found = (try? await ToolProcess.run(URL(fileURLWithPath: "/usr/bin/mdfind"), [query], timeout: 10)) ?? ""
@@ -328,7 +315,6 @@ public struct MacControlToolProvider: ToolProvider {
 
 // Music
 
-/// `music_control`: play, pause, the next or previous track, and what is playing, in the Music app.
 public struct MusicToolProvider: ToolProvider {
     public init() {}
 
@@ -369,12 +355,9 @@ public struct MusicToolProvider: ToolProvider {
 // Clipboard and screen
 
 enum ScreenAccess {
-    /// Asks when the user turns the switch on; macOS then lists Mac-Olama under Screen Recording.
     static func request() { if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() } }
 }
 
-/// `clipboard_read`, `clipboard_write` and `screen_read`. The clipboard is read as text, never what a password manager
-/// marked as concealed; the screen is read as recognized text, on this Mac.
 public struct ScreenToolProvider: ToolProvider {
     public var maxCharacters = 12_000
 
@@ -408,7 +391,7 @@ public struct ScreenToolProvider: ToolProvider {
             }
             return "Put \(text.count) characters on the clipboard."
         case "screen_read":
-            // macOS asks by itself the first time; after a refusal its privacy pane opens, on every call until allowed.
+            // After a refusal, open the privacy pane on every call.
             guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
                 PrivacySettings.ask(.screen)
                 return
@@ -438,7 +421,6 @@ public struct ScreenToolProvider: ToolProvider {
         return types.contains(.png) || types.contains(.tiff) ? "The clipboard holds an image, no text." : "The clipboard is empty."
     }
 
-    /// The main display without Mac-Olama's own windows, at its full pixel size, read by Vision.
     private func readScreen(front: String) async throws -> String {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first(where: { $0.displayID == CGMainDisplayID() }) ?? content.displays.first else {

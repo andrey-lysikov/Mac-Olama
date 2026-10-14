@@ -3,12 +3,8 @@
 
 import Foundation
 
-// Wire formats for the Ollama (`/api/*`), OpenAI (`/v1/*`) and Anthropic (`/v1/messages`) surfaces. Field names
-// follow the official docs.
-
 // Shared helpers
 
-/// JSON value that survives round-trips (tool arguments, options).
 public enum JSON: Codable, Sendable, Equatable {
     case string(String), number(Double), bool(Bool), null
     case array([JSON]), object([String: JSON])
@@ -50,7 +46,6 @@ public enum JSON: Codable, Sendable, Equatable {
         (try? JSONCoding.plainDecoder.decode(JSON.self, from: Data(text.utf8))) ?? .object([:])
     }
 
-    /// `stop` arrives as one string or a list of them.
     public var strings: [String] {
         switch self {
         case .string(let s): [s]
@@ -60,7 +55,6 @@ public enum JSON: Codable, Sendable, Equatable {
     }
 }
 
-/// Ollama `options` map → sampling params. Unknown keys are ignored.
 public struct OllamaOptions: Codable, Sendable {
     public var temperature: Double?
     public var top_p: Double?
@@ -89,7 +83,6 @@ public struct OllamaOptions: Codable, Sendable {
     }
 }
 
-/// `keep_alive` accepts a number (seconds) or a duration string ("5m", "0", "-1").
 public enum KeepAliveValue: EitherCodable, Sendable {
     case seconds(Double), text(String)
 
@@ -127,9 +120,7 @@ public struct OllamaToolCall: Codable, Sendable {
 
 public struct OllamaMessage: Codable, Sendable {
     public var role: String
-    /// Optional so that a streamed chunk (or a request) without it still decodes; always set on responses.
     public var content: String?
-    /// The model's reasoning, apart from the answer in `content`; read from requests only to be dropped.
     public var thinking: String?
     public var images: [String]?  // base64
     public var tool_calls: [OllamaToolCall]?
@@ -163,9 +154,7 @@ public struct OllamaChatRequest: Codable, Sendable {
     public var tools: [OllamaTool]?
     public var options: OllamaOptions?
     public var keep_alive: KeepAliveValue?
-    /// `true`/`false`, or a level (`"low"`, `"high"`) that some models take; any level turns thinking on.
     public var think: JSON?
-    /// `"json"` or a JSON schema.
     public var format: JSON?
 }
 
@@ -183,7 +172,6 @@ public struct OllamaGenerateRequest: Codable, Sendable {
 }
 
 extension JSON {
-    /// Ollama's `think`: a flag or a level.
     public var thinkFlag: Bool? {
         switch self {
         case .bool(let b): b
@@ -229,7 +217,6 @@ public struct OllamaPsResponse: Codable, Sendable {
     public var models: [OllamaRunningModel]
 }
 
-/// A request that names a model as `model` (current clients) or `name` (older ones).
 public protocol OllamaModelRequest {
     var model: String? { get }
     var name: String? { get }
@@ -255,8 +242,6 @@ public struct OllamaShowResponse: Codable, Sendable {
     public var modified_at: Date
 }
 
-/// The `*_duration`/`*_count` tail both Ollama chunk kinds carry. The fields sit flat in the chunk JSON, so the
-/// chunks keep their own stored properties and copy these in.
 public struct OllamaTimings: Sendable {
     public var total_duration: Int64?
     public var load_duration: Int64?
@@ -265,7 +250,6 @@ public struct OllamaTimings: Sendable {
     public var eval_count: Int?
     public var eval_duration: Int64?
 
-    /// Metrics of a finished generation, in Ollama's nanosecond fields.
     public init(start: ContinuousClock.Instant, usage: GenerationUsage?) {
         total_duration = start.duration(to: .now).nanoseconds
         load_duration = 0
@@ -276,8 +260,7 @@ public struct OllamaTimings: Sendable {
     }
 }
 
-// The chunk envelopes are optional-heavy: a final chunk carries no `message` at all. The server always fills the
-// fields it writes.
+// Optional fields: a final chunk has no `message`.
 public struct OllamaChatChunk: Codable, Sendable {
     public var model: String?
     public var created_at: Date?
@@ -293,7 +276,6 @@ public struct OllamaChatChunk: Codable, Sendable {
 }
 
 extension OllamaChatChunk {
-    /// Final chunk of a chat response. Lives in an extension so the memberwise initializer survives.
     public init(model: String, message: OllamaMessage, done_reason: String, timings: OllamaTimings) {
         self.init(
             model: model, created_at: .now, message: message, done: true, done_reason: done_reason,
@@ -319,7 +301,6 @@ public struct OllamaGenerateChunk: Codable, Sendable {
 }
 
 extension OllamaGenerateChunk {
-    /// Final chunk of a generate response. Lives in an extension so the memberwise initializer survives.
     public init(model: String, response: String, thinking: String? = nil, done_reason: String, timings: OllamaTimings) {
         self.init(
             model: model, created_at: .now, response: response, thinking: thinking, done: true, done_reason: done_reason,
@@ -339,7 +320,6 @@ public struct APIErrorBody: Codable, Sendable {
 
 // OpenAI
 
-/// `content` is either a string or an array of parts (`text` / `image_url`).
 public enum OpenAIContent: EitherCodable, Sendable {
     public struct Part: Codable, Sendable {
         public struct ImageURL: Codable, Sendable { public var url: String }
@@ -363,15 +343,12 @@ public enum OpenAIContent: EitherCodable, Sendable {
         }
     }
 
-    /// data: URLs only; remote image URLs are not fetched by the server.
     public var imageDataURLs: [String] {
         if case .parts(let p) = self { return p.compactMap { $0.type == "image_url" ? $0.image_url?.url : nil } }
         return []
     }
 }
 
-/// Optional-heavy: streamed deltas carry the call in fragments (the id and name first, then argument pieces keyed by
-/// `index`), so every field may be absent. The server always fills id, type and function when it writes one.
 public struct OpenAIToolCall: Codable, Sendable {
     public struct Function: Codable, Sendable {
         public var name: String?
@@ -389,11 +366,9 @@ public struct OpenAIMessage: Codable, Sendable {
     public var tool_calls: [OpenAIToolCall]?
     public var tool_call_id: String?
     public var name: String?
-    /// The model's reasoning, apart from the answer (DeepSeek's field, read by most clients).
     public var reasoning_content: String?
 }
 
-/// Identical to Ollama's tool schema on the wire, so it is the same type.
 public typealias OpenAITool = OllamaTool
 
 public struct OpenAIChatRequest: Codable, Sendable {
@@ -408,19 +383,14 @@ public struct OpenAIChatRequest: Codable, Sendable {
     public var tools: [OpenAITool]?
     public var stream_options: StreamOptions?
     public struct StreamOptions: Codable, Sendable { public var include_usage: Bool? }
-    /// A string or a list of strings.
     public var stop: JSON?
     public var presence_penalty: Double?
     public var frequency_penalty: Double?
-    /// llama.cpp and vLLM extensions.
     public var top_k: Int?
     public var min_p: Double?
     public var repetition_penalty: Double?
-    /// `{"type": "json_object"}` or `{"type": "json_schema", "json_schema": {"schema": …}}`.
     public var response_format: JSON?
-    /// `"none"` turns reasoning off, any other level on.
     public var reasoning_effort: String?
-    /// llama.cpp / vLLM: `{"enable_thinking": false}`.
     public var chat_template_kwargs: JSON?
 
     public func sampling(default base: SamplingParams) -> SamplingParams {
@@ -437,14 +407,12 @@ public struct OpenAIChatRequest: Codable, Sendable {
         return s
     }
 
-    /// Whether the client asked for reasoning on or off; nil leaves the app's choice for the model.
     public var thinks: Bool? {
         if let effort = reasoning_effort { return effort.lowercased() != "none" }
         if case .object(let kwargs) = chat_template_kwargs, case .bool(let on) = kwargs["enable_thinking"] { return on }
         return nil
     }
 
-    /// The schema of `json_schema`, `.object([:])` for plain `json_object`, nil for text.
     public var jsonFormat: JSON? {
         guard case .object(let format) = response_format, case .string(let type) = format["type"] else { return nil }
         switch type {
@@ -458,20 +426,18 @@ public struct OpenAIChatRequest: Codable, Sendable {
 }
 
 public struct OpenAIUsage: Codable, Sendable {
-    // Optional because `RemoteEngine` decodes other servers' usage objects too; this server always fills all three.
+    // Optional for other servers' usage objects.
     public var prompt_tokens: Int?
     public var completion_tokens: Int?
     public var total_tokens: Int?
 }
 
-// Optional-heavy because `RemoteEngine` decodes other servers' streams (whose chunks may omit any envelope field)
-// through this type. The server always fills what it writes.
+// Optional fields: `RemoteEngine` decodes other servers' streams with this type.
 public struct OpenAIChatChunk: Codable, Sendable {
     public struct Choice: Codable, Sendable {
         public struct Delta: Codable, Sendable {
             public var role: String?
             public var content: String?
-            /// Separate reasoning stream (DeepSeek's field), apart from `content`.
             public var reasoning_content: String?
             public var tool_calls: [OpenAIToolCall]?
         }
@@ -479,7 +445,6 @@ public struct OpenAIChatChunk: Codable, Sendable {
         public var delta: Delta?
         public var finish_reason: String?
     }
-    /// llama-server appends its own metrics next to `usage`; read-only here.
     public struct Timings: Codable, Sendable {
         public var predicted_per_second: Double?
     }
@@ -546,7 +511,7 @@ public struct OpenAIModelList: Codable, Sendable {
 
 public struct OpenAIErrorBody: Codable, Sendable {
     public struct Detail: Codable, Sendable {
-        // Optional so a remote server's error object decodes whatever fields it has; this server always fills both.
+        // Optional for remote error objects.
         public var message: String?
         public var type: String?
         public var code: String?
@@ -554,11 +519,8 @@ public struct OpenAIErrorBody: Codable, Sendable {
     public var error: Detail
 }
 
-// Anthropic
-//
-// Requests only: the replies are assembled as `JSON`, since their events carry explicit nulls and differ per kind.
+// Anthropic requests; replies are built as `JSON`.
 
-/// `content` and `system` are either a string or a list of blocks.
 public enum AnthropicContent: EitherCodable, Sendable {
     case text(String), list([AnthropicBlock])
 
@@ -569,7 +531,6 @@ public enum AnthropicContent: EitherCodable, Sendable {
     public init(from decoder: Decoder) throws { self = try Self.decodeEither(from: decoder) }
     public func encode(to encoder: Encoder) throws { try encodeEither(to: encoder) }
 
-    /// A plain string is one text block.
     public var blocks: [AnthropicBlock] {
         switch self {
         case .text(let s): [AnthropicBlock(type: "text", text: s)]
@@ -578,8 +539,6 @@ public enum AnthropicContent: EitherCodable, Sendable {
     }
 }
 
-/// One content block of any kind (`text`, `image`, `tool_use`, `tool_result`, `thinking`…): each kind fills its own
-/// fields, and a kind this server does not know still decodes, to be skipped.
 public struct AnthropicBlock: Codable, Sendable {
     public struct Source: Codable, Sendable {
         public var type: String
@@ -588,13 +547,10 @@ public struct AnthropicBlock: Codable, Sendable {
     }
     public var type: String
     public var text: String?
-    /// `image`.
     public var source: Source?
-    /// `tool_use`.
     public var id: String?
     public var name: String?
     public var input: JSON?
-    /// `tool_result`: the call it answers and what the tool returned.
     public var tool_use_id: String?
     public var content: AnthropicContent?
 }
@@ -604,14 +560,12 @@ public struct AnthropicMessage: Codable, Sendable {
     public var content: AnthropicContent
 }
 
-/// A tool the client runs. Tools Anthropic runs on its side (web search) come without a schema and are left out.
 public struct AnthropicTool: Codable, Sendable {
     public var name: String
     public var description: String?
     public var input_schema: JSON?
 }
 
-/// `/v1/messages` and, without `max_tokens`, `/v1/messages/count_tokens`.
 public struct AnthropicRequest: Codable, Sendable {
     public struct Thinking: Codable, Sendable { public var type: String }
     public var model: String
@@ -626,14 +580,11 @@ public struct AnthropicRequest: Codable, Sendable {
     public var tools: [AnthropicTool]?
     public var thinking: Thinking?
 
-    /// Unlike the other surfaces, what the app and the checkpoint set stays: a client of this one tunes its sampling
-    /// for Claude, not for the local model that answers. It fills in what they leave open and sets the reply's length.
     public func sampling(default base: SamplingParams) -> SamplingParams {
         var s = base.over(SamplingParams(temperature: temperature, topP: top_p, topK: top_k.map { max(0, $0) }))
         if let max_tokens, max_tokens > 0 { s.maxTokens = max_tokens }
         return s
     }
 
-    /// Whether the client asked for reasoning; without `thinking` the API means none.
     public var thinks: Bool { thinking.map { $0.type != "disabled" } ?? false }
 }

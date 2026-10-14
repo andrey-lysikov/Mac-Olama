@@ -6,14 +6,10 @@ import Foundation
 import Synchronization
 import os
 
-// Minimal HTTP/1.1 server for a localhost API: blocking sockets, one thread per connection, keep-alive,
-// chunked streaming responses, CORS preflight. Replaces Hummingbird and its ~20 transitive packages.
-
 public struct HTTPRequest: Sendable {
     public var method: String
     public var path: String
     public var query: [String: String]
-    /// Header names lowercased.
     public var headers: [String: String]
     public var body: Data
 
@@ -53,7 +49,6 @@ public struct HTTPResponse: Sendable {
     ]
 }
 
-/// Which browser origins may call the API; clients without an Origin header are unaffected.
 public enum CORSPolicy: Sendable, Equatable {
     case disabled
     case localhost
@@ -68,7 +63,6 @@ public enum CORSPolicy: Sendable, Equatable {
         }
     }
 
-    /// Value to echo in Access-Control-Allow-Origin, or nil when the origin is not allowed.
     public func allowedOrigin(for origin: String?) -> String? {
         guard let origin, !origin.isEmpty else { return nil }
         switch self {
@@ -80,8 +74,6 @@ public enum CORSPolicy: Sendable, Equatable {
         }
     }
 
-    /// Web pages must come from localhost; non-web schemes (app://, vscode-webview://, file://…)
-    /// are desktop clients a web page cannot impersonate, so they pass — as Ollama allows them.
     static func isLocalhost(_ origin: String) -> Bool {
         guard let url = URL(string: origin), let scheme = url.scheme?.lowercased() else { return false }
         guard scheme == "http" || scheme == "https" else { return true }
@@ -92,7 +84,6 @@ public enum CORSPolicy: Sendable, Equatable {
 
 public typealias HTTPHandler = @Sendable (HTTPRequest) async throws -> HTTPResponse
 
-/// Routes are exact `METHOD /path` matches; HEAD falls back to GET; OPTIONS answers CORS preflight.
 public final class HTTPServer: Sendable {
     public struct Configuration: Sendable {
         public var host: String
@@ -127,12 +118,8 @@ public final class HTTPServer: Sendable {
     private let running = Mutex(false)
     private let cors = Mutex<CORSPolicy>(.localhost)
     private let activeConnections = Mutex(0)
-    /// Connections waiting for their next request, and since when: at the ceiling the oldest is closed for a new client.
     private let idleConnections = Mutex<[Int32: ContinuousClock.Instant]>([:])
-    /// Thread-per-connection needs a ceiling; beyond it the longest-idle keep-alive connection makes room, and only
-    /// when every connection is busy does a new client get a 503.
     private static let maxConnections = 64
-    /// A client that stops reading fails its send() after this instead of parking the thread forever.
     private static let sendTimeoutSeconds = 30
 
     public init(configuration: Configuration) {
@@ -145,15 +132,12 @@ public final class HTTPServer: Sendable {
 
     public func setNotFound(_ handler: @escaping HTTPHandler) { notFound.withLock { $0 = handler } }
 
-    /// Applies immediately to new responses; no restart needed.
     public func setCORSPolicy(_ policy: CORSPolicy) { cors.withLock { $0 = policy } }
 
-    /// Maps errors thrown by handlers to responses (default: 500 with the error text).
     public func setErrorMapper(_ mapper: @escaping @Sendable (Error) -> HTTPResponse) { errorMapper.withLock { $0 = mapper } }
 
     // Lifecycle
 
-    /// Binds and starts the accept loop on a dedicated thread. Throws when the port is taken.
     public func start() throws {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { throw ServerError.socket("socket() failed: \(errno)") }
@@ -186,8 +170,6 @@ public final class HTTPServer: Sendable {
 
     public var isRunning: Bool { running.withLock { $0 } }
 
-    /// Whether a server could take this address now: nothing accepts connections on it, and it can be bound. The
-    /// connect catches a program on 127.0.0.1 that a wildcard bind with `SO_REUSEADDR` would quietly share the port with.
     public static func portIsFree(host: String, port: Int) -> Bool {
         let local = host == "0.0.0.0" ? "127.0.0.1" : host
         if withSocket(host: local, port: port, { fd, addr in connect(fd, addr, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0 }) {
@@ -247,8 +229,6 @@ public final class HTTPServer: Sendable {
         }
     }
 
-    /// Shuts the longest-idle keep-alive connection down; its thread sees the end of the stream and exits. The owner
-    /// leaves the map under the same lock before it closes the descriptor, so a reused number is never shut here.
     private func closeOldestIdleConnection() -> Bool {
         idleConnections.withLock { idle in
             guard let oldest = idle.min(by: { $0.value < $1.value })?.key else { return false }
@@ -270,7 +250,7 @@ public final class HTTPServer: Sendable {
             idleConnections.withLock { $0[fd] = .now }
             let parsed: Connection.Parsed?
             do {
-                // Busy from the first byte on: an evicted connection must not be one that is sending a request.
+                // Busy from the first byte, so it is never evicted mid-request.
                 parsed = try connection.readRequest(maxBody: configuration.maxBodyBytes) {
                     idleConnections.withLock { $0[fd] = nil }
                 }
@@ -287,8 +267,7 @@ public final class HTTPServer: Sendable {
             let wantsClose = request.request.headers["connection"]?.lowercased() == "close" || request.version == "HTTP/1.0"
             let origin = request.request.headers["origin"]
             let allowedOrigin = cors.withLock { $0 }.allowedOrigin(for: origin)
-            // Simple cross-origin POSTs skip the preflight; a disallowed browser origin must not reach
-            // state-changing routes at all, not merely lose the response.
+            // Reject disallowed origins before routing, since simple POSTs skip preflight.
             var response: HTTPResponse
             if origin != nil, allowedOrigin == nil, !["GET", "HEAD", "OPTIONS"].contains(request.request.method) {
                 response = HTTPResponse.text("{\"error\":\"origin not allowed\"}", status: 403, contentType: "application/json")
@@ -305,9 +284,6 @@ public final class HTTPServer: Sendable {
         }
     }
 
-    /// Runs the async handler on a cooperative task and blocks this connection thread until it returns. A client that
-    /// hangs up meanwhile (a request without streaming, still generating) cancels the handler instead of leaving a
-    /// reply nobody reads at the head of the model's queue.
     private func handle(_ request: HTTPRequest, fd: Int32) -> HTTPResponse {
         if request.method == "OPTIONS" {
             let origin = request.headers["origin"]
@@ -325,7 +301,7 @@ public final class HTTPServer: Sendable {
         let getKey = "GET \(request.path)"
         let handler = routes.withLock { $0[key] ?? (request.method == "HEAD" ? $0[getKey] : nil) } ?? notFound.withLock { $0 }
         let mapper = errorMapper.withLock { $0 }
-        // A lock rather than `Mutex`: the result crosses into an escaping closure, and `Mutex` cannot be captured there.
+        // Lock, not `Mutex`: the result is captured by an escaping closure.
         let result = OSAllocatedUnfairLock(initialState: HTTPResponse(status: 500))
         let semaphore = DispatchSemaphore(value: 0)
         let task = Task.detached {
@@ -343,7 +319,6 @@ public final class HTTPServer: Sendable {
     }
 }
 
-/// Blocking reader/writer for one socket.
 private final class Connection {
     struct Parsed {
         var request: HTTPRequest
@@ -357,8 +332,6 @@ private final class Connection {
 
     init(fd: Int32) { self.fd = fd }
 
-    /// Whether the client has closed its side: readable with nothing to read, or an error. Pipelined bytes of a next
-    /// request mean it is still there.
     static func peerClosed(_ fd: Int32) -> Bool {
         var entry = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
         guard poll(&entry, 1, 0) > 0 else { return false }
@@ -376,7 +349,6 @@ private final class Connection {
         return true
     }
 
-    /// `started` runs once the first byte of the request is here (at once for a pipelined one).
     func readRequest(maxBody: Int, started: () -> Void = {}) throws -> Parsed? {
         if !buffer.isEmpty { started() }
         // Head: up to the blank line.
@@ -450,7 +422,6 @@ private final class Connection {
         return (String(target[..<q]), query)
     }
 
-    /// Returns false when the client went away (streams stop generating through stream termination).
     func write(_ response: HTTPResponse, isHead: Bool) -> Bool {
         var headers = response.headers
         var head = "HTTP/1.1 \(response.status) \(HTTPResponse.reasons[response.status] ?? "OK")\r\n"
@@ -498,8 +469,6 @@ private final class Connection {
         }
     }
 
-    /// Bounded hand-off between the async producer and the connection thread. The consumer blocks on a
-    /// condition (its own thread); the producer suspends with a short backoff when the queue is full.
     final class ChunkQueue: @unchecked Sendable {
         enum Next {
             case chunk(Data)
@@ -518,7 +487,6 @@ private final class Connection {
             case pushed, cancelled, full
         }
 
-        /// False once the consumer cancelled: the producer must stop generating.
         func push(_ data: Data) async -> Bool {
             while true {
                 switch tryPush(data) {

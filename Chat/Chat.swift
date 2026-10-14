@@ -3,9 +3,6 @@
 
 import Foundation
 
-// Chat
-
-/// Where the chat was created; used for grouping only.
 public enum ChatOrigin: String, Codable, Sendable {
     case panel, window, api
 }
@@ -40,16 +37,13 @@ public enum MessageRole: String, Codable, Sendable {
 }
 
 public struct Attachment: Codable, Sendable, Hashable, Identifiable {
-    /// `image` goes to the VLM; `document` is extracted text injected into the message as context.
     public enum Kind: String, Codable, Sendable { case image, document }
     public var id: UUID
     public var kind: Kind
-    /// Path relative to `AppPaths.attachments`.
     public var relativePath: String
     public var sha256: String
     public var width: Int
     public var height: Int
-    /// Original file name for documents (nil for images).
     public var displayName: String?
 
     public init(
@@ -65,7 +59,6 @@ public struct Attachment: Codable, Sendable, Hashable, Identifiable {
     }
 }
 
-/// Text already extracted from a user-supplied file (PDF, text, code); stored as a `.document` attachment.
 public struct DocumentInput: Sendable, Equatable {
     public var name: String
     public var text: String
@@ -75,11 +68,9 @@ public struct DocumentInput: Sendable, Equatable {
     }
 }
 
-/// Tool call requested by the model.
 public struct ToolCall: Codable, Sendable, Hashable, Identifiable {
     public var id: String
     public var name: String
-    /// Arguments as a JSON string, parsed by the tool itself.
     public var argumentsJSON: String
 
     public init(id: String, name: String, argumentsJSON: String) {
@@ -96,12 +87,10 @@ public struct Message: Codable, Sendable, Identifiable, Hashable {
     public var text: String
     public var attachments: [Attachment]
     public var toolCalls: [ToolCall]
-    /// For role == .tool: id of the call this message answers.
     public var toolCallID: String?
     public var createdAt: Date
     public var completionTokens: Int?
     public var tokensPerSecond: Double?
-    /// true while the reply is generating or if generation was interrupted.
     public var isPartial: Bool
     public var modelID: String?
 
@@ -127,12 +116,10 @@ public struct Message: Codable, Sendable, Identifiable, Hashable {
 
 // ChatStore
 
-/// Chat storage. Implementations: `InMemoryChatStore` (tests), `SwiftDataChatStore` (app).
 public protocol ChatStore: Sendable {
     func allChats(includeArchived: Bool) async throws -> [Chat]
     func chat(id: UUID) async throws -> Chat?
     func messages(chatID: UUID) async throws -> [Message]
-    /// Chats with a question or an answer containing `query` (case and diacritics ignored): the sidebar's search.
     func chatIDs(matching query: String) async throws -> Set<UUID>
     func insert(_ chat: Chat) async throws
     func update(_ chat: Chat) async throws
@@ -140,12 +127,9 @@ public protocol ChatStore: Sendable {
     func insert(_ message: Message) async throws
     func update(_ message: Message) async throws
     func deleteMessage(id: UUID) async throws
-    /// Change stream; the UI re-reads data on each event. Every access is a subscription of its own (`ChatStoreBroadcast`).
     var changes: AsyncStream<ChatStoreChange> { get }
 }
 
-/// Fans store changes out to every listener. An `AsyncStream` hands each element to one consumer only, and the panel, the
-/// chats window and the panel all listen: with one shared stream each saw only part of the changes.
 public final class ChatStoreBroadcast: @unchecked Sendable {
     private let lock = NSLock()
     private var listeners: [UUID: AsyncStream<ChatStoreChange>.Continuation] = [:]
@@ -180,7 +164,6 @@ public enum ChatStoreError: Error, Equatable {
     case notFound(UUID)
 }
 
-/// Simple in-memory store: tests, prototypes, fallback when the database is unavailable.
 public actor InMemoryChatStore: ChatStore {
     private var chats: [UUID: Chat] = [:]
     private var messagesByChat: [UUID: [Message]] = [:]

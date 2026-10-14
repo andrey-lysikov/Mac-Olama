@@ -4,8 +4,7 @@
 import AppIntents
 import AppKit
 
-// Pure AppKit lifecycle: an LSUIElement app with no SwiftUI scenes. The only windows are Chats and Download
-// (hosted by WindowManager); every other interaction is the menu bar, the quick panel or notifications.
+// AppKit lifecycle, LSUIElement app: menu bar, quick panel and the chats window.
 @main
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -22,13 +21,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Unit tests run hosted inside the app: keep it inert then (no status item, API server, downloads or model loading).
+        // Hosted unit tests: keep the app inert.
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
         replaceRunningInstances()
         UserDefaults.standard.register(defaults: SettingsDefaults.registration)
-        // An earlier build shortened the tooltip delay in the app's own defaults; the system delay applies again.
+        // Remove an old custom tooltip delay; use the system one.
         UserDefaults.standard.removeObject(forKey: "NSInitialToolTipDelay")
-        NSApp.setActivationPolicy(.accessory)  // LSUIElement: no Dock icon; windows are raised manually
+        NSApp.setActivationPolicy(.accessory)  // No Dock icon; windows are raised manually
         installMainMenu()
         container = AppContainer()
 
@@ -49,8 +48,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         container.start()
     }
 
-    /// A copy started while another is running (a new build, or the one in Applications) takes over: the old one is told
-    /// to quit and this one waits for it, since it still holds the API port, the hotkey and the loaded model.
     private func replaceRunningInstances() {
         guard let id = Bundle.main.bundleIdentifier else { return }
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: id).filter { $0 != .current }
@@ -68,8 +65,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wait(2)
     }
 
-    /// ⌘Q closes the chats window instead of quitting: the app lives in the menu bar, and leaving it is the "Quit" item
-    /// of the status menu. With no window open it does quit.
     @objc private func closeWindowOrQuit() {
         if let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.styleMask.contains(.titled) }) {
             window.performClose(nil)
@@ -78,8 +73,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// An agent app gets no main menu for free, and without an Edit menu text fields lose ⌘A/⌘C/⌘V/⌘X/⌘Z.
-    /// The menu bar shows it only while the chats window is open (activation policy `.regular`).
     private func applyHotkey() {
         GlobalHotkey.shared.register(container.hotkey) { [weak self] in self?.panel.toggle() }
     }
@@ -116,8 +109,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = main
     }
 
-    /// Reopening from the Dock or Finder follows the same rule as a click on the status item: the chats window wins
-    /// while it is open, otherwise the panel.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if WindowManager.shared.isOpen(.chats) {
             panel?.hide()

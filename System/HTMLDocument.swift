@@ -4,12 +4,7 @@
 import Foundation
 import SwiftSoup
 
-// HTML is read through SwiftSoup's HTML5 tree builder instead of regular expressions; pages reach the model as Markdown
-// so headings, lists, tables, links and code survive extraction.
-
-/// Small text helpers over the SwiftSoup DOM.
 public enum HTMLText {
-    /// Visible text of an HTML fragment with whitespace collapsed.
     public static func plainText(_ html: String) -> String {
         guard let document = try? SwiftSoup.parseBodyFragment(html), let text = try? document.text() else { return html }
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -24,7 +19,6 @@ public enum HTMLText {
         for child in node.getChildNodes() { collectText(child, into: &parts) }
     }
 
-    /// Turns every whitespace run into one space without trimming the ends (they separate inline elements).
     static func collapse(_ s: String) -> String {
         var out = ""
         out.reserveCapacity(s.utf8.count)
@@ -51,15 +45,12 @@ public enum PageExtractor {
         public var markdown: String
     }
 
-    /// Page chrome that never carries the content itself.
     static let chrome = """
         script, style, noscript, template, svg, canvas, iframe, object, embed, form, button, input, select, textarea, \
         nav, footer, aside, dialog, [hidden], [aria-hidden=true], [role=navigation], [role=banner], [role=contentinfo], \
         [role=complementary]
         """
 
-    /// Readable Markdown from HTML: drops chrome, prefers the main article, caps the length.
-    /// `url` resolves relative links so the model can pass them to `fetch_url`.
     public static func extract(html: String, url: URL? = nil, maxCharacters: Int) throws -> Page {
         let document = try SwiftSoup.parse(html, url?.absoluteString ?? "")
         let title = HTMLText.collapse(try document.title()).trimmingCharacters(in: .whitespaces)
@@ -71,7 +62,6 @@ public enum PageExtractor {
         return Page(title: title, markdown: markdown)
     }
 
-    /// The longest `<article>` if it holds a real share of the page (listing pages have many small ones), else `<main>`, else body.
     static func mainContent(of document: Document) throws -> Element {
         let body = document.body() ?? document
         let bodyLength = try body.text().count
@@ -81,7 +71,6 @@ public enum PageExtractor {
         return body
     }
 
-    /// Cuts at a line break near the limit so the model does not see half a table row.
     static func clip(_ markdown: String, to limit: Int) -> String {
         var head = String(markdown.prefix(limit))
         if let newline = head.lastIndex(of: "\n"), head.distance(from: head.startIndex, to: newline) > limit * 4 / 5 {
@@ -91,7 +80,6 @@ public enum PageExtractor {
     }
 }
 
-/// DOM → GitHub-flavoured Markdown for the model: structure survives, presentation does not. Images are dropped.
 enum HTMLMarkdown {
     static let blockTags: Set<String> = [
         "address", "article", "aside", "blockquote", "body", "caption", "center", "details", "dialog", "dd", "div", "dl", "dt",
@@ -103,7 +91,6 @@ enum HTMLMarkdown {
         blocks(of: root).joined(separator: "\n\n")
     }
 
-    /// Children of a container: runs of inline content become paragraphs, block children render on their own.
     static func blocks(of element: Element) -> [String] {
         var out: [String] = []
         var line = ""
@@ -175,7 +162,7 @@ enum HTMLMarkdown {
         case "em", "i": return wrap(inner, "*")
         case "del", "s", "strike": return wrap(inner, "~~")
         case "a": return link(element, text: inner)
-        default: return blockTags.contains(tag) ? " \(inner) " : inner  // a block inside a link or span still separates words
+        default: return blockTags.contains(tag) ? " \(inner) " : inner  // blocks inside inline tags still separate words
         }
     }
 
@@ -217,7 +204,6 @@ enum HTMLMarkdown {
         return ["\(fence)\(language)\n\(code)\n\(fence)"]
     }
 
-    /// GFM table from the rows of this table (not of nested ones); single-column layout tables become plain blocks.
     static func table(_ element: Element) -> [String] {
         let rows = ((try? element.select("tr").array()) ?? []).filter { row in
             var parent = row.parent()
@@ -239,7 +225,6 @@ enum HTMLMarkdown {
         return [lines.joined(separator: "\n")]
     }
 
-    /// Text exactly as written (for code): whitespace kept, `<br>` as a newline.
     static func rawText(_ node: Node) -> String {
         if let text = node as? TextNode { return text.getWholeText() }
         if let element = node as? Element, element.tagNameNormal() == "br" { return "\n" }
@@ -257,7 +242,6 @@ enum HTMLMarkdown {
         return "\(fence)\(trimmed)\(fence)"
     }
 
-    /// Moves the element's outer whitespace outside the markers: `<b> x </b>` → ` **x** `.
     static func wrap(_ text: String, _ marker: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, !trimmed.contains("\n") else { return text }
@@ -266,7 +250,6 @@ enum HTMLMarkdown {
         return leading + marker + trimmed + marker + trailing
     }
 
-    /// Collapses spaces on every line and drops empty lines (left by `<br>` runs and whitespace-only nodes).
     static func tidy(_ text: String) -> String {
         text.split(separator: "\n").map { HTMLText.collapse(String($0)).trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }.joined(separator: "\n")

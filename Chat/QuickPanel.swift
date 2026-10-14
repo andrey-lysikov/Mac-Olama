@@ -6,12 +6,8 @@ import Observation
 import SwiftUI
 import UniformTypeIdentifiers
 
-// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
-// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
-
 // QuickPanelController
 
-/// Spotlight-style floating panel. Non-activating: keeps the front app active but still accepts input.
 @MainActor
 final class QuickPanelController: NSObject, NSWindowDelegate {
     private let container: AppContainer
@@ -24,14 +20,11 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
     // Plain constants: `PanelPlacement` and the tests read them outside the main actor.
     nonisolated static let defaultWidth: CGFloat = 680
     nonisolated static let minWidth: CGFloat = 420
-    nonisolated static let minHeight: CGFloat = 48  // below the one-line field, so the panel never pads above it
-    /// Height of the last content report, so the panel can snap back to it after the user stops dragging an edge.
+    nonisolated static let minHeight: CGFloat = 48  // below the one-line field
     private var contentHeight: CGFloat = minHeight
     private var isApplyingFrame = false
     private var fitScheduled = false
-    /// Waits for the end of a drag, see `windowDidMove`.
     private var dragWatch: Task<Void, Never>?
-    /// The chat is being read before the panel comes up; a second hotkey press meanwhile closes it instead.
     private var opening: Task<Void, Never>?
 
     init(container: AppContainer) {
@@ -44,8 +37,7 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.screenParametersDidChange() }
         }
-        // Tooltips and popovers are windows of their own, below the panel's screen-saver level, so one shown over the
-        // panel came out under it. Each is lifted over the panel as it appears (its occlusion changes then).
+        // Lift tooltips and popovers above the panel's level as they appear.
         overlayObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didChangeOcclusionStateNotification, object: nil, queue: .main
         ) { note in
@@ -54,7 +46,6 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         }
     }
 
-    /// Over the panel, as the file dialog is: AppKit's tooltip panel and popover windows only, by their class names.
     private static func lift(_ window: NSWindow?) {
         guard let window, window.isVisible else { return }
         let kind = String(describing: type(of: window))
@@ -76,14 +67,12 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
         panel.isMovableByWindowBackground = true
-        // Above other apps' floating palettes too, like Spotlight; menus still open over it.
-        // Above everything, as the OSD panel of System-Spinner does it: the screen-saver level clears other apps' floating
-        // palettes and full-screen windows too.
+        // Screen-saver level: above floating palettes and full-screen windows.
         panel.level = .screenSaver
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
-        // No show/hide animation: with the glass material it read as a flicker on every open and close.
+        // No show/hide animation: it flickered with glass.
         panel.animationBehavior = .none
         panel.backgroundColor = .clear
         panel.isOpaque = false
@@ -101,9 +90,8 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         )
         .environment(container)
         let hosting = NSHostingView(rootView: root)
-        hosting.sizingOptions = []  // the window is sized by `fit(contentHeight:)`, not by Auto Layout
-        // The hidden title bar still counts as a safe area: the content got less height than the window, so the field
-        // was pushed up out of the glass. `ignoresSafeArea()` in SwiftUI did not reach it.
+        hosting.sizingOptions = []  // sized by `fit(contentHeight:)`
+        // Drop the hidden title bar's safe area, which SwiftUI could not ignore.
         hosting.safeAreaRegions = []
         panel.contentView = hosting
     }
@@ -114,7 +102,6 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         isVisible || opening != nil ? hide() : show()
     }
 
-    /// The menu bar icon's window, so a click on it is not taken for "clicked elsewhere".
     weak var statusItemWindow: NSWindow?
 
     private func isStatusItemClick(_ event: NSEvent?) -> Bool {
@@ -133,19 +120,16 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
             return
         }
         guard opening == nil else { return }
-        // The chat is read first: shown with the last transcript's height, the panel shrank on screen a moment later
-        // whenever the active chat turned out to be another one, or empty.
+        // Load the chat first so the panel opens at the right height.
         opening = Task { [weak self] in
             await self?.viewModel.loadActiveChat()
             guard let self, !Task.isCancelled else { return }
             opening = nil
             position()
-            // Lay out and size the panel before it is on screen, so it appears at its final height instead of growing
-            // a frame later (the deferred `scheduleFit` is for layout passes; resizing directly is safe here).
+            // Size the panel before showing it to avoid a resize flash.
             panel.contentView?.layoutSubtreeIfNeeded()
             fit(contentHeight: contentHeight)
-            // The app is usually not active here (hotkey, status item): "regardless" orders the panel front anyway,
-            // and a non-activating panel takes the keyboard without pulling the app forward.
+            // Order front regardless; the non-activating panel takes the keyboard.
             panel.orderFrontRegardless()
             panel.makeKey()
             // A status menu item dismisses its menu only after its action returns; repeat once it has.
@@ -162,8 +146,6 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         removeFocusObserver()
     }
 
-    /// The open dialog goes above the panel (one level over it) and takes the keyboard; the panel must not auto-close
-    /// while the dialog is key, so the focus observer rests until it is dismissed.
     private func chooseFiles() {
         removeFocusObserver()
         let dialog = NSOpenPanel()
@@ -179,16 +161,14 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
             installFocusObserver()
         }
         dialog.orderFrontRegardless()
-        dialog.makeKey()  // VERIFY(mac): the dialog gets the keyboard while the app is an accessory
+        dialog.makeKey()  // VERIFY(mac): dialog gets the keyboard while accessory
     }
 
-    // Geometry: the user drags the panel anywhere and drags its edges; width and the height limit for answers are remembered.
+    // Geometry: draggable and resizable; width and height limit are remembered.
 
-    /// SwiftUI reports the height from inside its layout pass, i.e. during a Core Animation commit, where resizing the
-    /// window breaks AppKit's transaction ("Invalid attempt to open a new transaction during CA commit"): resize next turn.
     private func scheduleFit(contentHeight: CGFloat) {
         self.contentHeight = contentHeight
-        guard !fitScheduled else { return }  // several reports in one frame collapse into one resize
+        guard !fitScheduled else { return }  // coalesce reports into one resize
         fitScheduled = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -197,8 +177,6 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         }
     }
 
-    /// Follows the SwiftUI content: the bottom edge (the field) stays where it is and the panel grows or shrinks upwards,
-    /// up to the height limit (the user's own, otherwise half of the screen) and never past the top of the screen.
     private func fit(contentHeight: CGFloat) {
         self.contentHeight = contentHeight
         guard !panel.inLiveResize else { return }
@@ -213,18 +191,16 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         isApplyingFrame = false
     }
 
-    /// Dragging an edge: the width is kept as is, the height the user chose becomes the limit for answers.
     func windowDidEndLiveResize(_ notification: Notification) {
         viewModel.maxPanelHeight = max(panel.frame.height, 160)
         saveGeometry()
         fit(contentHeight: contentHeight)
     }
 
-    /// Dragged higher or lower: the room above the field changes, and with it how tall the transcript may be.
     func windowDidMove(_ notification: Notification) {
         guard !isApplyingFrame, panel.isVisible else { return }
         saveGeometry()
-        // Resizing while the panel is being dragged fights the drag: refit once the mouse button is released.
+        // Refit after the drag ends.
         guard NSEvent.pressedMouseButtons & 1 != 0 else { return fit(contentHeight: contentHeight) }
         guard dragWatch == nil else { return }
         dragWatch = Task { [weak self] in
@@ -240,10 +216,9 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         container.settings.panelGeometry = [frame.minX, frame.minY, frame.width, viewModel.maxPanelHeight, 1].map(Double.init)
     }
 
-    /// Remembered place and size if they still fit a screen; otherwise low on the screen under the cursor.
     private func position() {
         let mouse = NSEvent.mouseLocation
-        // No screens at all (lid closed, displays asleep): showing the panel can wait; indexing an empty list cannot.
+        // No screens: skip showing.
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main ?? NSScreen.screens.first
         else { return }
         let placed = PanelPlacement.resolve(
@@ -256,8 +231,6 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         fit(contentHeight: contentHeight)
     }
 
-    /// A display was unplugged or its resolution changed while the panel is open: move it back if it ended up off-screen.
-    /// `position()` falls back to the default place on its own because the remembered frame no longer fits any screen.
     private func screenParametersDidChange() {
         guard panel.isVisible, !NSScreen.screens.contains(where: { $0.visibleFrame.contains(panel.frame) }) else { return }
         position()
@@ -270,8 +243,7 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         focusObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: panel, queue: .main) {
             [weak self] _ in
             MainActor.assumeIsolated {
-                // A click on our own menu bar icon takes the focus too; the click decides what happens, not the auto-close
-                // (which used to hide the panel only for the click to show it again).
+                // A click on our status item decides, not the auto-close.
                 guard let self, !self.isStatusItemClick(NSApp.currentEvent) else { return }
                 self.hide()
             }
@@ -284,10 +256,7 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
     }
 }
 
-/// Pure geometry behind `position()`, separated so it can be unit-tested without NSScreen.
 enum PanelPlacement {
-    /// `saved` is `SettingsKey.panelGeometry`: left, bottom, width, height limit and the format marker 1. Four items are the
-    /// older top-anchored format (left, top, width, limit), converted with the current height; anything else is "first run".
     static func resolve(
         saved: [Double], panelHeight: CGFloat, visible: NSRect, screens: [NSRect]
     ) -> (frame: NSRect, maxHeight: CGFloat) {
@@ -295,40 +264,33 @@ enum PanelPlacement {
         let width =
             hasSaved ? min(max(CGFloat(saved[2]), QuickPanelController.minWidth), visible.width) : QuickPanelController.defaultWidth
         let maxHeight = hasSaved ? min(max(CGFloat(saved[3]), 160), visible.height) : visible.height / 2
-        // Default: centred, the field a quarter of the screen above the bottom; answers grow the panel upwards from there.
+        // Default: centred, field a quarter of the screen above the bottom.
         var frame = NSRect(x: visible.midX - width / 2, y: visible.minY + visible.height / 4, width: width, height: panelHeight)
         if hasSaved {
             let bottom = saved.count == 5 ? CGFloat(saved[1]) : CGFloat(saved[1]) - panelHeight
             let remembered = NSRect(x: CGFloat(saved[0]), y: bottom, width: width, height: panelHeight)
-            // Off-screen (a display was unplugged, the resolution changed): fall back to the default place.
+            // Off-screen: use the default place.
             if screens.contains(where: { $0.contains(remembered) }) { frame = remembered }
         }
         return (frame, maxHeight)
     }
 }
 
-/// NSPanel that can become key (needed for typing in a non-activating panel) and handles Esc.
 @MainActor
 final class QuickPanel: NSPanel {
     var onEscape: (() -> Void)?
-    /// Returns true when ⌘V was consumed by attaching a copied image or file instead of pasting text.
     var onPasteAttachment: (() -> Bool)?
-    /// ⌘N starts a new chat here, as it does in the chats window.
     var onNewChat: (() -> Void)?
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
-    /// Private AppKit hook (as System-Spinner's OSD uses): the glass and the controls keep their active look while the
-    /// app itself stays in the background, which is where this panel spends its life.
     @objc(_hasActiveAppearance) dynamic func hasActiveAppearance() -> Bool { true }
 
     override func cancelOperation(_ sender: Any?) {
         onEscape?()
     }
 
-    /// The panel is non-activating, so the app's Edit menu may never see its key equivalents: route them to the field editor here.
-    /// Key codes, not characters, so the shortcuts work in any keyboard layout.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if super.performKeyEquivalent(with: event) { return true }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -359,8 +321,6 @@ final class QuickPanel: NSPanel {
 
 // QuickPanelViewModel
 
-/// Panel state: active chat, streaming reply, attachments. One instance per app.
-/// Streaming, queueing and attachments live in `ConversationStreamCoordinator`, shared with the chats window.
 @MainActor
 @Observable
 final class QuickPanelViewModel: ConversationStreamDelegate, ConversationStreamHosting {
@@ -369,23 +329,17 @@ final class QuickPanelViewModel: ConversationStreamDelegate, ConversationStreamH
     private let container: AppContainer
     let stream: ConversationStreamCoordinator
 
-    /// Height limit of the whole panel: the user's choice, otherwise half of the screen. The transcript scrolls beyond it.
     var maxPanelHeight: CGFloat = 480
-    /// What the panel may really take: the limit above, cut by the room between the field and the top of the screen.
     var heightLimit: CGFloat = 480
     private(set) var chat: Chat? { didSet { container.panelChatID = chat?.id } }
-    /// Bumped when the transcript should jump back to the newest exchange: the panel was opened, the chat changed, or a
-    /// question was sent. A reply growing or ending is followed by the view.
     private(set) var transcriptToken = 0
     private var storeTask: Task<Void, Never>?
 
-    // The coordinator holds the shared state, forwarded by `ConversationStreamHosting`; only this differs here:
-    // a reply the chats window is writing into the panel's chat shows its steps and thinking here too.
+    // Show steps of a reply the chats window writes into the panel's chat.
     var progress: GenerationProgress? { stream.progress ?? chat.flatMap { container.liveProgress[$0.id] } }
 
     var activeModel: ModelDescriptor? { container.activeModel }
     var canAttachImages: Bool { activeModel?.kind == .vlm }
-    /// Window the panel's chat runs with: the context saved for the model, otherwise the model maximum.
     var contextLimit: Int? { activeModel.flatMap { container.contextTokens(for: $0) } }
     var contextUsed: Int { stream.contextUsed(systemPrompt: chat?.systemPrompt) }
     var engineState: EngineState { container.engineState }
@@ -412,14 +366,10 @@ final class QuickPanelViewModel: ConversationStreamDelegate, ConversationStreamH
 
     func displaysChat(_ chatID: UUID) -> Bool { chat?.id == chatID }
 
-    func streamDidFinish(chatID: UUID) {}
-
     var acceptsImages: Bool { canAttachImages }
 
-    /// Bumped on every show: the field takes the keyboard each time, not only the first time the view appears.
     private(set) var focusToken = 0
 
-    /// The chat itself is loaded by the caller: before the panel is shown, so it comes up at the right height.
     func panelDidAppear() {
         focusToken += 1
     }
@@ -438,7 +388,6 @@ final class QuickPanelViewModel: ConversationStreamDelegate, ConversationStreamH
         }
     }
 
-    /// Clear: cancel whatever runs, wipe the panel and start a new chat. The old task's tail cannot write back.
     func clear() {
         stream.reset()
         Task {
@@ -453,7 +402,6 @@ final class QuickPanelViewModel: ConversationStreamDelegate, ConversationStreamH
         Task { await container.conversation.cancel(chatID: chat.id) }
     }
 
-    /// Sends the field, or queues it while the model is still answering or thinking.
     func send() {
         guard container.activeModel != nil else {
             stream.errorMessage = String(localized: "No model selected. Download one from the menu.")

@@ -5,19 +5,14 @@ import AppKit
 import Observation
 import SwiftUI
 
-// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
-// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
-
 // DownloadViewModel
 
-/// Search across hubs for the models window. Downloads themselves are owned by AppContainer.
 @MainActor
 @Observable
 final class DownloadViewModel {
     enum Hub: String, CaseIterable, Identifiable {
         case huggingFace, modelScope, link, api
         var id: String { rawValue }
-        /// The hub a search goes to; nil for the entries that do not search.
         var source: ModelSource? {
             switch self {
             case .huggingFace: .huggingFace
@@ -32,7 +27,6 @@ final class DownloadViewModel {
             case .api: String(localized: "Connect by API")
             }
         }
-        /// The hub's own logo (greyscale, like the model icons), a symbol until it has loaded.
         @MainActor var icon: Image {
             if let owner = source?.avatarOwner, let avatar = ModelIcons.shared.avatar(owner) {
                 // The picker is drawn by AppKit: the logo goes in as a small rounded image.
@@ -44,7 +38,6 @@ final class DownloadViewModel {
             case .api: return Image(systemName: "network")
             }
         }
-        /// The search hubs stay bare: the dropdown of recommended models is the hint. A link has to be typed exactly.
         var prompt: String {
             switch self {
             case .huggingFace, .modelScope: ""
@@ -55,12 +48,10 @@ final class DownloadViewModel {
 
     }
 
-    /// One result line; the same shape for both hubs.
     struct Row: Identifiable, Equatable {
         var id: String { repoID }
         var repoID: String  // `org/repo` or `modelscope:org/repo`
         var source: ModelSource
-        /// Author of the base model and the community that built this copy: the row's icon.
         var owners: ModelOwners
         var title: String
         var sizeBytes: Int64?
@@ -71,17 +62,13 @@ final class DownloadViewModel {
         var detailsLoaded = false
         var isMLX = true
         var lastModified: Date?
-        /// From the repository's config.json, once the details have loaded: the exact cost of the attention cache.
         var kvCache: KVCacheProfile?
-        /// The Hugging Face repository this copy was made from, when the hub says so.
         var baseModel: String?
-        /// A few sentences from the model card, once loaded: the base model's card first, a copy's own is mostly boilerplate.
         var summary: String?
         var pageURL: URL? { ModelReference.parse(repoID)?.pageURL }
     }
 
     enum Verdict: Equatable {
-        /// `tooLarge` is the red verdict: the model will likely not fit, or cannot run here at all. Only the latter blocks the download.
         case fits(String), unknown(String), tooLarge(String)
         var symbol: String {
             switch self {
@@ -97,7 +84,6 @@ final class DownloadViewModel {
         }
     }
 
-    /// A model being connected by API: typed into the models card, checked against the server on save.
     struct RemoteDraft: Identifiable {
         let id = UUID()
         var name: String
@@ -117,14 +103,12 @@ final class DownloadViewModel {
     private(set) var hasSearched = false
     private var searchTask: Task<Void, Never>?
     private var detailTasks: [String: Task<Void, Never>] = [:]
-    /// Model card summaries by the Hugging Face repository they were read from: copies of one base model share it.
     private var summaryTasks: [String: Task<String?, Never>] = [:]
 
     init(container: AppContainer) {
         self.container = container
     }
 
-    /// The cross in the search field: empties it and, for the hubs that search, drops the results with it.
     func clearQuery() {
         query = ""
         if hub != .api { search() }
@@ -159,7 +143,7 @@ final class DownloadViewModel {
                 return
             } catch {
                 guard !Task.isCancelled else { return }
-                // A gated repository hit while searching or checking a link asks for the token the same way a download does.
+                // Gated repo while searching asks for the token like a download.
                 if case HubError.gatedRepositoryRequiresToken = error, container.hubClient.token == nil {
                     container.tokenPromptRequested = true
                 } else {
@@ -173,7 +157,6 @@ final class DownloadViewModel {
 
     // Connect by API
 
-    /// The name typed in the search field opens a row in the models card for the address and the token.
     private func addRemoteDraft() {
         let name = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else {
@@ -206,7 +189,7 @@ final class DownloadViewModel {
         remoteDrafts.removeAll { $0.id == id }
     }
 
-    // `org/name` narrows the search to that author, so a recommended repository comes back first.
+    // `org/name` narrows the search to that author.
     private func searchHuggingFace(_ q: String) async throws {
         let parts = q.split(separator: "/", maxSplits: 1).map(String.init)
         let found =
@@ -220,14 +203,14 @@ final class DownloadViewModel {
                 repoID: $0.id, source: .huggingFace, owners: ModelOwners(repoID: $0.id, baseModel: baseModel),
                 title: $0.displayName, isGated: $0.isGated, isMLX: $0.isMLX, lastModified: $0.lastModified, baseModel: baseModel)
         }
-        // The order depends on every row's verdict, so details are fetched for all rows up front (URLSession queues them per host).
+        // Fetch details for all rows up front; ordering depends on every verdict.
         for row in rows {
             loadDetails(for: row.repoID)
             loadSummary(for: row.repoID)
         }
     }
 
-    // ModelScope's search already carries the size and the base model; the config is read per row for kind and context.
+    // ModelScope search has size and base model; config per row.
     private func searchModelScope(_ q: String) async throws {
         let found = try await container.modelScopeClient.search(query: q, limit: 40)
         try Task.checkCancellation()
@@ -246,7 +229,6 @@ final class DownloadViewModel {
             baseModel: model.baseModel)
     }
 
-    /// "By link": checks that the model exists and reports its name and size as a single row.
     private func resolveLink(_ q: String) async throws {
         guard let reference = ModelReference.parse(q) else {
             searchError = String(localized: "Enter mlx-community/Qwen3.5-9B-MLX-4bit or a huggingface.co / modelscope.cn link")
@@ -272,7 +254,6 @@ final class DownloadViewModel {
         loadSummary(for: rows[0].repoID)
     }
 
-    /// Lazily fetches size and classification for a row to avoid flooding HF with requests.
     func loadDetails(for repoID: String) {
         guard detailTasks[repoID] == nil, let row = rows.first(where: { $0.repoID == repoID }), !row.detailsLoaded else { return }
         if case .modelScope(let id) = ModelReference.parse(repoID) { return loadModelScopeDetails(for: repoID, hubRepoID: id) }
@@ -291,8 +272,6 @@ final class DownloadViewModel {
         }
     }
 
-    /// The base model's card says what the model is; a Hugging Face copy's own card is the fallback. ModelScope's base
-    /// models are named as on Hugging Face, so their cards are read there too.
     func loadSummary(for repoID: String) {
         guard let row = rows.first(where: { $0.repoID == repoID }), row.summary == nil else { return }
         var sources = [row.baseModel].compactMap { $0 }
@@ -314,7 +293,6 @@ final class DownloadViewModel {
         return await task.value
     }
 
-    /// The size came with the search; the config gives the kind, the context and the quantization.
     private func loadModelScopeDetails(for repoID: String, hubRepoID: String) {
         detailTasks[repoID] = Task {
             defer { detailTasks[repoID] = nil }
@@ -339,7 +317,7 @@ final class DownloadViewModel {
         row.detailsLoaded = true
     }
 
-    // Order: models that fit, the uncertain ones, those that will not run; newest first inside each group.
+    // Order: fits, uncertain, too large; newest first.
 
     var sortedRows: [Row] {
         func rank(_ row: Row) -> Int {
@@ -360,7 +338,6 @@ final class DownloadViewModel {
 
     // Verdict
 
-    /// nil until the row's size is known: there is nothing to estimate from.
     func fit(for row: Row) -> ModelFitReport? {
         guard row.detailsLoaded, let bytes = row.sizeBytes, bytes > 0 else { return nil }
         return ModelFitReport.evaluate(
@@ -388,7 +365,7 @@ final class DownloadViewModel {
         }
         if fit.warnings.contains("memory-busy") {
             let free = Int64(HardwareProfile.availableMemoryBytes()).memorySizeText
-            // The model itself fits; what is busy now is not its fault. A check mark, and the two stars tell the rest.
+            // Fits; current memory pressure is shown by stars.
             return .fits(
                 String(
                     localized:
@@ -413,20 +390,17 @@ final class DownloadViewModel {
 
 // ModelLibraryHeader
 
-/// The controls that used to sit in the window's toolbar: hub, search, the MLX checkbox and the token key. The chats
-/// window draws them itself in its title row, so nothing of them is ever folded into a "»" overflow menu.
 struct ModelLibraryHeader: View {
     @Bindable var viewModel: DownloadViewModel
     @Environment(AppContainer.self) private var container
     @State private var showsToken = false
     @FocusState private var searchFocused: Bool
 
-    /// "By link" and "Connect by API" take an exact name instead of searching.
     private var confirmsName: Bool { viewModel.hub == .api || viewModel.hub == .link }
 
     var body: some View {
         HStack(spacing: 10) {
-            // A glass capsule like the search field and the key beside it; the menu inside keeps the system check marks.
+            // Glass capsule hub menu with system check marks.
             Menu {
                 Picker(String(localized: "Hub"), selection: $viewModel.hub) {
                     ForEach(DownloadViewModel.Hub.allCases) { hub in
@@ -453,9 +427,7 @@ struct ModelLibraryHeader: View {
             .fixedSize()
             .help(String(localized: "Hub"))
             .accessibilityLabel(String(localized: "Hub"))
-            // The search capsule: the magnifier on the left, as in the system search field, and the cross on the right.
-            // "By link" and "Connect by API" confirm an exact name instead, so their check mark sits on the right, apart
-            // from the cross.
+            // Search capsule: magnifier left, clear right; exact-name modes confirm on the right.
             HStack(spacing: 6) {
                 if !confirmsName { actionButton }
                 TextField(viewModel.hub.prompt, text: $viewModel.query)
@@ -490,7 +462,7 @@ struct ModelLibraryHeader: View {
                 TokenSettingsView(isPresented: $showsToken).environment(container)
             }
         }
-        // Any action that hits a gated repository opens the token popover, exactly as if the key button had been pressed.
+        // A gated repo opens the token popover.
         .onChange(of: container.tokenPromptRequested, initial: true) { _, requested in
             guard requested else { return }
             showsToken = true
@@ -498,7 +470,6 @@ struct ModelLibraryHeader: View {
         }
     }
 
-    /// Runs the search, or confirms the name for "By link" and "Connect by API": a check mark, not a magnifier.
     private var actionButton: some View {
         Button {
             viewModel.search()
@@ -515,7 +486,6 @@ struct ModelLibraryHeader: View {
         .accessibilityLabel(viewModel.hub == .api ? String(localized: "Add") : String(localized: "Search"))
     }
 
-    /// The cross and Esc: empty the field and keep typing in it, as the system search field does.
     private func clearQuery() {
         viewModel.clearQuery()
         searchFocused = true
@@ -524,21 +494,15 @@ struct ModelLibraryHeader: View {
 
 // ModelLibraryView
 
-/// Model library, shown in the right column of the chats window: results on top, and a permanent list of downloaded
-/// models at the bottom with running downloads above them. Its controls live in the window's title row.
 struct ModelLibraryView: View {
     @Bindable var viewModel: DownloadViewModel
     @Environment(AppContainer.self) private var container
-    /// The model whose MTP popover is open and the drafters the hub offers for it.
     @State private var drafterTarget: String?
-    /// Kept per model: another model's popover opened while this one closes must never show this one's answer.
-    /// No entry means the search for that model is still running.
     @State private var drafterCandidates: [String: [String]] = [:]
 
     var body: some View {
         content(viewModel)
-            // Only here, and once a minute: this is the section that shows whether a connected server answers, so a
-            // server that comes back is noticed without asking it from every window all the time.
+            // Re-check remote servers once a minute, only here.
             .task {
                 while !Task.isCancelled {
                     container.checkModelAvailability(force: true)
@@ -564,7 +528,7 @@ struct ModelLibraryView: View {
             } else {
                 Spacer(minLength: 0)
             }
-            // Laid out first: the card takes what its rows need and the results list above shrinks to what is left.
+            // Card first; results take what is left.
             library.layoutPriority(1)
         }
     }
@@ -598,7 +562,7 @@ struct ModelLibraryView: View {
             // The reason is a plain tooltip.
             Image(systemName: verdict.symbol)
                 .font(.system(size: Self.pictogramSize))
-                .foregroundStyle(.secondary)  // monochrome: the shape (check, question mark, triangle) carries the verdict
+                .foregroundStyle(.secondary)  // monochrome: the shape carries the verdict
                 .help(verdict.detail)
                 .accessibilityLabel(verdict.detail)
             if installed {
@@ -613,9 +577,6 @@ struct ModelLibraryView: View {
         .padding(.vertical, 12)
     }
 
-    /// Left: the model's icon, two lines tall. Line 1: model name (large), size and quantization. Line 2: full identifier with its
-    /// owner, input → output, maximum context. The first line is a single attributed Text so every part shares one baseline.
-    /// `stars` is the memory fit, as in the status menu; left out when the size is unknown.
     private func rowText(
         source: ModelSource?, owners: ModelOwners?, repoID: String, sizeBytes: Int64?, quantization: String?, detail: String,
         gated: Bool = false, stars: Int? = nil, summary: String? = nil, pageURL: URL? = nil
@@ -648,8 +609,6 @@ struct ModelLibraryView: View {
         }
     }
 
-    /// Line 3 of a search result: what the model is, in two lines at most, and the link to its page on the hub's site,
-    /// which stays visible however long the description is.
     private func summaryText(_ summary: String?, pageURL: URL?) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             if let summary {
@@ -664,9 +623,6 @@ struct ModelLibraryView: View {
         .font(.caption)
     }
 
-    /// "lmstudio-community/Qwen3-8B-MLX-4bit · text, images → text · up to 32k context".
-    /// Whether a drafter is installed for a model, and whether it is in use: the row says so in words, the pictogram
-    /// repeats it, so a model with MTP is told apart at a glance.
     enum DrafterMark { case none, off, on }
 
     private func detail(repoID: String, kind: ModelKind?, contextLength: Int?, drafter: DrafterMark = .none) -> String {
@@ -681,10 +637,8 @@ struct ModelLibraryView: View {
         return parts.joined(separator: " · ")
     }
 
-    // Library: always visible. Running and waiting downloads come first, then the downloaded models.
+    // Downloads first, then installed models.
 
-    /// One rounded glass card anchored at the bottom, the same shape as the chat composer. Downloaded and downloading models
-    /// are always shown in full; it scrolls only if they cannot fit in the window at all.
     private var library: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Downloaded Models").font(.headline).padding(.bottom, 4)
@@ -698,8 +652,6 @@ struct ModelLibraryView: View {
         .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 16)
     }
 
-    /// Downloads of models that are not installed yet get rows of their own; an update of an installed model is shown
-    /// inside that model's row instead.
     private var newDownloads: [AppContainer.ActiveDownload] {
         let installed = Set(container.models.map { $0.repoID.lowercased() })
         return container.orderedDownloads.filter { !installed.contains($0.repoID.lowercased()) }
@@ -743,9 +695,6 @@ struct ModelLibraryView: View {
         }
     }
 
-    /// A folder that cannot be loaded, as in the status menu's "Damaged": download it again (resumes) or delete it.
-    /// A drafter that was downloaded as if it were a model: it holds prediction heads only, so it answers nothing and
-    /// waits here until its model is installed, at which point it attaches by itself.
     private func strayDrafterRow(_ drafter: ModelDescriptor) -> some View {
         HStack(alignment: .center, spacing: 14) {
             rowText(
@@ -781,13 +730,12 @@ struct ModelLibraryView: View {
 
     private func installedRow(_ model: ModelDescriptor) -> some View {
         let update = container.downloads.first { $0.repoID.lowercased() == model.repoID.lowercased() }
-        // A model connected by API whose server does not answer: greyed out like in the menu, with a button to check again.
+        // Unreachable remote model: greyed out, with a re-check button.
         let unavailable = !container.isAvailable(model)
-        // Spelled out rather than nested in the call: the type checker gives up on the expression otherwise.
+        // Split out for the type checker.
         var drafter = DrafterMark.none
         if container.drafterIsInstalled(for: model) { drafter = container.isSpeculative(model) ? .on : .off }
-        // No context here for a local model: its row has a menu for it, and the number would only repeat it. A model
-        // served elsewhere has no menu, so the window its server reported is written here.
+        // Show context only for remote models; local ones have a menu.
         let detailText = detail(
             repoID: model.repoID, kind: model.kind, contextLength: model.source == .remote ? model.contextLength : nil,
             drafter: drafter)
@@ -798,11 +746,11 @@ struct ModelLibraryView: View {
                 stars: model.sizeBytes > 0 ? container.fit(for: model).stars : nil
             )
             .opacity(unavailable ? 0.4 : 1)
-            .layoutPriority(1)  // a narrow window shortens the controls on the right, not the model's name
+            .layoutPriority(1)  // narrow window shortens controls, not the name
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 6) {
                 HStack(spacing: 14) {
-                    // A model served elsewhere runs with its server's window and temperature: nothing to choose here.
+                    // Remote models: server decides context and temperature.
                     if model.source != .remote {
                         contextPicker(model).disabled(unavailable)
                         temperaturePicker(model).disabled(unavailable)
@@ -810,7 +758,7 @@ struct ModelLibraryView: View {
                     reasoningButton(model)
                     if container.canSpeculate(model) { speculationButton(model) }
                     if model.source == .remote {
-                        // Served elsewhere: nothing to update here, the server owns the model; only its availability is checked.
+                        // Remote models: only availability is checked.
                         if unavailable {
                             let checking = container.isCheckingAvailability
                             symbolButton("arrow.clockwise", String(localized: "Check whether the server answers")) {
@@ -820,11 +768,11 @@ struct ModelLibraryView: View {
                             .disabled(checking)
                         }
                     } else if let update {
-                        // While the new revision downloads, the update pictogram turns into pause/continue and "cancel the update".
+                        // During an update download: pause/continue and cancel.
                         transferControls(update)
                         symbolButton("xmark.circle", String(localized: "Cancel Update")) { container.cancelDownload(repoID: update.repoID) }
                     } else {
-                        // Always there: checks the hub for a newer revision of this model and downloads it when there is one.
+                        // Check for a newer revision and download it.
                         let checking = container.updates.checkingModels.contains(model.repoID)
                         symbolButton(
                             "arrow.triangle.2.circlepath",
@@ -852,7 +800,6 @@ struct ModelLibraryView: View {
         .padding(.vertical, 12)
     }
 
-    /// Small progress line at the bottom right of an installed model's row while its update downloads.
     @ViewBuilder
     private func updateProgress(_ update: AppContainer.ActiveDownload) -> some View {
         HStack(spacing: 8) {
@@ -877,8 +824,6 @@ struct ModelLibraryView: View {
         .font(.caption.monospacedDigit()).foregroundStyle(.secondary).controlSize(.small)
     }
 
-    /// Context window saved for this model; sizes the model cannot reach are not offered. Drawn like the chat's model
-    /// picker — a borderless menu showing just the current choice — so the row keeps its space for the model's name.
     private func contextPicker(_ model: ModelDescriptor) -> some View {
         let maximum = model.contextLength
         let sizes = [131_072, 65536, 32768, 16384, 8192, 4096].filter { size in maximum.map { size < $0 } ?? true }
@@ -898,7 +843,6 @@ struct ModelLibraryView: View {
         .help(String(localized: "Context window for this model"))
     }
 
-    /// What the update check is doing or found, written under the row's controls the way an unreachable server is.
     private func updateStatus(_ model: ModelDescriptor) -> String? {
         if container.updates.checkingModels.contains(model.repoID) { return String(localized: "Checking for an update…") }
         if container.updates.pendingModelUpdates[model.repoID] != nil { return String(localized: "An update is available") }
@@ -910,13 +854,10 @@ struct ModelLibraryView: View {
         }
     }
 
-    /// Sampling temperature saved for this model. Until one is picked the model answers with the temperature its own
-    /// `generation_config.json` asks for, or MLX's default; a model served elsewhere, with its server's. Drawn like the
-    /// context menu, so the row stays short.
     private func temperaturePicker(_ model: ModelDescriptor) -> some View {
         let standard = container.defaultTemperature(for: model)
         let chosen = container.temperature(for: model)
-        // Only a drafter that cannot verify sampled tokens fixes the temperature at zero; others leave it alone.
+        // Greedy-only drafters fix the temperature at 0.
         let greedy = container.isSpeculative(model) && container.drafterNeedsGreedy(model)
         let shown = greedy ? 0 : (chosen ?? standard?.value)
         let choices: [Double?] = [nil] + Self.temperatures.map { Optional($0) }
@@ -943,15 +884,12 @@ struct ModelLibraryView: View {
                 : String(localized: "Sampling temperature for this model"))
     }
 
-    /// The usual steps: exact answers at 0, everyday chat around 0.6–0.8, loose writing above 1.
     private static let temperatures: [Double] = [0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2]
 
     private static func temperatureText(_ value: Double) -> String {
         value.formatted(.number.precision(.fractionLength(1)).locale(Locale(identifier: "en_US")))
     }
 
-    /// Whether the chat shows what this model says to itself before answering. Off by default: the thinking is long
-    /// and it is not the answer.
     private func reasoningButton(_ model: ModelDescriptor) -> some View {
         let shown = container.showsReasoning(modelID: model.id)
         return symbolButton(
@@ -963,8 +901,6 @@ struct ModelLibraryView: View {
         }
     }
 
-    /// Multi-token prediction for this model: the drafter's weights, installed inside the model's folder, and greedy
-    /// decoding, which its verification needs. Both live behind one pictogram, next to the context window.
     private func speculationButton(_ model: ModelDescriptor) -> some View {
         let installed = container.drafterIsInstalled(for: model)
         let on = installed && container.isSpeculative(model)
@@ -992,14 +928,14 @@ struct ModelLibraryView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(String(localized: "Faster answers (MTP)")).font(.headline)
             if installed {
-                // Which drafter is in place, and the way back: removing it returns this window to the hub's list.
+                // Installed drafter and how to remove it.
                 HStack(spacing: 8) {
                     Text(verbatim: container.installedDrafterRepo(for: model) ?? String(localized: "Installed drafter"))
                         .font(.callout).lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 8)
                     symbolButton("trash", String(localized: "Remove Drafter"), role: .destructive) {
                         container.removeDrafter(for: model)
-                        // A state change, so the popover redraws without the drafter; the search it starts replaces this.
+                        // State change redraws the popover without the drafter.
                         drafterCandidates[model.id] = []
                     }
                 }
@@ -1012,7 +948,7 @@ struct ModelLibraryView: View {
                 Text(String(localized: "The model verifies every drafted token, so answers stay the same but stop varying."))
                     .font(.caption).foregroundStyle(.secondary)
             } else if let download = container.drafterDownload(for: model) {
-                // Installing right now: the same row as any download, but said here, where the button was pressed.
+                // Drafter install in progress.
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text(verbatim: download.repoID).font(.callout).lineLimit(1).truncationMode(.middle)
@@ -1032,8 +968,7 @@ struct ModelLibraryView: View {
                     if candidates.isEmpty {
                         Text(String(localized: "The hub lists no MLX drafter for this model.")).font(.callout)
                     }
-                    // Found by the base model the hub records, so the repository never has to be typed out.
-                    // Picked like a model in the search list: the same pictogram starts the download.
+                    // Drafters found by the hub's base-model tag.
                     ForEach(candidates, id: \.self) { candidate in
                         HStack(spacing: 8) {
                             Text(verbatim: candidate).font(.callout).lineLimit(1).truncationMode(.middle)
@@ -1054,7 +989,7 @@ struct ModelLibraryView: View {
         }
         .padding(14)
         .frame(width: 640, alignment: .leading)
-        // Each opening asks the hub again for the model it belongs to; closing the popover cancels the search.
+        // Each opening queries the hub; closing cancels.
         .task(id: installed) {
             guard !installed else { return }
             drafterCandidates[model.id] = nil
@@ -1064,7 +999,6 @@ struct ModelLibraryView: View {
         }
     }
 
-    /// Top line: the model and, at the right, its controls. Below: the progress bar across the full width, then the status text.
     private func downloadRow(_ download: AppContainer.ActiveDownload) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 14) {
@@ -1083,7 +1017,6 @@ struct ModelLibraryView: View {
         .padding(.vertical, 12)
     }
 
-    /// Pictogram controls: pause/continue for the transfer, cancel for anything not finished.
     @ViewBuilder
     private func downloadControls(_ download: AppContainer.ActiveDownload) -> some View {
         HStack(spacing: 12) {
@@ -1101,8 +1034,6 @@ struct ModelLibraryView: View {
         }
     }
 
-    /// Pause and continue for a transfer in flight. A model still waiting its turn gets them too: Continue pushes it ahead
-    /// of whatever is running, Pause takes it out of the queue until it is asked for again.
     @ViewBuilder
     private func transferControls(_ download: AppContainer.ActiveDownload) -> some View {
         switch download.phase {
@@ -1139,7 +1070,7 @@ struct ModelLibraryView: View {
             ProgressView(value: download.progress?.fraction ?? 0)
             Text("Paused").font(.caption).foregroundStyle(.secondary)
         case .running:
-            if let p = download.progress, p.bytesTotal > 0 {  // until the hub has reported the size there is nothing to show
+            if let p = download.progress, p.bytesTotal > 0 {  // nothing to show until the size is known
                 ProgressView(value: p.fraction)
                 Text(
                     verbatim:
@@ -1160,10 +1091,8 @@ struct ModelLibraryView: View {
         .buttonStyle(.plain)
     }
 
-    /// Shared by every pictogram in the lists (actions, verdicts, marks); halved from 28 pt at the customer's request.
     private static let pictogramSize: CGFloat = 14
 
-    /// "MTP" in words where a pictogram would not say what it is: bold once a drafter is installed, light while it is not.
     private static func mtpMark(installed: Bool) -> some View {
         Text(verbatim: "MTP")
             .font(.system(size: 8, weight: installed ? .bold : .regular, design: .rounded))
@@ -1171,7 +1100,6 @@ struct ModelLibraryView: View {
             .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(.foreground, lineWidth: installed ? 1 : 0.7))
     }
 
-    /// The shared `SymbolButton` with this window's pictogram size and short argument labels.
     private func symbolButton(
         _ symbol: String, _ help: String, role: ButtonRole? = nil, style: AnyShapeStyle = AnyShapeStyle(.secondary),
         action: @escaping () -> Void
@@ -1182,8 +1110,6 @@ struct ModelLibraryView: View {
 
 // TokenSettingsView
 
-/// The Hugging Face access token is a secret and cannot live in a menu, so it stays in a popover of the models section.
-/// The popover also opens by itself whenever a download needs the token; saving it resumes those downloads.
 struct TokenSettingsView: View {
     @Binding var isPresented: Bool
     @Environment(AppContainer.self) private var container
@@ -1233,8 +1159,6 @@ struct TokenSettingsView: View {
 
 // RemoteDraftRow
 
-/// "Connect by API" row in the models card: the model's name, then the server address and an optional token.
-/// Save checks the server and the model; on success the row turns into an ordinary model row.
 private struct RemoteDraftRow: View {
     @Binding var draft: DownloadViewModel.RemoteDraft
     var onSave: () -> Void

@@ -3,9 +3,6 @@
 
 import Foundation
 
-// Models on another server over the OpenAI-compatible `/v1/chat/completions`, streamed over HTTP.
-// Separate reasoning (`reasoning_content`) is wrapped in <think> tags, so it is hidden like a local model's.
-
 enum RemoteError: DescribedError {
     case badAddress
     case unreachable(String)
@@ -27,10 +24,7 @@ enum RemoteError: DescribedError {
     }
 }
 
-/// Wraps a server's separate reasoning stream in the canonical reasoning tags, so the transcript hides it the same
-/// way it hides a local model's.
 private struct ThinkingTagger {
-    /// The first pair in the table is the canonical `<think>`/`</think>` every reply is normalized to.
     private static let tags = AnswerText.reasoningBlocks[0]
     private var thinking = false
 
@@ -47,7 +41,6 @@ private struct ThinkingTagger {
         continuation.yield(.token(text))
     }
 
-    /// Ends an open reasoning block (the answer begins, or the stream is done).
     mutating func close(into continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation) {
         if thinking { continuation.yield(.token(Self.tags.close)) }
         thinking = false
@@ -55,9 +48,7 @@ private struct ThinkingTagger {
 }
 
 actor RemoteEngine: InferenceEngine {
-    /// What the server reported when the model was connected.
     struct Probe: Sendable {
-        /// The name as the server spells it (`qwen3` may be listed as `qwen3:latest`).
         var model: String
         var supportsTools: Bool
         var supportsVision: Bool
@@ -102,10 +93,8 @@ actor RemoteEngine: InferenceEngine {
 
     // Probe
 
-    /// A mistyped address or port must not keep the user waiting: the whole check, all its requests together, ends here.
     static let probeTimeout = 10
 
-    /// Checks the address and the model: `/v1/models`, then llama-server's `/props` for tools, vision and context.
     static func probe(baseURL: URL, model: String, token: String?) async throws -> Probe {
         try await withThrowingTaskGroup(of: Probe?.self) { group in
             group.addTask { try await probeServer(baseURL: baseURL, model: model, token: token) }
@@ -129,7 +118,7 @@ actor RemoteEngine: InferenceEngine {
             throw RemoteError.unreachable(error.localizedDescription)
         }
         let names = (models["data"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
-        // llama-server serves one model under whatever name it was started with; any name reaches it.
+        // llama-server answers under any model name.
         guard let name = match(model, in: names) ?? (names.count == 1 ? names[0] : nil) else {
             throw RemoteError.modelNotFound(model, available: names)
         }
@@ -142,7 +131,6 @@ actor RemoteEngine: InferenceEngine {
             contextLength: settings?["n_ctx"] as? Int)
     }
 
-    /// Exact name, then `name:latest`, then ignoring case or the path of a file-named model.
     private static func match(_ wanted: String, in names: [String]) -> String? {
         let w = wanted.trimmingCharacters(in: .whitespaces)
         if let exact = names.first(where: { $0 == w }) { return exact }
@@ -167,7 +155,7 @@ actor RemoteEngine: InferenceEngine {
         var tagger = ThinkingTagger()
         var finish: FinishReason = .stop
         var usage: GenerationUsage?
-        // Tool calls arrive in pieces keyed by index: the name first, the arguments as a JSON string in fragments.
+        // Tool calls arrive in fragments keyed by index.
         var calls: [Int: (id: String, name: String, arguments: String)] = [:]
         for try await line in bytes.lines {
             try Task.checkCancellation()
@@ -247,8 +235,6 @@ actor RemoteEngine: InferenceEngine {
 
     // HTTP and JSON
 
-    /// Chunk decoding is lenient: timestamps are not read here, and a date format the strict ISO-8601 strategy
-    /// rejects must not drop the chunk.
     private static let chunkDecoder: JSONDecoder = {
         let d = JSONDecoder()
         d.dateDecodingStrategy = .custom { _ in .distantPast }
@@ -266,7 +252,6 @@ actor RemoteEngine: InferenceEngine {
         return object
     }
 
-    /// Long timeout: a big prompt may take the server a while before the first token.
     private static func stream(_ url: URL, token: String?, body: some Encodable) async throws -> URLSession.AsyncBytes {
         let request = HTTPJSON.request(
             url, token: token, jsonBody: try JSONCoding.plainEncoder.encode(body), timeout: 600, accept: nil, userAgent: nil)
@@ -291,7 +276,6 @@ actor RemoteEngine: InferenceEngine {
 
 // RoutingEngine
 
-/// The one engine `EngineManager` owns: local models go to MLX, remote ones over HTTP. One model is loaded at a time.
 actor RoutingEngine: InferenceEngine {
     private let local: any InferenceEngine
     private let remote: any InferenceEngine

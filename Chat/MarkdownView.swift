@@ -4,17 +4,9 @@
 import AppKit
 import SwiftUI
 
-// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
-// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
-
-// Markdown rendering: `MarkdownBlocks` (swift-markdown) turns the text into blocks, SwiftUI draws headers, lists, quotes,
-// code blocks and tables. Nesting inside lists shows as a leading indent.
-
 struct MarkdownView: View {
     let markdown: String
     var baseFontSize: CGFloat = 13
-    /// While a reply streams, only the completed prefix is parsed (cached per boundary); the open
-    /// tail is drawn as plain text every token, so smoothness costs one paragraph, not the document.
     var streaming = false
     @Environment(\.colorScheme) private var colorScheme
 
@@ -63,8 +55,7 @@ struct MarkdownView: View {
         case .thematicBreak:
             Divider()
         case .table(let rows):
-            // No horizontal scroll view: nested inside the transcript's scroll view on macOS it is not clipped and
-            // draws over the panel's edges. Cells wrap to the width instead.
+            // No horizontal scroll (unclipped when nested); cells wrap.
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
                 ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
                     GridRow {
@@ -83,14 +74,12 @@ struct MarkdownView: View {
 }
 
 extension MarkdownView {
-    /// Text of a block: formulas typeset by SwiftMath, inline code with a light tint like the code cards, links marked.
     fileprivate func text(_ attributed: AttributedString, size: CGFloat? = nil) -> Text {
         var styled = attributed
         for run in attributed.runs where run.inlinePresentationIntent?.contains(.code) == true {
             styled[run.range].backgroundColor = Color(nsColor: .quaternaryLabelColor)
         }
-        // A link reads as one: accent colour, underline and a ↗ after it (clickable too). Backwards, so inserting keeps
-        // the ranges still to visit valid.
+        // Links: accent colour, underline and ↗; inserted backwards to keep ranges valid.
         for (url, range) in styled.runs[\.link].reversed() {
             guard let url else { continue }
             styled[range].foregroundColor = .accentColor
@@ -104,8 +93,6 @@ extension MarkdownView {
     }
 }
 
-/// Parse results keyed by content: transcripts re-render on every store change and must not re-parse
-/// every message; a finished message is parsed once per app run.
 @MainActor
 enum MarkdownCache {
     private final class Entry {
@@ -115,7 +102,7 @@ enum MarkdownCache {
 
     private static let cache: NSCache<NSString, Entry> = {
         let cache = NSCache<NSString, Entry>()
-        cache.totalCostLimit = 8 << 20  // cost is source length; parsed blocks are a few times that
+        cache.totalCostLimit = 8 << 20  // cost = source length
         return cache
     }()
 
@@ -128,14 +115,10 @@ enum MarkdownCache {
     }
 }
 
-/// Code-fence state shared by the stream splitter and the formula extractor. A fence closes only with its own
-/// marker, so a ~~~ inside a ``` block stays content.
 struct CodeFence {
-    /// The marker of the open fence, nil outside one.
     private(set) var open: String?
     var isOpen: Bool { open != nil }
 
-    /// Feeds one line; returns true when the line is a fence marker (opening or closing one).
     mutating func consume(_ line: Substring) -> Bool {
         let trimmed = line.drop { $0 == " " }
         let marker: String? = trimmed.hasPrefix("```") ? "```" : trimmed.hasPrefix("~~~") ? "~~~" : nil
@@ -149,8 +132,6 @@ struct CodeFence {
     }
 }
 
-/// Cuts a streaming reply at the last blank line outside a code fence: everything before it is final
-/// and safe to parse; the rest is still being typed.
 enum MarkdownStreamSplit {
     static func split(_ text: String) -> (stable: Substring, tail: Substring) {
         var fence = CodeFence()
@@ -167,8 +148,6 @@ enum MarkdownStreamSplit {
     }
 }
 
-/// Code on its own tinted card: language and a copy button on top, syntax colours. Long lines wrap: a sideways scroll view
-/// nested in the transcript's scroll view is not clipped on macOS and draws past the window.
 struct CodeBlockView: View {
     let code: String
     let language: String?
@@ -191,7 +170,7 @@ struct CodeBlockView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
         }
-        // Nearly opaque text background: syntax colours on the translucent glass of the panel lose their contrast.
+        // Nearly opaque background keeps syntax colours readable on glass.
         .background(Color(nsColor: .textBackgroundColor).opacity(0.9), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.separator))
     }

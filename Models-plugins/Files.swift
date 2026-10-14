@@ -7,9 +7,6 @@ import PDFKit
 import UniformTypeIdentifiers
 import Vision
 
-// Files: read, search, recognize, write, move and pack inside user-approved folders, and find anything with Spotlight. Every path is canonicalised and must sit
-// under an allowed folder; side effects go through `ToolConfirmation`.
-
 // Files
 
 public struct FileToolProvider: ToolProvider {
@@ -18,7 +15,6 @@ public struct FileToolProvider: ToolProvider {
         public var maxFileCharacters = 20_000
         public var maxWrittenCharacters = 200_000
         public var maxRecognizedPages = 10
-        /// Writing a file and opening one (or a link) are the only side effects here; both ask the user first.
         public var confirmation: (any ToolConfirmation)?
         public var maxResults = 25
         public var maxContentScanFiles = 400
@@ -128,7 +124,6 @@ public struct FileToolProvider: ToolProvider {
         }
     }
 
-    /// Absolute paths must lie under an allowed folder; relative paths are tried against each allowed folder.
     func resolve(_ path: String) -> URL? {
         let expanded = NSString(string: path).expandingTildeInPath
         let candidates: [URL] =
@@ -161,7 +156,6 @@ public struct FileToolProvider: ToolProvider {
         return ToolOutput.wrap(text.clipped(to: configuration.maxFileCharacters), source: url.path)
     }
 
-    /// Where a new file may go: the folder it lands in must be an allowed one, and the name must be a plain file name.
     func resolveForWriting(_ path: String) -> URL? {
         let expanded = NSString(string: path).expandingTildeInPath
         let name = (expanded as NSString).lastPathComponent
@@ -187,7 +181,7 @@ public struct FileToolProvider: ToolProvider {
             images = (0..<min(document.pageCount, configuration.maxRecognizedPages)).compactMap { index in
                 guard let page = document.page(at: index) else { return nil }
                 let bounds = page.bounds(for: .mediaBox)
-                let size = CGSize(width: bounds.width * 2, height: bounds.height * 2)  // 144 dpi: enough for small print
+                let size = CGSize(width: bounds.width * 2, height: bounds.height * 2)  // 144 dpi for small print
                 return page.thumbnail(of: size, for: .mediaBox).cgImage(forProposedRect: nil, context: nil, hints: nil)
             }
         } else if type?.conforms(to: .image) == true {
@@ -260,7 +254,6 @@ public struct FileToolProvider: ToolProvider {
         return opened ? "Opened \(url.absoluteString)." : "error: the system could not open it"
     }
 
-    /// Both ends inside the allowed folders; a folder as the target takes the item in under its own name.
     func move(from: String, to: String) async -> String {
         guard let source = resolve(from) else { return "error: \(from) is not inside the allowed folders" }
         var destination: URL
@@ -293,7 +286,6 @@ public struct FileToolProvider: ToolProvider {
         }
     }
 
-    /// A zip made by ditto, the way Finder's Compress makes one; it lands inside the allowed folders.
     func archive(_ path: String, to target: String?) async throws -> String {
         guard let source = resolve(path) else { return "error: \(path) is not inside the allowed folders" }
         var name = target ?? source.lastPathComponent + ".zip"
@@ -361,8 +353,6 @@ public struct FileToolProvider: ToolProvider {
 
 // Spotlight
 
-/// `spotlight_search`: files anywhere on this Mac by name and content, as the Spotlight menu finds them (mdfind). It
-/// only lists them: reading or opening one still needs its folder among the allowed ones.
 public struct SpotlightToolProvider: ToolProvider {
     public var limit = 20
 
@@ -386,7 +376,7 @@ public struct SpotlightToolProvider: ToolProvider {
             return toolFailure(missing: "query")
         }
         let kind = args.string("kind").flatMap { $0 == "any" ? nil : $0 }
-        // "kind:pdf" is read the way the Spotlight menu reads it; the query stays one argument, never a shell string.
+        // Spotlight query syntax; passed as one argument.
         let arguments = kind.map { ["-interpret", "\(query) kind:\($0)"] } ?? [query]
         let out = try await ToolProcess.run(URL(fileURLWithPath: "/usr/bin/mdfind"), arguments, timeout: 15)
         let home = FileManager.default.homeDirectoryForCurrentUser.path

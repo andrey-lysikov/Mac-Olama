@@ -18,7 +18,6 @@ final class ChatRecord {
     var isArchived: Bool
     @Relationship(deleteRule: .cascade, inverse: \MessageRecord.chat) var messages: [MessageRecord] = []
 
-    /// Sets what never changes; the rest goes through `apply`, so insert and update share one field list.
     init(_ chat: Chat) {
         id = chat.id
         createdAt = chat.createdAt
@@ -61,7 +60,6 @@ final class MessageRecord {
     var modelID: String?
     var chat: ChatRecord?
 
-    /// Sets what never changes; the rest goes through `apply`, so insert and update share one field list.
     init(_ m: Message) {
         id = m.id
         chatID = m.chatID
@@ -98,7 +96,6 @@ final class MessageRecord {
 
 // Schema versions
 
-/// Future model changes add a ChatSchemaV2 and a migration stage instead of breaking the store.
 enum ChatSchemaV1: VersionedSchema {
     static var versionIdentifier: Schema.Version { .init(1, 0, 0) }
     static var models: [any PersistentModel.Type] { [ChatRecord.self, MessageRecord.self] }
@@ -111,8 +108,7 @@ enum ChatMigrationPlan: SchemaMigrationPlan {
 
 // Store
 
-/// SwiftData-backed `ChatStore` on its own ModelActor; the UI only ever sees value types.
-// ModelActor is adopted by hand: the @ModelActor macro synthesizes an init that cannot set our extra stored properties.
+// Manual ModelActor: the macro init cannot set extra properties.
 actor SwiftDataChatStore: ModelActor, ChatStore {
     nonisolated let modelExecutor: any ModelExecutor
     nonisolated let modelContainer: ModelContainer
@@ -128,7 +124,6 @@ actor SwiftDataChatStore: ModelActor, ChatStore {
         self.modelExecutor = DefaultSerialModelExecutor(modelContext: ModelContext(container))
     }
 
-    /// Moves the broken store files aside so the next open starts fresh; returns the backup folder.
     static func backUpStore(in directory: URL) -> URL? {
         let fm = FileManager.default
         let stamp = ISO8601DateFormatter().string(from: .now).replacingOccurrences(of: ":", with: "-")
@@ -141,7 +136,7 @@ actor SwiftDataChatStore: ModelActor, ChatStore {
                 try fm.moveItem(at: directory.appendingPathComponent(name), to: backup.appendingPathComponent(name))
                 moved = true
             } catch {
-                // A file that cannot even be moved stays; the retry will fail and the session runs in memory.
+                // Unmovable files stay; the session falls back to memory.
             }
         }
         return moved ? backup : nil

@@ -4,8 +4,6 @@
 import Foundation
 import Synchronization
 
-/// What the app runs a model with when a client does not say: the context window, the checkpoint's sampling with the
-/// temperature chosen in the app, reasoning and MTP, so an API client gets the same model as the chat.
 public struct APIModelDefaults: Sendable, Equatable {
     public var contextTokens: Int?
     public var sampling: SamplingParams
@@ -20,16 +18,11 @@ public struct APIModelDefaults: Sendable, Equatable {
     }
 }
 
-/// Local HTTP server exposing Ollama (`/api/*`, primary), OpenAI (`/v1/*`) and Anthropic (`/v1/messages`) compatible
-/// endpoints.
-/// Stateless: clients send full history; tool calls are returned to the client, not executed here.
-/// Models are downloaded and removed in the app only: `pull` and `delete` are refused.
 public final class APIServer: Sendable {
     public struct Configuration: Sendable {
         public var host: String
         public var port: Int
         public var version: String
-        /// Requests wait in EngineManager's queue; beyond this many pending, reply 503.
         public var maxQueued: Int
         public var log: (@Sendable (String) -> Void)?
 
@@ -49,7 +42,6 @@ public final class APIServer: Sendable {
     private let catalog: ModelCatalog
     private let engine: EngineManager
     private let defaults: @Sendable (ModelDescriptor) async -> APIModelDefaults
-    /// The model chosen in the app: what an Anthropic client gets when it names a model that is not installed.
     private let fallbackModel: @Sendable () async -> ModelDescriptor?
     private let server: HTTPServer
     private let pending = Mutex(0)
@@ -70,7 +62,6 @@ public final class APIServer: Sendable {
 
     // Lifecycle
 
-    /// Binds the socket and serves on background threads; throws if the port is taken.
     public func start() throws {
         try server.start()
     }
@@ -83,7 +74,6 @@ public final class APIServer: Sendable {
 
     public func setCORSPolicy(_ policy: CORSPolicy) { server.setCORSPolicy(policy) }
 
-    /// For tests/dev: serves until the task is cancelled.
     public func run() async throws {
         try server.start()
         defer { server.stop() }
@@ -197,11 +187,8 @@ public final class APIServer: Sendable {
     // Request building
 
     static let managedInApp = "models are downloaded and removed in the Mac-Olama app"
-    /// The window of a model whose config does not say, as the chat assumes too.
     private static let fallbackContext = 8192
 
-    /// The request the chat would make for this model, with what the client asked for on top. A client's `num_ctx`
-    /// may move the window up to the model's limit; a prompt that does not fit fails instead of losing its beginning.
     private func generationRequest(
         model: ModelDescriptor, messages: [EngineMessage], tools: [ToolSpec] = [],
         sampling: (SamplingParams) -> SamplingParams, thinks: Bool?, contextTokens: Int?, keepAlive: KeepAlive = .default,
@@ -216,14 +203,13 @@ public final class APIServer: Sendable {
             speculates: chosen.speculates, thinks: thinks ?? chosen.thinks, rejectsLongPrompt: true)
     }
 
-    /// MLX here has no constrained decoding: the model is told to answer in JSON, and the reply is cut to the value.
     static func withJSONInstruction(_ messages: [EngineMessage], schema: JSON) -> [EngineMessage] {
         var instruction = "Reply with one valid JSON value and nothing else: no explanations, no Markdown code fences."
         if case .object(let fields) = schema, !fields.isEmpty {
             instruction += " The JSON must match this schema: \(schema.jsonString())"
         }
         var out = messages
-        // Some templates accept a system message only in the first place, so the instruction joins the existing one.
+        // Merge the instruction into the first system message.
         if let i = out.firstIndex(where: { $0.role == .system }) {
             out[i].content += "\n\n" + instruction
         } else {
@@ -232,7 +218,6 @@ public final class APIServer: Sendable {
         return out
     }
 
-    /// Ollama's `format`: `"json"` or a schema object.
     static func ollamaJSONFormat(_ format: JSON?) -> JSON? {
         switch format {
         case .string(let s) where s.lowercased() == "json": .object([:])
@@ -496,8 +481,6 @@ public final class APIServer: Sendable {
 
     // Messages (Anthropic)
 
-    /// Clients of this API (Claude Code) name Claude models, for the main work and for side tasks alike: a name that
-    /// is not installed means the model chosen in the app, so both go to the one model the engine holds.
     private func anthropicModel(_ ref: String) async -> ModelDescriptor? {
         if let model = await catalog.resolve(ref) { return model }
         return await fallbackModel()
@@ -512,11 +495,11 @@ public final class APIServer: Sendable {
             return Self.anthropicError(404, "model '\(body.model)' not found, and no model is chosen in the app")
         }
         let messages: [EngineMessage]
-        // Refusing an image would end the session for good: the client resends it with the history on every turn.
+        // Accept images: refusing would break the client session.
         do { messages = try model.kind == .llm ? Self.withoutImages(Self.convert(body)) : Self.convert(body) } catch {
             return Self.anthropicError(error)
         }
-        // Reasoning is the app's choice for the model; a client may only do without it, as its side tasks do.
+        // Clients may only turn reasoning off.
         let thinks = await defaults(model).thinks && body.thinks
         let request = await generationRequest(
             model: model, messages: messages, tools: Self.toolSpecs(body.tools), sampling: { body.sampling(default: $0) },
@@ -569,8 +552,6 @@ public final class APIServer: Sendable {
         }
     }
 
-    /// An estimate, as the chat makes it: the tokenizer belongs to the engine, and a client asks only to see how full
-    /// the window is.
     private func anthropicCountTokens(_ req: HTTPRequest) async throws -> HTTPResponse {
         let body: AnthropicRequest
         do { body = try req.decode(AnthropicRequest.self) } catch {
@@ -589,12 +570,9 @@ public final class APIServer: Sendable {
         return try Self.json(JSON.object(["input_tokens": .number(Double(tokens))]))
     }
 
-    /// Anthropic keeps a tool's result inside the user's turn; here each one is a `tool` message ahead of what the
-    /// user wrote, and an image a tool returned goes with the user's own. Reasoning of earlier turns is dropped.
     static func convert(_ body: AnthropicRequest) throws -> [EngineMessage] {
         var out: [EngineMessage] = []
-        // Claude Code opens the system prompt with a billing line that changes from request to request: kept, it
-        // would leave the prompt cache nothing to reuse.
+        // Drop Claude Code's per-request billing line to keep the prompt cache.
         let system = (body.system?.blocks ?? []).compactMap(\.text).filter { !$0.hasPrefix("x-anthropic-billing-header") }
         if !system.isEmpty { out.append(EngineMessage(role: .system, content: system.joined(separator: "\n\n"))) }
         for message in body.messages {
@@ -622,8 +600,7 @@ public final class APIServer: Sendable {
             if message.role == "assistant" {
                 out.append(EngineMessage(role: .assistant, content: content, toolCalls: calls))
             } else if let last = out.indices.last, out[last].role == .user {
-                // Claude Code sends the context it adds and the question as two user turns; chat templates that
-                // insist on alternating roles refuse that.
+                // Merge consecutive user turns for strict templates.
                 out[last].content += "\n\n" + content
                 out[last].images += images
             } else {
@@ -633,7 +610,6 @@ public final class APIServer: Sendable {
         return out
     }
 
-    /// For a model that reads no images: they are left out, and the message says so instead.
     static func withoutImages(_ messages: [EngineMessage]) -> [EngineMessage] {
         messages.map { message in
             guard !message.images.isEmpty else { return message }
@@ -678,7 +654,6 @@ public final class APIServer: Sendable {
 
     // Generation helpers
 
-    /// How the reply is cut and shaped for the client (see `ReplyAssembler`).
     struct Reply: Sendable {
         var stops: [String]
         var json: Bool
@@ -692,8 +667,6 @@ public final class APIServer: Sendable {
         var finish: FinishReason = .stop
     }
 
-    /// Runs one generation and hands each new piece of answer and reasoning to `onDelta` as it is written. A stop
-    /// sequence ends the stream early, which cancels the generation.
     private func generate(
         model: ModelDescriptor, request: GenerationRequest, reply: Reply,
         onDelta: (ReplyAssembler.Delta) throws -> Void = { _ in }
@@ -724,7 +697,6 @@ public final class APIServer: Sendable {
         return collected
     }
 
-    /// Ollama and OpenAI tool schemas are the same type, so both chat handlers share this.
     private static func toolSpecs(_ tools: [OllamaTool]?) -> [ToolSpec] {
         (tools ?? []).map {
             ToolSpec(
@@ -733,7 +705,6 @@ public final class APIServer: Sendable {
         }
     }
 
-    /// A prompt longer than the window is the client's to fix; anything else is the server's.
     static func status(for error: Error) -> Int {
         if let api = error as? APIError { return api.status }
         if case .promptTooLong = error as? EngineError { return 400 }
@@ -820,8 +791,6 @@ public final class APIServer: Sendable {
             ?? HTTPResponse(status: status)
     }
 
-    /// The wording of Anthropic's own errors where a client acts on it: Claude Code shortens the conversation and
-    /// tries again when it reads that the prompt is too long.
     static func anthropicText(of error: Error) -> String {
         if let api = error as? APIError { return api.message }
         if case .promptTooLong(let tokens, let limit) = error as? EngineError {
@@ -849,10 +818,8 @@ public final class APIServer: Sendable {
     static func anthropicError(_ error: Error) -> HTTPResponse { anthropicError(status(for: error), anthropicText(of: error)) }
 
     typealias Emit = @Sendable (any Encodable & Sendable) throws -> Void
-    /// One event of an Anthropic stream: its name and the fields that follow `type`.
     typealias AnthropicEmit = @Sendable (_ event: String, _ fields: [String: JSON]) -> Void
 
-    /// Runs `producer` on a task tied to the response stream: a client disconnect terminates the stream and cancels it.
     private static func stream(
         contentType: String, _ producer: @Sendable @escaping (@escaping @Sendable (Data) -> Void) async throws -> Void
     ) -> HTTPResponse {
@@ -869,7 +836,6 @@ public final class APIServer: Sendable {
         return HTTPResponse(status: 200, headers: ["Content-Type": contentType], body: .stream(stream))
     }
 
-    /// A stream of JSON values, each wrapped by `frame`.
     private static func streamed(
         contentType: String, frame: @Sendable @escaping (Data) -> Data, trailer: Data? = nil,
         _ producer: @Sendable @escaping (Emit) async throws -> Void
@@ -880,26 +846,23 @@ public final class APIServer: Sendable {
         }
     }
 
-    /// Newline-delimited JSON objects (Ollama style).
     static func ndjson(_ producer: @Sendable @escaping (Emit) async throws -> Void) -> HTTPResponse {
         streamed(contentType: "application/x-ndjson", frame: { $0 + Data([0x0A]) }, producer)
     }
 
-    /// `data: {...}` server-sent events (OpenAI style), ending with `data: [DONE]`.
     static func sse(_ producer: @Sendable @escaping (Emit) async throws -> Void) -> HTTPResponse {
         streamed(
             contentType: "text/event-stream", frame: { Data("data: ".utf8) + $0 + Data([0x0A, 0x0A]) },
             trailer: Data("data: [DONE]\n\n".utf8), producer)
     }
 
-    /// Named server-sent events (Anthropic style): `event: <type>` over `data: {"type": <type>, …}`.
     static func anthropicSSE(_ producer: @Sendable @escaping (@escaping AnthropicEmit) async -> Void) -> HTTPResponse {
         stream(contentType: "text/event-stream") { yield in
             let write: AnthropicEmit = { event, fields in
                 let data = JSON.object(fields.merging(["type": .string(event)]) { _, type in type })
                 yield(Data("event: \(event)\ndata: \(data.jsonString())\n\n".utf8))
             }
-            // A long prompt is read in silence: pings keep a client's idle timer from ending the stream meanwhile.
+            // Pings keep clients alive during long prompt processing.
             let ping = Task {
                 while !Task.isCancelled {
                     try await Task.sleep(for: .seconds(10))
@@ -925,7 +888,6 @@ public final class APIServer: Sendable {
         """
 }
 
-/// Thrown from handlers; mapped to an Ollama-style JSON error by the server's error mapper.
 struct APIError: Error {
     let status: Int
     let message: String
@@ -935,8 +897,6 @@ struct APIError: Error {
     }
 }
 
-/// The content blocks of a streamed Anthropic message. They come one at a time, each opened before its deltas and
-/// closed after them; reasoning, the answer and every tool call are blocks of their own.
 private struct AnthropicBlocks {
     let write: APIServer.AnthropicEmit
     private var index = -1
@@ -944,7 +904,6 @@ private struct AnthropicBlocks {
 
     init(write: @escaping APIServer.AnthropicEmit) { self.write = write }
 
-    /// Adds to the `text` or `thinking` block, opening it when another kind (or none) was open.
     mutating func extend(_ kind: String, with text: String) {
         guard !text.isEmpty else { return }
         if open != kind {
@@ -956,7 +915,6 @@ private struct AnthropicBlocks {
         write("content_block_delta", ["index": position, "delta": .object(["type": .string("\(kind)_delta"), kind: .string(text)])])
     }
 
-    /// The engine hands over a call complete, so its arguments go in one piece.
     mutating func toolUse(_ call: ToolCall) {
         start(["type": .string("tool_use"), "id": .string(call.id), "name": .string(call.name), "input": .object([:])])
         open = "tool_use"
@@ -982,10 +940,6 @@ private struct AnthropicBlocks {
 
 // ReplyAssembler
 
-/// Turns the raw token stream into what an API client reads: reasoning apart from the answer, template markup
-/// dropped (the same rules as the chat, `AnswerText`), the answer cut at the first stop sequence, and in JSON mode
-/// reduced to the JSON value. Deltas only ever extend what was sent: a marker or stop sequence still being written is
-/// held back until it resolves.
 struct ReplyAssembler {
     struct Delta: Equatable {
         var reasoning = ""
@@ -995,13 +949,11 @@ struct ReplyAssembler {
     }
 
     private let stops: [String]
-    /// JSON mode: the answer is sent whole at the end, once it can be cut to the value.
     private let holdsAnswer: Bool
     private var raw = ""
     private var sentReasoning = ""
     private var sentContent = ""
     private var stopped = false
-    /// Re-reading the whole reply per token would be quadratic; a few times a second is smooth enough for a client.
     private var lastPass = ContinuousClock.now
     private static let passInterval = Duration.milliseconds(40)
 
@@ -1049,7 +1001,6 @@ struct ReplyAssembler {
         return delta
     }
 
-    /// The reply without a trailing `<…`, `[…` or `◁…` that has not closed yet: it may become a tag that hides text.
     static func withoutOpenMarker(_ raw: String) -> String {
         let pairs: [(Character, Character)] = [("<", ">"), ("[", "]"), ("◁", "▷")]
         var cut = raw.endIndex
@@ -1062,7 +1013,6 @@ struct ReplyAssembler {
         return String(raw[..<cut])
     }
 
-    /// Length of the longest tail of `text` that begins some stop sequence.
     static func pendingStopLength(_ text: String, _ stops: [String]) -> Int {
         var longest = 0
         for stop in stops {
@@ -1075,7 +1025,6 @@ struct ReplyAssembler {
         return longest
     }
 
-    /// The JSON value in a reply that wrapped it in prose or a code fence; the reply as it is when there is none.
     static func jsonValue(in text: String) -> String {
         guard let start = text.firstIndex(where: { $0 == "{" || $0 == "[" }) else { return text }
         let close: Character = text[start] == "{" ? "}" : "]"

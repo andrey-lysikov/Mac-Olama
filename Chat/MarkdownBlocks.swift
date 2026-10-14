@@ -4,19 +4,11 @@
 import Foundation
 import Markdown
 
-// Follow the macOS 26/27 look here: Liquid Glass (`glassEffect`, `.glass` buttons), system materials, system
-// colours and `Color.accentColor` only, control sizes as in the stock apps. No hand-drawn chrome.
-
-// swift-markdown (cmark-gfm) parses the reply into a tree; this file flattens it into blocks for `MarkdownView`.
-// Kept free of SwiftUI: both modules export `Text`, `Image` and `Link`.
-
-/// Marks the run that stands for a formula; `MarkdownView` draws it with SwiftMath instead of its placeholder text.
 enum FormulaAttribute: AttributedStringKey {
     typealias Value = Formula
     static let name = "ru.lysnet.macolama.formula"
 }
 
-/// Splits a Markdown string into renderable blocks; inline styles become Foundation attributes that SwiftUI `Text` draws.
 enum MarkdownBlocks {
     enum Kind {
         case paragraph
@@ -25,7 +17,6 @@ enum MarkdownBlocks {
         case codeBlock(language: String?)
         case thematicBreak
         case table(rows: [[AttributedString]])
-        /// A display formula standing alone in its paragraph: typeset larger and centred.
         case formula(Formula)
     }
 
@@ -44,10 +35,7 @@ enum MarkdownBlocks {
         return builder.blocks
     }
 
-    /// Ids are block positions, so views stay stable while a streamed reply grows.
 
-    /// An address written out in the answer, not as `[text](url)`, is still an address: the detector finds it and the
-    /// run becomes a link, so it can be opened.
     static func autolinked(_ string: String) -> AttributedString {
         guard let detector, string.contains("://") || string.contains("www.") else { return AttributedString(string) }
         var result = AttributedString(string)
@@ -106,7 +94,6 @@ enum MarkdownBlocks {
             }
         }
 
-        /// The first paragraph shares the line with the marker; the rest of the item (nested lists, code) goes one level deeper.
         mutating func items(_ items: [ListItem], start: Int?, indent: Int, quote: Int) {
             for (offset, item) in items.enumerated() {
                 var marker = start.map { "\($0 + offset)." } ?? "•"
@@ -122,7 +109,6 @@ enum MarkdownBlocks {
             }
         }
 
-        /// The paragraph is one `$$…$$` formula and nothing else (whitespace aside).
         static func soleDisplayFormula(_ text: AttributedString) -> Formula? {
             let formulas = text.runs.compactMap { $0[FormulaAttribute.self] }
             guard formulas.count == 1, let formula = formulas.first, formula.display else { return nil }
@@ -130,7 +116,6 @@ enum MarkdownBlocks {
             return rest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? formula : nil
         }
 
-        /// Plain text with formula tokens: each token becomes a run carrying its formula (the run text is the LaTeX).
         func text(_ string: String) -> AttributedString {
             guard string.contains(MathText.tokenStart) else { return MarkdownBlocks.autolinked(string) }
             var out = AttributedString()
@@ -173,7 +158,6 @@ enum MarkdownBlocks {
             }
         }
 
-        /// Adds an intent to every run, keeping the ones already there (bold inside italic stays both).
         static func styled(_ text: AttributedString, _ intent: InlinePresentationIntent) -> AttributedString {
             var text = text
             let runs = text.runs.map { ($0.range, $0.inlinePresentationIntent ?? []) }
