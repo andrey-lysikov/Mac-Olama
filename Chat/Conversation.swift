@@ -181,7 +181,8 @@ public actor ConversationService {
         let (stream, continuation) = AsyncStream.makeStream(of: ConversationEvent.self, bufferingPolicy: .unbounded)
         var resolvedSampling = sampling ?? configuration.checkpointSamplingByModel[model.id] ?? SamplingParams()
         if sampling == nil {
-            if let chosen = configuration.temperatureByModel[model.id] { resolvedSampling.temperature = chosen }
+            // A model served elsewhere samples as its server decides: no temperature is sent for it.
+            if model.source != .remote, let chosen = configuration.temperatureByModel[model.id] { resolvedSampling.temperature = chosen }
             resolvedSampling.maxTokens = replyBudget(for: model)
         }
         // A drafter that cannot verify sampled tokens has the last word, or speculation would quietly switch off.
@@ -525,7 +526,10 @@ public actor ConversationService {
     /// Smaller of the user setting and the model's max_position_embeddings (8192 when the model does not say).
     func effectiveContext(for model: ModelDescriptor) -> Int {
         let modelMax = model.contextLength ?? 8192
-        if let chosen = configuration.contextTokensByModel[model.id], chosen > 0 { return min(chosen, modelMax) }
+        // A model served elsewhere has the window its server reported; there is no choice to apply.
+        if model.source != .remote, let chosen = configuration.contextTokensByModel[model.id], chosen > 0 {
+            return min(chosen, modelMax)
+        }
         return modelMax
     }
 

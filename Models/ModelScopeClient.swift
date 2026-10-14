@@ -35,6 +35,14 @@ public enum ModelReference: Sendable, Hashable {
 
     public var directoryName: String { ModelDescriptor.directoryName(forRepo: repoID) }
 
+    /// The repository's page on its hub's website.
+    public var pageURL: URL? {
+        switch self {
+        case .huggingFace(let id): URL(string: "https://huggingface.co/\(id)")
+        case .modelScope(let id): URL(string: "https://modelscope.cn/models/\(id)")
+        }
+    }
+
     /// The inverse of `directoryName` (`org--repo`, `modelscope--org--repo`): lets a broken folder be downloaded again.
     public init?(directoryName: String) {
         var parts = directoryName.components(separatedBy: "--")

@@ -314,4 +314,74 @@ public struct HubClient: Sendable {
     public func classify(repoID: String) async throws -> HubModelClassification {
         HubModelClassification.classify(configJSON: try await config(repoID: repoID))
     }
+
+    /// The first paragraph of prose in the repository's model card, nil when the card has none.
+    public func cardSummary(repoID: String) async throws -> String? {
+        ModelCardSummary.summary(readme: String(decoding: try await get(fileURL(repoID: repoID, path: "README.md")), as: UTF8.self))
+    }
+}
+
+// ModelCardSummary
+
+/// A short description of a model, read from its README: the first plain paragraph long enough to say something.
+/// Front matter, headings, lists, tables, code, HTML and badges are skipped; MLX conversion boilerplate too, since
+/// it describes the copy, not the model.
+public enum ModelCardSummary {
+    static let minimumLength = 80
+    static let maximumLength = 260
+
+    public static func summary(readme: String) -> String? {
+        var lines = readme.components(separatedBy: .newlines)
+        if lines.first?.trimmingCharacters(in: .whitespaces) == "---",
+            let end = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" })
+        {
+            lines.removeSubrange(0...end)
+        }
+        var paragraph: [String] = []
+        var inCode = false
+        for raw in lines + [""] {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("```") || line.hasPrefix("~~~") {
+                inCode.toggle()
+                paragraph = []
+                continue
+            }
+            if inCode { continue }
+            if line.isEmpty || isNotProse(line) {
+                if let text = accept(paragraph.joined(separator: " ")) { return text }
+                paragraph = []
+                continue
+            }
+            paragraph.append(line)
+        }
+        return nil
+    }
+
+    /// Headings, lists, tables, quotes, HTML, images and link rows; a bold label ("**Authors**: …") too, while a sentence
+    /// that merely starts in bold stays prose.
+    private static func isNotProse(_ line: String) -> Bool {
+        if line.hasPrefix("**") { return line.range(of: #"^\*\*[^*]+(\*\*\s*:|:\*\*)"#, options: .regularExpression) != nil }
+        if ["#", "<", "|", "!", "-", "*", "+", ">", "["].contains(where: line.hasPrefix) { return true }
+        return line.range(of: #"^\d+[.)] "#, options: .regularExpression) != nil
+    }
+
+    private static func accept(_ paragraph: String) -> String? {
+        var text = paragraph
+        // [text](url) → text, then emphasis, code marks and leftover tags.
+        text = text.replacingOccurrences(of: #"!?\[([^\]]*)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"\[([^\]]*)\]\[[^\]]*\]"#, with: "$1", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"(\*\*|__|\*|`)"#, with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+        guard text.count >= minimumLength else { return nil }
+        let lowered = text.lowercased()
+        if lowered.contains("converted to mlx") || lowered.contains("mlx-lm") || lowered.contains("mlx_lm") { return nil }
+        guard text.count > maximumLength else { return text }
+        let cut = text.prefix(maximumLength)
+        // End on a sentence when one ends in the second half, else on a word.
+        if let dot = cut.range(of: ". ", options: .backwards), cut.distance(from: cut.startIndex, to: dot.lowerBound) > maximumLength / 2 {
+            return String(cut[..<dot.lowerBound]) + "."
+        }
+        return String(cut[..<(cut.lastIndex(of: " ") ?? cut.endIndex)]) + "…"
+    }
 }

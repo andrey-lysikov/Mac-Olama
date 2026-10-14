@@ -73,6 +73,11 @@ final class DownloadViewModel {
         var lastModified: Date?
         /// From the repository's config.json, once the details have loaded: the exact cost of the attention cache.
         var kvCache: KVCacheProfile?
+        /// The Hugging Face repository this copy was made from, when the hub says so.
+        var baseModel: String?
+        /// A few sentences from the model card, once loaded: the base model's card first, a copy's own is mostly boilerplate.
+        var summary: String?
+        var pageURL: URL? { ModelReference.parse(repoID)?.pageURL }
     }
 
     enum Verdict: Equatable {
@@ -112,6 +117,8 @@ final class DownloadViewModel {
     private(set) var hasSearched = false
     private var searchTask: Task<Void, Never>?
     private var detailTasks: [String: Task<Void, Never>] = [:]
+    /// Model card summaries by the Hugging Face repository they were read from: copies of one base model share it.
+    private var summaryTasks: [String: Task<String?, Never>] = [:]
 
     init(container: AppContainer) {
         self.container = container
@@ -218,13 +225,16 @@ final class DownloadViewModel {
             : try await container.hubClient.search(query: q, limit: 40)
         try Task.checkCancellation()
         rows = found.filter(\.isMLX).map {
-            Row(
-                repoID: $0.id, source: .huggingFace,
-                owners: ModelOwners(repoID: $0.id, baseModel: ModelOwners.baseModel(fromTags: $0.tags ?? [])),
-                title: $0.displayName, isGated: $0.isGated, isMLX: $0.isMLX, lastModified: $0.lastModified)
+            let baseModel = ModelOwners.baseModel(fromTags: $0.tags ?? [])
+            return Row(
+                repoID: $0.id, source: .huggingFace, owners: ModelOwners(repoID: $0.id, baseModel: baseModel),
+                title: $0.displayName, isGated: $0.isGated, isMLX: $0.isMLX, lastModified: $0.lastModified, baseModel: baseModel)
         }
         // The order depends on every row's verdict, so details are fetched for all rows up front (URLSession queues them per host).
-        for row in rows { loadDetails(for: row.repoID) }
+        for row in rows {
+            loadDetails(for: row.repoID)
+            loadSummary(for: row.repoID)
+        }
     }
 
     // ModelScope's search already carries the size and the base model; the config is read per row for kind and context.
@@ -232,14 +242,18 @@ final class DownloadViewModel {
         let found = try await container.modelScopeClient.search(query: q, limit: 40)
         try Task.checkCancellation()
         rows = found.map { Self.row(modelScope: $0) }
-        for row in rows { loadDetails(for: row.repoID) }
+        for row in rows {
+            loadDetails(for: row.repoID)
+            loadSummary(for: row.repoID)
+        }
     }
 
     private static func row(modelScope model: ModelScopeModel) -> Row {
         let repoID = ModelScopeClient.prefix + model.id
         return Row(
             repoID: repoID, source: .modelScope, owners: ModelOwners(repoID: repoID, baseModel: model.baseModel),
-            title: model.displayName, sizeBytes: model.storageSize, isMLX: model.isMLX, lastModified: model.lastUpdated)
+            title: model.displayName, sizeBytes: model.storageSize, isMLX: model.isMLX, lastModified: model.lastUpdated,
+            baseModel: model.baseModel)
     }
 
     /// "By link": checks that the model exists and reports its name and size as a single row.
@@ -252,11 +266,11 @@ final class DownloadViewModel {
         case .huggingFace(let repoID):
             let info = try await container.hubClient.info(repoID: repoID)
             try Task.checkCancellation()
+            let baseModel = ModelOwners.baseModel(fromTags: info.tags ?? [])
             var row = Row(
-                repoID: info.id, source: .huggingFace,
-                owners: ModelOwners(repoID: info.id, baseModel: ModelOwners.baseModel(fromTags: info.tags ?? [])),
+                repoID: info.id, source: .huggingFace, owners: ModelOwners(repoID: info.id, baseModel: baseModel),
                 title: info.id.split(separator: "/").last.map(String.init) ?? info.id, isGated: info.gated?.isGated ?? false,
-                isMLX: info.tags?.contains("mlx") == true)
+                isMLX: info.tags?.contains("mlx") == true, baseModel: baseModel)
             apply(info: info, classification: try? await container.hubClient.classify(repoID: repoID), to: &row)
             rows = [row]
         case .modelScope(let repoID):
@@ -265,6 +279,7 @@ final class DownloadViewModel {
             rows = [Self.row(modelScope: info)]
             loadDetails(for: rows[0].repoID)
         }
+        loadSummary(for: rows[0].repoID)
     }
 
     /// Lazily fetches size and classification for a row to avoid flooding HF with requests.
@@ -284,6 +299,29 @@ final class DownloadViewModel {
                 rows[i].detailsLoaded = true
             }
         }
+    }
+
+    /// The base model's card says what the model is; a Hugging Face copy's own card is the fallback. ModelScope's base
+    /// models are named as on Hugging Face, so their cards are read there too.
+    func loadSummary(for repoID: String) {
+        guard let row = rows.first(where: { $0.repoID == repoID }), row.summary == nil else { return }
+        var sources = [row.baseModel].compactMap { $0 }
+        if case .huggingFace(let id) = ModelReference.parse(repoID), !sources.contains(id) { sources.append(id) }
+        Task {
+            for source in sources {
+                guard let text = await summary(of: source) else { continue }
+                if let i = rows.firstIndex(where: { $0.repoID == repoID }) { rows[i].summary = text }
+                return
+            }
+        }
+    }
+
+    private func summary(of repoID: String) async -> String? {
+        if let task = summaryTasks[repoID] { return await task.value }
+        let client = container.hubClient
+        let task = Task { (try? await client.cardSummary(repoID: repoID)) ?? nil }
+        summaryTasks[repoID] = task
+        return await task.value
     }
 
     /// The size came with the search; the config gives the kind, the context and the quantization.
@@ -573,7 +611,7 @@ struct ModelLibraryView: View {
             rowText(
                 source: row.source, owners: row.owners, repoID: row.repoID, sizeBytes: row.sizeBytes, quantization: row.quantization,
                 detail: detail(repoID: row.repoID, kind: row.kind, contextLength: row.contextLength), gated: row.isGated,
-                stars: vm.fit(for: row)?.stars)
+                stars: vm.fit(for: row)?.stars, summary: row.summary, pageURL: row.pageURL)
             Spacer(minLength: 8)
             // The reason is a plain tooltip.
             Image(systemName: verdict.symbol)
@@ -598,7 +636,7 @@ struct ModelLibraryView: View {
     /// `stars` is the memory fit, as in the status menu; left out when the size is unknown.
     private func rowText(
         source: ModelSource?, owners: ModelOwners?, repoID: String, sizeBytes: Int64?, quantization: String?, detail: String,
-        gated: Bool = false, stars: Int? = nil
+        gated: Bool = false, stars: Int? = nil, summary: String? = nil, pageURL: URL? = nil
     ) -> some View {
         var line = AttributedString()
         var name = AttributedString(repoID.split(separator: "/").last.map(String.init) ?? repoID)
@@ -623,8 +661,25 @@ struct ModelLibraryView: View {
                     Text(verbatim: detail).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                         .textSelection(.enabled)
                 }
+                if summary != nil || pageURL != nil { summaryText(summary, pageURL: pageURL) }
             }
         }
+    }
+
+    /// Line 3 of a search result: what the model is, in two lines at most, and the link to its page on the hub's site,
+    /// which stays visible however long the description is.
+    private func summaryText(_ summary: String?, pageURL: URL?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            if let summary {
+                Text(verbatim: summary).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled).help(summary)
+            }
+            if let pageURL, let host = pageURL.host() {
+                Link(destination: pageURL) { Text(verbatim: host.replacingOccurrences(of: "www.", with: "") + " ↗") }
+                    .fixedSize().help(pageURL.absoluteString)
+            }
+        }
+        .font(.caption)
     }
 
     /// "lmstudio-community/Qwen3-8B-MLX-4bit · text, images → text · up to 32k context".
@@ -717,7 +772,7 @@ struct ModelLibraryView: View {
                 detail: drafter.baseModel.map { String(localized: "MTP drafter · attaches itself to \($0)") }
                     ?? String(localized: "MTP drafter · not a chat model"))
             Spacer(minLength: 8)
-            Image(systemName: "bolt").font(.system(size: Self.pictogramSize)).foregroundStyle(.secondary)
+            Self.mtpMark(installed: true).foregroundStyle(.secondary)
             symbolButton("trash", String(localized: "Delete Model"), role: .destructive) { container.deleteStrayDrafter(drafter) }
         }
         .padding(.vertical, 12)
@@ -749,8 +804,11 @@ struct ModelLibraryView: View {
         // Spelled out rather than nested in the call: the type checker gives up on the expression otherwise.
         var drafter = DrafterMark.none
         if container.drafterIsInstalled(for: model) { drafter = container.isSpeculative(model) ? .on : .off }
-        // No context here: this row has a menu for it, and the number would only repeat what the menu shows.
-        let detailText = detail(repoID: model.repoID, kind: model.kind, contextLength: nil, drafter: drafter)
+        // No context here for a local model: its row has a menu for it, and the number would only repeat it. A model
+        // served elsewhere has no menu, so the window its server reported is written here.
+        let detailText = detail(
+            repoID: model.repoID, kind: model.kind, contextLength: model.source == .remote ? model.contextLength : nil,
+            drafter: drafter)
         return HStack(alignment: .center, spacing: 14) {
             rowText(
                 source: model.source, owners: model.owners, repoID: model.repoID, sizeBytes: model.sizeBytes,
@@ -762,8 +820,11 @@ struct ModelLibraryView: View {
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 6) {
                 HStack(spacing: 14) {
-                    contextPicker(model).disabled(unavailable)
-                    temperaturePicker(model).disabled(unavailable)
+                    // A model served elsewhere runs with its server's window and temperature: nothing to choose here.
+                    if model.source != .remote {
+                        contextPicker(model).disabled(unavailable)
+                        temperaturePicker(model).disabled(unavailable)
+                    }
                     reasoningButton(model)
                     if container.canSpeculate(model) { speculationButton(model) }
                     if model.source == .remote {
@@ -931,12 +992,15 @@ struct ModelLibraryView: View {
             installed
             ? (on ? String(localized: "Faster answers are on") : String(localized: "A drafter is installed, MTP is off"))
             : String(localized: "Faster answers (MTP): needs a drafter for this model")
-        return symbolButton(
-            installed ? "bolt.fill" : "bolt", help,
-            style: on ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary)
-        ) {
+        return Button {
             drafterTarget = drafterTarget == model.id ? nil : model.id
+        } label: {
+            Self.mtpMark(installed: installed).frame(height: 24).contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .foregroundStyle(on ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+        .help(help)
+        .accessibilityLabel(help)
         .popover(
             isPresented: Binding(get: { drafterTarget == model.id }, set: { if !$0 { drafterTarget = nil } }), arrowEdge: .bottom
         ) {
@@ -1118,6 +1182,14 @@ struct ModelLibraryView: View {
 
     /// Shared by every pictogram in the lists (actions, verdicts, marks); halved from 28 pt at the customer's request.
     private static let pictogramSize: CGFloat = 14
+
+    /// "MTP" in words where a pictogram would not say what it is: bold once a drafter is installed, light while it is not.
+    private static func mtpMark(installed: Bool) -> some View {
+        Text(verbatim: "MTP")
+            .font(.system(size: 8, weight: installed ? .bold : .regular, design: .rounded))
+            .padding(.horizontal, 3).padding(.vertical, 1)
+            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(.foreground, lineWidth: installed ? 1 : 0.7))
+    }
 
     /// The shared `SymbolButton` with this window's pictogram size and short argument labels.
     private func symbolButton(
