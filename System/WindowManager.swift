@@ -72,8 +72,16 @@ final class WindowManager: NSObject, NSWindowDelegate {
         }
         hidePanel?()
         if window.isMiniaturized { window.deminiaturize(nil) }
+        // In front even when activation is refused: the cooperative `NSApp.activate()` can be, opened from the menu bar
+        // while another app is active or right after the switch to `.regular`.
+        window.orderFrontRegardless()
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
+        DispatchQueue.main.async {
+            // Activating our own running application is allowed and is not refused the way `NSApp.activate()` can be.
+            if !NSApp.isActive { NSRunningApplication.current.activate(options: [.activateAllWindows]) }
+            window.makeKeyAndOrderFront(nil)
+        }
     }
 
     private func makeWindow(id: ID, title: String, size: NSSize, root: AnyView) -> NSWindow {
