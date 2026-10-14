@@ -411,7 +411,10 @@ final class AppContainer {
     }
 
     /// The temperature chosen for this model, or nil while it follows the checkpoint.
-    func temperature(for model: ModelDescriptor) -> Double? { settings.modelTemperatures[model.id] }
+    /// Always nil for a model served elsewhere: its server decides.
+    func temperature(for model: ModelDescriptor) -> Double? {
+        model.source == .remote ? nil : settings.modelTemperatures[model.id]
+    }
 
     func setTemperature(_ value: Double?, for model: ModelDescriptor) {
         var map = settings.modelTemperatures
@@ -420,9 +423,10 @@ final class AppContainer {
         applyConversationConfiguration()
     }
 
-    /// The window a model runs with: its saved choice capped by what the model supports.
+    /// The window a model runs with: its saved choice capped by what the model supports. A model served elsewhere
+    /// has the window its server reported.
     func contextTokens(for model: ModelDescriptor) -> Int? {
-        guard let chosen = settings.modelContextTokens[model.id], chosen > 0 else { return model.contextLength }
+        guard model.source != .remote, let chosen = settings.modelContextTokens[model.id], chosen > 0 else { return model.contextLength }
         return model.contextLength.map { min(chosen, $0) } ?? chosen
     }
 
@@ -430,7 +434,7 @@ final class AppContainer {
     func apiDefaults(for model: ModelDescriptor) -> APIModelDefaults {
         let speculates = settings.speculativeModels.contains(model.id)
         var sampling = checkpointSampling[model.id] ?? SamplingParams()
-        if let chosen = settings.modelTemperatures[model.id] { sampling.temperature = chosen }
+        if let chosen = temperature(for: model) { sampling.temperature = chosen }
         // As in the chat: a drafter that verifies only greedy decoding sets the temperature, or speculation switches off.
         if speculates, settings.greedyDrafters.contains(model.id) { sampling.temperature = 0 }
         return APIModelDefaults(
