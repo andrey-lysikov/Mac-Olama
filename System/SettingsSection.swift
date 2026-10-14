@@ -47,6 +47,7 @@ struct SettingsSectionView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollContentBackground(.hidden)
+        .scrollEdgeEffectHidden(true, for: .top)  // no band under the toolbar, as in the chat
         .onAppear(perform: loadDraft)
         // The field turns the shortcut off while it listens; whatever the outcome, the live one comes back.
         .onChange(of: recording) { _, listening in if !listening { container.restoreHotkey() } }
@@ -646,6 +647,7 @@ struct AboutSectionView: View {
         // Shorter than the window, the page sits in its middle; taller, it scrolls from the top as usual.
         .defaultScrollAnchor(.center, for: .alignment)
         .scrollContentBackground(.hidden)
+        .scrollEdgeEffectHidden(true, for: .top)  // no band under the toolbar, as in the chat
     }
 
     private var versionLine: String {

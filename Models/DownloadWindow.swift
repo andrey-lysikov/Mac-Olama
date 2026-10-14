@@ -579,6 +579,7 @@ struct ModelLibraryView: View {
                     LazyVStack(spacing: 0) { results(vm) }.padding(.horizontal, 16).padding(.vertical, 4)
                 }
                 .frame(minHeight: 80, maxHeight: .infinity)
+                .scrollEdgeEffectHidden(true, for: .top)  // no band under the toolbar, as in the chat
             } else {
                 Spacer(minLength: 0)
             }

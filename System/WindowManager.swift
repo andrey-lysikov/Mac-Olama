@@ -94,6 +94,9 @@ final class WindowManager: NSObject, NSWindowDelegate {
         hosting.sizingOptions = []  // the window's size is the saved one, not the size SwiftUI would like
         window.contentView = hosting
         window.toolbarStyle = .unified
+        // No band under the toolbar: neither its blurred background nor the separator line appears when content scrolls under it.
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
         window.delegate = self
         // Saved under the window ID: the localized title used before changed with the language. Its frame is taken over
         // once, then every other saved frame (also of windows that no longer exist) is dropped.

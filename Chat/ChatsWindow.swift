@@ -469,18 +469,16 @@ private struct ChatsSplitView: View {
             case .chat: detail
             }
         }
+        // No toolbar band over the content column: it starts at the window's top edge and scrolls up to it, so the
+        // empty strip the toolbar would keep is not there at all, not just see-through.
+        .ignoresSafeArea(.container, edges: .top)
         // The reading background of the content column; the sidebar floats over the window's own.
         .background(Color(nsColor: .textBackgroundColor))
-        // The chat's icon before its title, as in its row in the sidebar; no glass under it, it is not a button.
-        .toolbar {
-            if container.section == .chat {
-                ToolbarItem(placement: .navigation) {
-                    Image(systemName: "bubble.left").foregroundStyle(Color.accentColor)
-                        .accessibilityHidden(true)
-                }
-                .sharedBackgroundVisibility(.hidden)
-            }
-        }
+        // No title band over the content: the toolbar shows no title (the window keeps it for the Window menu), and
+        // neither its background nor the scroll edge's blur or line appears when the content scrolls under it.
+        .toolbar(removing: .title)
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .scrollEdgeEffectHidden(true, for: .top)
     }
 
     private var windowTitle: String {
@@ -733,7 +731,8 @@ private struct ChatsSplitView: View {
                     }
                 }
             }
-            .padding(.horizontal, 16).padding(.vertical, 12)
+            // As far below the toolbar as the composer sits above the window's bottom edge and the text from the sides.
+            .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         // Growing text, the finished reply replacing the streamed one and the queue taking height are all followed
