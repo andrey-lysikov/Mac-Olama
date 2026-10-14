@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8
+
+- Remove toolbar in charts
+- Optimise menu
+- Remove comments
+- Add model descriptions and links in search
+
 ## 0.7
 
 - Mail plugin: search and read emails and the text of their attachments

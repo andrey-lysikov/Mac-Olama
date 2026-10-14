@@ -479,7 +479,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.7;
+				MARKETING_VERSION = 0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = ru.lysnet.macolama;
 				PRODUCT_MODULE_NAME = MacOlama;
 				PRODUCT_NAME = "Mac-Olama";
@@ -510,7 +510,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.7;
+				MARKETING_VERSION = 0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = ru.lysnet.macolama;
 				PRODUCT_MODULE_NAME = MacOlama;
 				PRODUCT_NAME = "Mac-Olama";
