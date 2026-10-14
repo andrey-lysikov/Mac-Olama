@@ -160,23 +160,6 @@ enum HTTPJSON {
 
 // HubClient
 
-/// Model families suggested by the empty search field: display name → search text for each hub.
-/// `KeyValuePairs` is the ordered flavour of a dictionary literal, so the dropdown keeps this order.
-public enum RecommendedModels {
-    public static let queries: KeyValuePairs<String, [ModelSource: String]> = [
-        "Qwen 3.6": [.huggingFace: "Qwen3.6", .modelScope: "Qwen3.6"],
-        "Qwen 3 Coder": [.huggingFace: "Qwen3-Coder", .modelScope: "Qwen3-Coder"],
-        "Gemma 4": [.huggingFace: "gemma-4", .modelScope: "gemma-4"],
-        "Ornith 1.5": [.huggingFace: "Ornith-1.5", .modelScope: "Ornith-1.5"],
-    ]
-
-    public static var names: [String] { queries.map(\.key) }
-
-    public static func query(for name: String, in source: ModelSource) -> String? {
-        queries.first { $0.key == name }?.value[source]
-    }
-}
-
 /// Hugging Face Hub client: search, metadata, config.json. Weights are fetched by `ModelDownloader`.
 public struct HubClient: Sendable {
     public let baseURL: URL

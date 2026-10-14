@@ -835,27 +835,27 @@ private struct ChatsSplitView: View {
 
     /// Model used by this chat; defaults to the one picked in the status menu.
     private var modelPicker: some View {
-        CheckedMenu(
-            items: container.models,
-            isChosen: { $0.id == viewModel.activeModel?.id },
-            choose: { viewModel.setModel($0) },
-            isEnabled: { container.isAvailable($0) },
-            row: { m in
-                // A menu row takes one title and one icon: the model's icon, the toggle draws the check mark.
-                Label {
-                    // Just the name: whether the model understands pictures is written out in the models section.
-                    Text(verbatim: m.name)
-                } icon: {
-                    modelImage(m)
+        // Plain buttons, no check mark: the chat's model is already named on the menu's own label beside the field.
+        Menu {
+            ForEach(container.models, id: \.self) { m in
+                Button {
+                    viewModel.setModel(m)
+                } label: {
+                    // A menu row takes one title and one icon: the model's icon.
+                    Label {
+                        // Just the name: whether the model understands pictures is written out in the models section.
+                        Text(verbatim: m.name)
+                    } icon: {
+                        modelImage(m)
+                    }
+                    .labelStyle(.titleAndIcon)  // menus on macOS 26+ drop item icons unless asked to show them
                 }
-                .labelStyle(.titleAndIcon)  // menus on macOS 26+ drop item icons unless asked to show them
-            },
-            footer: {
-                if container.models.isEmpty {
-                    Button(String(localized: "Model Library…")) { WindowManager.shared.openModels() }
-                }
+                .disabled(!container.isAvailable(m))
             }
-        ) {
+            if container.models.isEmpty {
+                Button(String(localized: "Model Library…")) { WindowManager.shared.openModels() }
+            }
+        } label: {
             if let model = viewModel.activeModel {
                 // An unreachable server greys the chat's model out, like its row in the list.
                 Label {
@@ -871,6 +871,7 @@ private struct ChatsSplitView: View {
                 Text(String(localized: "No model")).font(.callout)
             }
         }
+        .menuStyle(.borderlessButton)
         .frame(maxWidth: 260)
         .fixedSize(horizontal: true, vertical: false)
         .help(String(localized: "Model for this chat"))

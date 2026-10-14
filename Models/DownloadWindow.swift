@@ -124,16 +124,6 @@ final class DownloadViewModel {
         self.container = container
     }
 
-    /// Names offered by the empty search field. "By Link" needs an exact identifier, so it offers nothing.
-    var suggestions: [String] { hub == .link || hub == .api ? [] : RecommendedModels.names }
-
-    /// A suggestion was taken from the dropdown: swap the family name for this hub's search text and search right away.
-    func queryChanged() {
-        guard let source = hub.source, let text = RecommendedModels.query(for: query, in: source) else { return }
-        query = text
-        search()
-    }
-
     /// The cross in the search field: empties it and, for the hubs that search, drops the results with it.
     func clearQuery() {
         query = ""
@@ -468,19 +458,10 @@ struct ModelLibraryHeader: View {
             // from the cross.
             HStack(spacing: 6) {
                 if !confirmsName { actionButton }
-                // VERIFY(macOS26): suggestions are expected to drop down as soon as the empty field gets focus.
                 TextField(viewModel.hub.prompt, text: $viewModel.query)
                     .textFieldStyle(.plain).frame(minWidth: 120, maxWidth: .infinity)
                     .focused($searchFocused)
                     .accessibilityLabel(String(localized: "Search"))
-                    .textInputSuggestions {
-                        if viewModel.query.isEmpty {
-                            ForEach(viewModel.suggestions, id: \.self) { name in
-                                Text(verbatim: name).textInputCompletion(name)
-                            }
-                        }
-                    }
-                    .onChange(of: viewModel.query) { _, _ in viewModel.queryChanged() }
                     .onSubmit { viewModel.search() }
                     .onExitCommand { clearQuery() }
                 if !viewModel.query.isEmpty {
@@ -904,10 +885,9 @@ struct ModelLibraryView: View {
         let saved = container.settings.modelContextTokens[model.id] ?? 0
         let chosen = sizes.contains(saved) ? saved : 0
         let maximumTitle = maximum.map { String(localized: "Maximum (\($0 / 1024)k)") } ?? String(localized: "Maximum")
-        // The row in use carries the check mark, as the model menu does; 0 stands for the maximum.
-        return CheckedMenu(
+        // 0 stands for the maximum.
+        return ChoiceMenu(
             items: [0] + sizes,
-            isChosen: { $0 == chosen },
             choose: { container.setContextTokens($0, for: model) },
             row: { size in size == 0 ? Text(maximumTitle) : Text(verbatim: "\(size / 1024)k") }
         ) {
@@ -940,9 +920,8 @@ struct ModelLibraryView: View {
         let greedy = container.isSpeculative(model) && container.drafterNeedsGreedy(model)
         let shown = greedy ? 0 : (chosen ?? standard?.value)
         let choices: [Double?] = [nil] + Self.temperatures.map { Optional($0) }
-        return CheckedMenu(
+        return ChoiceMenu(
             items: choices,
-            isChosen: { $0 == chosen },
             choose: { container.setTemperature($0, for: model) },
             row: { value in
                 // A model served elsewhere keeps no config here, so there is nothing of its own to follow.

@@ -178,10 +178,11 @@ struct StatusMenuBuilder {
         menu.addItem(submenu(String(localized: "Model"), "cpu", modelSubmenu(actions)))
         menu.addItem(item(String(localized: "Model Library…"), "square.stack.3d.up", #selector(MenuActions.openDownload), actions))
         menu.addItem(.separator())
+        // No check mark in the menu: the item says whether autostart is on, a click switches it.
         menu.addItem(
-            toggle(
-                String(localized: "Autostart"), "power", container.settings.launchAtLogin, #selector(MenuActions.toggleLaunchAtLogin),
-                actions))
+            item(
+                container.settings.launchAtLogin ? String(localized: "Autostart is on") : String(localized: "Autostart is off"), "power",
+                #selector(MenuActions.toggleLaunchAtLogin), actions))
         menu.addItem(
             item(String(localized: "Check for Updates"), "arrow.triangle.2.circlepath", #selector(MenuActions.checkUpdates), actions))
         // Everything with a value to pick or a list to edit lives in the window's settings section, not here.
@@ -238,17 +239,6 @@ struct StatusMenuBuilder {
         mi.keyEquivalentModifierMask = key.isEmpty ? [] : mask
         mi.target = target
         Self.setSymbol(symbol, on: mi)
-        return mi
-    }
-
-    private func toggle(
-        _ title: String, _ symbol: String, _ on: Bool, _ action: Selector, _ target: AnyObject, help: String? = nil,
-        object: Any? = nil
-    ) -> NSMenuItem {
-        let mi = item(title, symbol, action, target)
-        mi.state = on ? .on : .off
-        mi.toolTip = help
-        if let object { mi.representedObject = object }
         return mi
     }
 

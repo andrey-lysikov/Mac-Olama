@@ -497,6 +497,26 @@
         }
       }
     },
+    "Autostart is off" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автозапуск выключен"
+          }
+        }
+      }
+    },
+    "Autostart is on" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автозапуск включён"
+          }
+        }
+      }
+    },
     "Browser" : {
       "localizations" : {
         "ru" : {
@@ -1060,6 +1080,16 @@
         }
       }
     },
+    "Copy Image" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопировать изображение"
+          }
+        }
+      }
+    },
     "Copying “%@” to the clipboard…" : {
       "localizations" : {
         "ru" : {
@@ -1358,6 +1388,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Правка"
+          }
+        }
+      }
+    },
+    "Enlarge" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Увеличить"
           }
         }
       }

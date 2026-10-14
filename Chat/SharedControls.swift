@@ -93,13 +93,70 @@ struct AttachmentThumbnail: View {
     }
 }
 
-// CheckedMenu
+// ZoomableThumbnail
 
-/// A borderless menu where the row in use carries the system check mark: each row is a Toggle whose binding only
-/// ever selects. Shared by the chat's model picker and the per-model context and temperature menus.
-struct CheckedMenu<Item: Hashable, Row: View, Footer: View, MenuLabel: View>: View {
+/// A sent picture: the magnifier shown on hover or a double click opens it large, a double click on the large one puts
+/// it away. The context menu copies it and it can be dragged out, from the thumbnail and from the large one.
+struct ZoomableThumbnail: View {
+    let image: NSImage
+    let side: CGFloat
+    @State private var hovering = false
+    @State private var zoomed = false
+
+    var body: some View {
+        AttachmentThumbnail(image: image, side: side)
+            .overlay(alignment: .bottomTrailing) {
+                if hovering {
+                    Button {
+                        zoomed = true
+                    } label: {
+                        Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.white).padding(5).background(.black.opacity(0.55), in: Circle())
+                    }
+                    .buttonStyle(.plain).padding(4)
+                    .help(String(localized: "Enlarge"))
+                    .accessibilityLabel(String(localized: "Enlarge"))
+                }
+            }
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .onTapGesture(count: 2) { zoomed = true }
+            .contextMenu { copyButton }
+            .onDrag { NSItemProvider(object: image) }
+            .popover(isPresented: $zoomed) {
+                Image(nsImage: image).resizable().scaledToFit()
+                    .frame(width: zoomedSize.width, height: zoomedSize.height)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { zoomed = false }
+                    .contextMenu { copyButton }
+                    .onDrag { NSItemProvider(object: image) }
+                    .padding(8)
+            }
+    }
+
+    private var copyButton: some View {
+        Button(String(localized: "Copy Image")) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.writeObjects([image])
+        }
+    }
+
+    /// The picture at its own size, shrunk to fit most of the screen, never blown up past it.
+    private var zoomedSize: CGSize {
+        let screen = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1280, height: 800)
+        let size = image.size
+        guard size.width > 0, size.height > 0 else { return CGSize(width: 320, height: 320) }
+        let scale = min(1, screen.width * 0.6 / size.width, screen.height * 0.7 / size.height)
+        return CGSize(width: size.width * scale, height: size.height * scale)
+    }
+}
+
+// ChoiceMenu
+
+/// A borderless menu of plain rows, no check mark: its label already shows the choice in use. Shared by the
+/// per-model context and temperature menus.
+struct ChoiceMenu<Item: Hashable, Row: View, Footer: View, MenuLabel: View>: View {
     let items: [Item]
-    let isChosen: (Item) -> Bool
     let choose: (Item) -> Void
     let isEnabled: (Item) -> Bool
     let row: (Item) -> Row
@@ -107,13 +164,12 @@ struct CheckedMenu<Item: Hashable, Row: View, Footer: View, MenuLabel: View>: Vi
     let label: MenuLabel
 
     init(
-        items: [Item], isChosen: @escaping (Item) -> Bool, choose: @escaping (Item) -> Void,
+        items: [Item], choose: @escaping (Item) -> Void,
         isEnabled: @escaping (Item) -> Bool = { _ in true },
         @ViewBuilder row: @escaping (Item) -> Row, @ViewBuilder footer: () -> Footer,
         @ViewBuilder label: () -> MenuLabel
     ) {
         self.items = items
-        self.isChosen = isChosen
         self.choose = choose
         self.isEnabled = isEnabled
         self.row = row
@@ -124,7 +180,7 @@ struct CheckedMenu<Item: Hashable, Row: View, Footer: View, MenuLabel: View>: Vi
     var body: some View {
         Menu {
             ForEach(items, id: \.self) { item in
-                Toggle(isOn: Binding(get: { isChosen(item) }, set: { _ in choose(item) })) { row(item) }
+                Button { choose(item) } label: { row(item) }
                     .disabled(!isEnabled(item))
             }
             footer
@@ -135,13 +191,13 @@ struct CheckedMenu<Item: Hashable, Row: View, Footer: View, MenuLabel: View>: Vi
     }
 }
 
-extension CheckedMenu where Footer == EmptyView {
+extension ChoiceMenu where Footer == EmptyView {
     init(
-        items: [Item], isChosen: @escaping (Item) -> Bool, choose: @escaping (Item) -> Void,
+        items: [Item], choose: @escaping (Item) -> Void,
         isEnabled: @escaping (Item) -> Bool = { _ in true },
         @ViewBuilder row: @escaping (Item) -> Row, @ViewBuilder label: () -> MenuLabel
     ) {
-        self.init(items: items, isChosen: isChosen, choose: choose, isEnabled: isEnabled, row: row, footer: { EmptyView() }, label: label)
+        self.init(items: items, choose: choose, isEnabled: isEnabled, row: row, footer: { EmptyView() }, label: label)
     }
 }
 

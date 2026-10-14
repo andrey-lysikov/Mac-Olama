@@ -303,7 +303,7 @@ struct AttachmentStrip: View {
                     if att.kind == .document {
                         DocumentChip(name: att.displayName ?? "file")
                     } else if let image = NSImage(contentsOf: container.paths.attachments.appendingPathComponent(att.relativePath)) {
-                        AttachmentThumbnail(image: image, side: 64)
+                        ZoomableThumbnail(image: image, side: 64)
                     }
                 }
             }
