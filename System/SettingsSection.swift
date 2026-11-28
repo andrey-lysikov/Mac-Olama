@@ -8,10 +8,12 @@ struct SettingsSectionView: View {
     @Environment(AppContainer.self) private var container
     @State private var draft = GlobalHotkey.Combination(keyCode: 0, modifiers: 0)
     @State private var recording = false
+    @State private var chatsDraft = GlobalHotkey.Combination(keyCode: 0, modifiers: 0)
+    @State private var chatsRecording = false
 
     private static let pageSizes = [4000, 8000, 12000, 20000, 30000, 60000]
     private static let searchCounts = [3, 5, 8, 10, 12]
-    private static let toolRounds = [3, 5, 10, 15, 20]
+    private static let toolRounds = [10, 25, 50, 75, 100, 125, 150]
     private static let idleTimeouts: [(String, TimeInterval)] = [
         (String(localized: "1 minute"), 60), (String(localized: "5 minutes"), 300), (String(localized: "15 minutes"), 900),
         (String(localized: "1 hour"), 3600),
@@ -39,10 +41,12 @@ struct SettingsSectionView: View {
         .onAppear(perform: loadDraft)
         // Restore the live shortcut after recording.
         .onChange(of: recording) { _, listening in if !listening { container.restoreHotkey() } }
+        .onChange(of: chatsRecording) { _, listening in if !listening { container.restoreHotkey() } }
     }
 
     private func loadDraft() {
         draft = container.hotkey
+        chatsDraft = container.chatsHotkey
     }
 
     private static let languages: [(String, String)] = [
@@ -143,11 +147,11 @@ struct SettingsSectionView: View {
                     Image(systemName: "trash")
                 }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
-                .help(String(localized: "Remove from the list"))
             }
         }
         row(String(localized: "Folders the model may read"), indented: true) {
             Button(String(localized: "Add Folder…"), action: addFolder)
+                .buttonStyle(.glass)
         }
     }
 
@@ -192,6 +196,7 @@ struct SettingsSectionView: View {
                     }
                 }
                 Button(String(localized: "Unload Now")) { container.unloadNow() }
+                    .buttonStyle(.glass)
                     .disabled(container.engineState.modelID == nil)
                     .fixedSize()
             }
@@ -211,7 +216,6 @@ struct SettingsSectionView: View {
                     } label: {
                         Image(systemName: "checkmark")
                     }
-                    .help(String(localized: "Apply"))
                     .disabled(!draft.isSet || draft == container.hotkey)
                     Button {
                         container.setHotkey(.init(keyCode: SettingsDefaults.hotkeyKeyCode, modifiers: SettingsDefaults.hotkeyModifiers))
@@ -220,7 +224,26 @@ struct SettingsSectionView: View {
                     } label: {
                         Image(systemName: "arrow.uturn.backward")
                     }
-                    .help(String(localized: "Reset"))
+                }
+            }
+            row(String(localized: "Open the chats window with"), help: String(localized: "Double-click the field, then press the keys")) {
+                HStack(spacing: 8) {
+                    ShortcutField(combination: $chatsDraft, recording: $chatsRecording)
+                        .frame(width: 110, height: 22)
+                    Button {
+                        container.setChatsHotkey(chatsDraft)
+                        chatsRecording = false
+                    } label: {
+                        Image(systemName: "checkmark")
+                    }
+                    .disabled(!chatsDraft.isSet || chatsDraft == container.chatsHotkey)
+                    Button {
+                        container.setChatsHotkey(.init(keyCode: SettingsDefaults.chatsHotkeyKeyCode, modifiers: SettingsDefaults.chatsHotkeyModifiers))
+                        loadDraft()
+                        chatsRecording = false
+                    } label: {
+                        Image(systemName: "arrow.uturn.backward")
+                    }
                 }
             }
         }
@@ -302,6 +325,7 @@ struct SettingsSectionView: View {
                 }
                 // The port sits with the interface: together they are the address.
                 Text(String(localized: "Port")).foregroundStyle(container.apiPortBusy ? .red : .secondary)
+                    .fixedSize()  // keep the whole word on one line
                 TextField(
                     "",
                     value: Binding(get: { container.settings.apiServerPort }, set: { container.setAPIPort($0) }),
@@ -309,10 +333,6 @@ struct SettingsSectionView: View {
                 )
                 .frame(width: 80).multilineTextAlignment(.trailing)
                 .foregroundStyle(container.apiPortBusy ? .red : .primary)
-                .help(
-                    container.apiPortBusy
-                        ? AppContainer.portBusyText(container.settings.apiServerPort)
-                        : String(localized: "The port other programs connect to"))
             }
         }
     }
@@ -396,6 +416,7 @@ struct SettingsSectionView: View {
         case .webSearch: "magnifyingglass"
         case .browser: "safari"
         case .files: "folder"
+        case .coding: "chevron.left.forwardslash.chevron.right"
         case .time: "calendar"
         case .personal: "person.crop.circle"
         case .thisMac: "desktopcomputer"
@@ -409,6 +430,7 @@ struct SettingsSectionView: View {
         case .webSearch: String(localized: "Internet Search")
         case .browser: String(localized: "Browser")
         case .files: String(localized: "Files")
+        case .coding: String(localized: "Coding")
         case .time: String(localized: "Time and Tasks")
         case .personal: String(localized: "Personal")
         case .thisMac: String(localized: "This Mac")
@@ -436,6 +458,13 @@ struct SettingsSectionView: View {
         case .spotlight: String(localized: "Spotlight Search")
         case .macControl: String(localized: "System Control")
         case .music: String(localized: "Music")
+        case .codingFiles: String(localized: "Project files")
+        case .codingSkills: String(localized: "Project skills")
+        case .codingEdit: String(localized: "Edit files")
+        case .codingScripts: String(localized: "Scripts")
+        case .codingCommands: String(localized: "Commands")
+        case .codingGit: String(localized: "Git")
+        case .codingIndexing: String(localized: "Project indexing")
         }
     }
 
@@ -468,6 +497,14 @@ struct SettingsSectionView: View {
             String(localized: "The model may find files anywhere on this Mac by name and content; opening them still needs folder access")
         case .macControl: String(localized: "The model may change the volume and the appearance and open apps")
         case .music: String(localized: "The model may play, pause and switch tracks in Music")
+        case .codingFiles:
+            String(localized: "Bind a project named by the user, read and search files, and follow AGENTS.md instructions")
+        case .codingSkills: String(localized: "Find and read SKILL.md files and their supporting files in the project")
+        case .codingEdit: String(localized: "Edit files and patches with diff approval, snapshots, rollback and build/test verification")
+        case .codingScripts: String(localized: "Create and run Python, sh and bash scripts in the project or a per-chat temporary folder")
+        case .codingCommands: String(localized: "Run processes, shell commands and background tasks with approval, output and cancellation")
+        case .codingGit: String(localized: "Use local and remote Git, including PR/MR through gh/glab or the hosting web interface")
+        case .codingIndexing: String(localized: "Index the project file map, source declarations and likely build commands")
         }
     }
 }

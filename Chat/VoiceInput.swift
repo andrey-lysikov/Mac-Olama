@@ -249,7 +249,6 @@ struct VoiceInputButton: View {
             case .failed: Image(systemName: "mic.slash")
             }
         }
-        .help(help)
         .disabled(disabled && voice.state != .listening)
         .onChange(of: voice.transcript) { _, said in
             guard voice.state == .listening || voice.state == .idle else { return }
@@ -262,14 +261,6 @@ struct VoiceInputButton: View {
             if case .failed(let message) = voice.state {
                 Text(message).font(.callout).padding(12).frame(maxWidth: 300).fixedSize(horizontal: false, vertical: true)
             }
-        }
-    }
-
-    private var help: String {
-        switch voice.state {
-        case .listening: String(localized: "Listening… press again or pause to stop")
-        case .preparing: String(localized: "Getting speech recognition ready…")
-        default: String(localized: "Dictate")
         }
     }
 

@@ -58,14 +58,25 @@ actor RemoteEngine: InferenceEngine {
     private(set) var loadedModel: ModelDescriptor?
     private var endpoint: RemoteEndpoint?
     private var token: String?
-    private let current = GenerationTaskBox()
+    private var tokenRefreshers: [ModelSource: @Sendable () async throws -> String] = [:]
+    private var quotaExhaustedHandlers: [ModelSource: @Sendable () async -> Void] = [:]
+    private var currents: [UUID: GenerationTaskBox] = [:]
+
+    func setTokenRefresher(_ refresher: @escaping @Sendable () async throws -> String, for source: ModelSource) {
+        tokenRefreshers[source] = refresher
+    }
+
+    func setQuotaExhaustedHandler(_ handler: @escaping @Sendable () async -> Void, for source: ModelSource) {
+        quotaExhaustedHandlers[source] = handler
+    }
 
     func load(_ model: ModelDescriptor, progress: @Sendable @escaping (Double) -> Void) async throws {
         let endpoint = try RemoteEndpoint.load(from: model.directory)
         let token = RemoteTokens.token(for: model.id)
         progress(0.3)
-        // "Loading" a remote model is checking that the server is up and still has it.
-        _ = try await Self.probe(baseURL: endpoint.baseURL, model: endpoint.model, token: token)
+        if CloudProvider(source: model.source)?.checksAvailability != false {
+            _ = try await Self.probe(baseURL: endpoint.baseURL, model: endpoint.model, token: token, headers: endpoint.headers)
+        }
         self.endpoint = endpoint
         self.token = token
         loadedModel = model
@@ -73,31 +84,80 @@ actor RemoteEngine: InferenceEngine {
     }
 
     func unload() async {
-        current.cancel()
         loadedModel = nil
         endpoint = nil
         token = nil
     }
 
-    func cancelCurrent() async {
-        current.cancel()
+    func cancel(chatID: UUID) async {
+        currents[chatID]?.cancel()
     }
 
-    func generate(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
-        guard let endpoint else { return .failed(EngineError.noModelLoaded) }
-        let token = token
-        return .engine(current: current) { continuation in
-            try await Self.streamOpenAI(endpoint, token: token, request: request, into: continuation)
+    func cancelCurrent() async {
+        for current in currents.values { current.cancel() }
+    }
+
+    func generate(_ request: GenerationRequest, model: ModelDescriptor) -> AsyncThrowingStream<GenerationEvent, Error> {
+        let endpoint: RemoteEndpoint
+        do {
+            endpoint = try RemoteEndpoint.load(from: model.directory)
+        } catch {
+            return .failed(error)
         }
+        // Each request owns its endpoint and token, so different remote models can run together.
+        let token = RemoteTokens.token(for: model.id)
+        let source = model.source
+        let refresher = tokenRefreshers[source]
+        let key = request.chatID ?? UUID()
+        let current = GenerationTaskBox()
+        currents[key] = current
+        return .engine(current: current) { continuation in
+            defer { Task { await self.removeCurrent(current, for: key) } }
+            do {
+                try await Self.stream(endpoint, token: token, request: request, source: source, into: continuation)
+            } catch let error as RemoteError {
+                await self.reportQuotaIfNeeded(error, source: source)
+                guard case .http(let status, _) = error, status == 401, let refresher else { throw error }
+                // The OAuth token expired: refresh it once and retry the request.
+                let fresh = try await refresher()
+                do {
+                    try await Self.stream(endpoint, token: fresh, request: request, source: source, into: continuation)
+                } catch let retryError as RemoteError {
+                    await self.reportQuotaIfNeeded(retryError, source: source)
+                    throw retryError
+                }
+            }
+        }
+    }
+
+    private func removeCurrent(_ current: GenerationTaskBox, for key: UUID) {
+        if currents[key] === current { currents[key] = nil }
+    }
+
+    private static func stream(
+        _ endpoint: RemoteEndpoint, token: String?, request: GenerationRequest, source: ModelSource?,
+        into continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation
+    ) async throws {
+        if CloudProvider(source: source ?? .remote)?.usesResponsesAPI == true {
+            try await OpenAIResponses.stream(endpoint, token: token, request: request, into: continuation)
+        } else {
+            try await streamOpenAI(endpoint, token: token, request: request, into: continuation)
+        }
+    }
+
+    private func reportQuotaIfNeeded(_ error: RemoteError, source: ModelSource) async {
+        guard let provider = CloudProvider(source: source), case .http(let status, _) = error else { return }
+        guard provider.quotaHTTPStatuses.contains(status) else { return }
+        await quotaExhaustedHandlers[source]?()
     }
 
     // Probe
 
     static let probeTimeout = 10
 
-    static func probe(baseURL: URL, model: String, token: String?) async throws -> Probe {
+    static func probe(baseURL: URL, model: String, token: String?, headers: [String: String]? = nil) async throws -> Probe {
         try await withThrowingTaskGroup(of: Probe?.self) { group in
-            group.addTask { try await probeServer(baseURL: baseURL, model: model, token: token) }
+            group.addTask { try await probeServer(baseURL: baseURL, model: model, token: token, headers: headers) }
             group.addTask {
                 try await Task.sleep(for: .seconds(probeTimeout))
                 return nil
@@ -108,10 +168,10 @@ actor RemoteEngine: InferenceEngine {
         }
     }
 
-    private static func probeServer(baseURL: URL, model: String, token: String?) async throws -> Probe {
+    private static func probeServer(baseURL: URL, model: String, token: String?, headers: [String: String]?) async throws -> Probe {
         let models: [String: Any]
         do {
-            models = try await json(baseURL.appending(path: "v1/models"), token: token)
+            models = try await json(baseURL.appending(path: "v1/models"), token: token, headers: headers)
         } catch let error as RemoteError {
             throw error
         } catch {
@@ -122,7 +182,7 @@ actor RemoteEngine: InferenceEngine {
         guard let name = match(model, in: names) ?? (names.count == 1 ? names[0] : nil) else {
             throw RemoteError.modelNotFound(model, available: names)
         }
-        let props = try? await json(baseURL.appending(path: "props"), token: token)
+        let props = try? await json(baseURL.appending(path: "props"), token: token, headers: headers)
         let template = props?["chat_template"] as? String ?? ""
         let modalities = props?["modalities"] as? [String: Any]
         let settings = props?["default_generation_settings"] as? [String: Any]
@@ -146,12 +206,14 @@ actor RemoteEngine: InferenceEngine {
     ) async throws {
         let body = OpenAIChatRequest(
             model: endpoint.model, messages: openAIMessages(request.messages), stream: true,
-            temperature: request.sampling.temperature, top_p: request.sampling.topP, max_tokens: request.sampling.maxTokens,
+            temperature: request.sampling.temperature, top_p: request.sampling.topP,
+            max_tokens: request.sampling.maxTokens.map { min($0, endpoint.maximumOutputTokens ?? Int.max) },
             seed: request.sampling.seed.flatMap { Int(exactly: $0) }, tools: tools(request.tools),
             stream_options: .init(include_usage: true), presence_penalty: request.sampling.presencePenalty,
             frequency_penalty: request.sampling.frequencyPenalty, top_k: request.sampling.topK, min_p: request.sampling.minP,
-            repetition_penalty: request.sampling.repetitionPenalty)
-        let bytes = try await stream(endpoint.baseURL.appending(path: "v1/chat/completions"), token: token, body: body)
+            repetition_penalty: request.sampling.repetitionPenalty, reasoning_effort: request.thinkingEffort)
+        let bytes = try await stream(
+            endpoint.baseURL.appending(path: "v1/chat/completions"), token: token, body: body, headers: endpoint.headers)
         var tagger = ThinkingTagger()
         var finish: FinishReason = .stop
         var usage: GenerationUsage?
@@ -170,6 +232,7 @@ actor RemoteEngine: InferenceEngine {
             if let u = chunk.usage {
                 usage = GenerationUsage(
                     promptTokens: u.prompt_tokens ?? 0, completionTokens: u.completion_tokens ?? 0,
+                    cachedTokens: u.prompt_tokens_details?.cached_tokens ?? u.prompt_cache_hit_tokens ?? 0,
                     tokensPerSecond: chunk.timings?.predicted_per_second ?? 0)
             }
             guard let choice = chunk.choices?.first else { continue }
@@ -204,8 +267,11 @@ actor RemoteEngine: InferenceEngine {
 
     private static func openAIMessages(_ messages: [EngineMessage]) -> [OpenAIMessage] {
         messages.map { message in
-            let content: OpenAIContent =
-                message.images.isEmpty
+            let content: OpenAIContent? =
+                // A tool-asking turn has no text: send null, not an empty string (Kimi rejects the latter).
+                message.content.isEmpty && message.images.isEmpty && !message.toolCalls.isEmpty
+                ? nil
+                : message.images.isEmpty
                 ? .text(message.content)
                 : .parts(
                     [OpenAIContent.Part(type: "text", text: message.content, image_url: nil)]
@@ -241,9 +307,12 @@ actor RemoteEngine: InferenceEngine {
         return d
     }()
 
-    private static func json(_ url: URL, token: String?, body: [String: Any]? = nil) async throws -> [String: Any] {
+    private static func json(
+        _ url: URL, token: String?, body: [String: Any]? = nil, headers: [String: String]? = nil
+    ) async throws -> [String: Any] {
         let encoded = try body.map { try JSONSerialization.data(withJSONObject: $0) }
-        let request = HTTPJSON.request(url, token: token, jsonBody: encoded, timeout: 15, accept: nil, userAgent: nil)
+        var request = HTTPJSON.request(url, token: token, jsonBody: encoded, timeout: 15, accept: nil, userAgent: nil)
+        headers?.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
         let (data, response) = try await URLSession.shared.data(for: request)
         try check(response, data: data)
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -252,9 +321,12 @@ actor RemoteEngine: InferenceEngine {
         return object
     }
 
-    private static func stream(_ url: URL, token: String?, body: some Encodable) async throws -> URLSession.AsyncBytes {
-        let request = HTTPJSON.request(
+    private static func stream(
+        _ url: URL, token: String?, body: some Encodable, headers: [String: String]? = nil
+    ) async throws -> URLSession.AsyncBytes {
+        var request = HTTPJSON.request(
             url, token: token, jsonBody: try JSONCoding.plainEncoder.encode(body), timeout: 600, accept: nil, userAgent: nil)
+        headers?.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
             var data = Data()
@@ -279,7 +351,6 @@ actor RemoteEngine: InferenceEngine {
 actor RoutingEngine: InferenceEngine {
     private let local: any InferenceEngine
     private let remote: any InferenceEngine
-    private var active: (any InferenceEngine)?
     private(set) var loadedModel: ModelDescriptor?
 
     init(local: any InferenceEngine, remote: any InferenceEngine) {
@@ -288,28 +359,32 @@ actor RoutingEngine: InferenceEngine {
     }
 
     func load(_ model: ModelDescriptor, progress: @Sendable @escaping (Double) -> Void) async throws {
-        let target = model.source == .remote ? remote : local
-        if let active, active !== target { await active.unload() }
-        loadedModel = nil
+        let target = model.source.isRemote ? remote : local
+        if !model.source.isRemote { loadedModel = nil }
         try await target.load(model, progress: progress)
-        active = target
-        loadedModel = model
+        if !model.source.isRemote { loadedModel = model }
     }
 
     func unload() async {
-        await active?.unload()
-        active = nil
+        await local.unload()
+        await remote.unload()
         loadedModel = nil
     }
 
-    func cancelCurrent() async {
-        await active?.cancelCurrent()
+    func cancel(chatID: UUID) async {
+        await local.cancel(chatID: chatID)
+        await remote.cancel(chatID: chatID)
     }
 
-    func generate(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
-        guard let engine = active else { return .failed(EngineError.noModelLoaded) }
+    func cancelCurrent() async {
+        await local.cancelCurrent()
+        await remote.cancelCurrent()
+    }
+
+    func generate(_ request: GenerationRequest, model: ModelDescriptor) -> AsyncThrowingStream<GenerationEvent, Error> {
+        let engine = model.source.isRemote ? remote : local
         return .engine { continuation in
-            for try await event in await engine.generate(request) { continuation.yield(event) }
+            for try await event in await engine.generate(request, model: model) { continuation.yield(event) }
         }
     }
 }

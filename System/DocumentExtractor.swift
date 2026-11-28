@@ -12,6 +12,7 @@ enum PasteboardAttachments {
         case files([URL])
         case image(NSImage)
         case webURL(URL)
+        case text(String)
     }
 
     static func read(from pasteboard: NSPasteboard = .general) -> Content? {
@@ -26,8 +27,9 @@ enum PasteboardAttachments {
             return .webURL(url)
         }
         let imageTypes: [NSPasteboard.PasteboardType] = [.png, .tiff, NSPasteboard.PasteboardType("public.jpeg")]
-        guard pasteboard.availableType(from: imageTypes) != nil, let image = NSImage(pasteboard: pasteboard) else { return nil }
-        return .image(image)
+        if pasteboard.availableType(from: imageTypes) != nil, let image = NSImage(pasteboard: pasteboard) { return .image(image) }
+        if let text = pasteboard.string(forType: .string), !text.isEmpty { return .text(text) }
+        return nil
     }
 }
 

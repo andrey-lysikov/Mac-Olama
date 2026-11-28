@@ -9,12 +9,12 @@ import MLXLLM
 import MLXLMCommon
 import MLXVLM
 import Tokenizers
-import os
 
 public actor MLXEngine: InferenceEngine {
     public private(set) var loadedModel: ModelDescriptor?
     private var container: ModelContainer?
     private let current = GenerationTaskBox()
+    private var currentChatID: UUID?
     private var sessions: [PromptSession] = []
     private static let maxSessions = 4
     private static let sessionBudgetBytes = max(1 << 30, (GPU.maxRecommendedWorkingSetBytes() ?? 0) / 6)
@@ -98,6 +98,10 @@ public actor MLXEngine: InferenceEngine {
         Memory.clearCache()  // return Metal memory to the system
     }
 
+    public func cancel(chatID: UUID) async {
+        if currentChatID == chatID { current.cancel() }
+    }
+
     public func cancelCurrent() async {
         current.cancel()
     }
@@ -105,8 +109,9 @@ public actor MLXEngine: InferenceEngine {
     // Generate
 
     // Inline `Task` keeps actor isolation for mutating state.
-    public func generate(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
-        guard let container, let model = loadedModel else { return .failed(EngineError.noModelLoaded) }
+    public func generate(_ request: GenerationRequest, model requestedModel: ModelDescriptor) -> AsyncThrowingStream<GenerationEvent, Error> {
+        guard let container, let model = loadedModel, model.id == requestedModel.id else { return .failed(EngineError.noModelLoaded) }
+        currentChatID = request.chatID
         if model.kind == .llm, request.messages.contains(where: { !$0.images.isEmpty }) {
             return .failed(EngineError.imagesNotSupported)
         }
@@ -265,21 +270,19 @@ public actor MLXEngine: InferenceEngine {
 
     private func drafter(_ loaded: any MTPDrafterModel, temperature: Double) -> DrafterBox? {
         guard loaded.requiresGreedySampling, temperature != 0 else { return DrafterBox(model: loaded) }
-        MTPDrafter.logger.info("drafter set aside: it needs greedy decoding, this request samples at \(temperature)")
         drafterState = .greedyOnly
         return nil
     }
 
     private static func logSpeculation(_ info: GenerateCompletionInfo) {
         if let reason = info.passthroughReason {
-            MTPDrafter.logger.notice("speculation stopped: \(reason, privacy: .public)")
+            print("speculation stopped: \(reason)")
             return
         }
         let proposed = info.proposedDraftTokens ?? 0
         let accepted = info.acceptedDraftTokens ?? 0
-        MTPDrafter.logger.info(
-            "speculation: \(accepted) of \(proposed) drafted tokens accepted, \(info.generationTokenCount) generated at \(Int(info.tokensPerSecond)) tok/s"
-        )
+        print(
+            "speculation: \(accepted) of \(proposed) drafted tokens accepted, \(info.generationTokenCount) generated at \(Int(info.tokensPerSecond)) tok/s")
     }
 
     private static func start(

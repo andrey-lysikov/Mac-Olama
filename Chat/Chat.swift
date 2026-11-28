@@ -16,10 +16,13 @@ public struct Chat: Codable, Sendable, Identifiable, Hashable {
     public var systemPrompt: String?
     public var origin: ChatOrigin
     public var isArchived: Bool
+    // Messages up to this moment live only in the transcript; the model gets the summary in the system prompt.
+    public var compactedAt: Date?
 
     public init(
         id: UUID = UUID(), title: String = "", createdAt: Date = .now, updatedAt: Date = .now,
-        modelID: String? = nil, systemPrompt: String? = nil, origin: ChatOrigin, isArchived: Bool = false
+        modelID: String? = nil, systemPrompt: String? = nil, origin: ChatOrigin, isArchived: Bool = false,
+        compactedAt: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -29,6 +32,7 @@ public struct Chat: Codable, Sendable, Identifiable, Hashable {
         self.systemPrompt = systemPrompt
         self.origin = origin
         self.isArchived = isArchived
+        self.compactedAt = compactedAt
     }
 }
 
@@ -90,14 +94,21 @@ public struct Message: Codable, Sendable, Identifiable, Hashable {
     public var toolCallID: String?
     public var createdAt: Date
     public var completionTokens: Int?
+    public var promptTokens: Int?
+    public var outputTokens: Int?
+    public var cachedTokens: Int?
+    public var toolRounds: Int?
     public var tokensPerSecond: Double?
     public var isPartial: Bool
     public var modelID: String?
+    // The run's error, kept so the failure survives reopening the chat.
+    public var failure: String?
 
     public init(
         id: UUID = UUID(), chatID: UUID, role: MessageRole, text: String, attachments: [Attachment] = [],
         toolCalls: [ToolCall] = [], toolCallID: String? = nil, createdAt: Date = .now,
-        completionTokens: Int? = nil, tokensPerSecond: Double? = nil, isPartial: Bool = false, modelID: String? = nil
+        completionTokens: Int? = nil, promptTokens: Int? = nil, outputTokens: Int? = nil, cachedTokens: Int? = nil, toolRounds: Int? = nil,
+        tokensPerSecond: Double? = nil, isPartial: Bool = false, modelID: String? = nil, failure: String? = nil
     ) {
         self.id = id
         self.chatID = chatID
@@ -108,9 +119,14 @@ public struct Message: Codable, Sendable, Identifiable, Hashable {
         self.toolCallID = toolCallID
         self.createdAt = createdAt
         self.completionTokens = completionTokens
+        self.promptTokens = promptTokens
+        self.outputTokens = outputTokens
+        self.cachedTokens = cachedTokens
+        self.toolRounds = toolRounds
         self.tokensPerSecond = tokensPerSecond
         self.isPartial = isPartial
         self.modelID = modelID
+        self.failure = failure
     }
 }
 

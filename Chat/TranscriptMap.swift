@@ -151,10 +151,8 @@ struct TranscriptMapView: View {
         .overlay(alignment: .bottomTrailing) {
             HStack(spacing: 6) {
                 Button(String(localized: "Maps"), systemImage: "map", action: openInAppleMaps)
-                    .help(String(localized: "Open in Apple Maps"))
                 if let url = map.yandexURL {
                     Button(String(localized: "Yandex Maps"), systemImage: "arrow.up.right") { NSWorkspace.shared.open(url) }
-                        .help(String(localized: "Open in Yandex Maps"))
                 }
             }
             .buttonStyle(.glass).controlSize(.small)

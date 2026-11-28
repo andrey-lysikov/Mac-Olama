@@ -14,6 +14,7 @@ struct ToolArguments {
     func string(_ key: String) -> String? { values[key] as? String }
     func int(_ key: String) -> Int? { values[key] as? Int }
     func bool(_ key: String) -> Bool? { values[key] as? Bool }
+    func strings(_ key: String) -> [String]? { values[key] as? [String] }
     func double(_ key: String) -> Double? { (values[key] as? NSNumber)?.doubleValue ?? string(key).flatMap(Double.init) }
 }
 
@@ -93,8 +94,104 @@ enum PrivacySettings {
     }
 }
 
+public enum ToolApprovalCategory: String, Codable, Sendable {
+    case fileEdit, command, git, projectAccess, other
+}
+
+public struct ToolApprovalRequest: Identifiable, Codable, Equatable, Sendable {
+    public let id: UUID
+    public let chatID: UUID
+    public let title: String
+    public let detail: String
+    public let isDiff: Bool
+    public let category: ToolApprovalCategory
+
+    public init(
+        id: UUID = UUID(), chatID: UUID, title: String, detail: String, isDiff: Bool = false,
+        category: ToolApprovalCategory = .other
+    ) {
+        self.id = id
+        self.chatID = chatID
+        self.title = title
+        self.detail = detail
+        self.isDiff = isDiff
+        self.category = category
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, chatID, title, detail, isDiff, category }
+
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        chatID = try values.decode(UUID.self, forKey: .chatID)
+        title = try values.decode(String.self, forKey: .title)
+        detail = try values.decode(String.self, forKey: .detail)
+        isDiff = try values.decodeIfPresent(Bool.self, forKey: .isDiff) ?? false
+        category = try values.decodeIfPresent(ToolApprovalCategory.self, forKey: .category) ?? .other
+    }
+}
+
+public struct ToolApprovalRecord: Codable, Sendable {
+    public static let toolCallPrefix = "approval:"
+
+    public let request: ToolApprovalRequest
+    public let allowed: Bool
+    public let decidedAt: Date
+    public let automatic: Bool
+
+    public init(request: ToolApprovalRequest, allowed: Bool, decidedAt: Date = .now, automatic: Bool = false) {
+        self.request = request
+        self.allowed = allowed
+        self.decidedAt = decidedAt
+        self.automatic = automatic
+    }
+
+    private enum CodingKeys: String, CodingKey { case request, allowed, decidedAt, automatic }
+
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        request = try values.decode(ToolApprovalRequest.self, forKey: .request)
+        allowed = try values.decode(Bool.self, forKey: .allowed)
+        decidedAt = try values.decode(Date.self, forKey: .decidedAt)
+        automatic = try values.decodeIfPresent(Bool.self, forKey: .automatic) ?? false
+    }
+
+    public static func message(for record: ToolApprovalRecord) -> Message? {
+        guard let data = try? JSONEncoder().encode(record), let text = String(data: data, encoding: .utf8) else { return nil }
+        return Message(
+            chatID: record.request.chatID, role: .tool, text: text,
+            toolCallID: toolCallPrefix + record.request.id.uuidString, createdAt: record.decidedAt)
+    }
+
+    public static func record(from message: Message) -> ToolApprovalRecord? {
+        guard message.toolCallID?.hasPrefix(toolCallPrefix) == true, let data = message.text.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(ToolApprovalRecord.self, from: data)
+    }
+
+    public static func isApproval(_ message: Message) -> Bool {
+        message.toolCallID?.hasPrefix(toolCallPrefix) == true
+    }
+}
+
 public protocol ToolConfirmation: Sendable {
     func confirm(title: String, detail: String) async -> Bool
+    func confirmDiff(title: String, diff: String) async -> Bool
+    func confirm(title: String, detail: String, chatID: UUID?) async -> Bool
+    func confirmDiff(title: String, diff: String, chatID: UUID?) async -> Bool
+    func confirm(title: String, detail: String, chatID: UUID?, category: ToolApprovalCategory) async -> Bool
+    func confirmDiff(title: String, diff: String, chatID: UUID?, category: ToolApprovalCategory) async -> Bool
+}
+
+extension ToolConfirmation {
+    public func confirmDiff(title: String, diff: String) async -> Bool { await confirm(title: title, detail: diff) }
+    public func confirm(title: String, detail: String, chatID: UUID?) async -> Bool { await confirm(title: title, detail: detail) }
+    public func confirmDiff(title: String, diff: String, chatID: UUID?) async -> Bool { await confirmDiff(title: title, diff: diff) }
+    public func confirm(title: String, detail: String, chatID: UUID?, category: ToolApprovalCategory) async -> Bool {
+        await confirm(title: title, detail: detail, chatID: chatID)
+    }
+    public func confirmDiff(title: String, diff: String, chatID: UUID?, category: ToolApprovalCategory) async -> Bool {
+        await confirmDiff(title: title, diff: diff, chatID: chatID)
+    }
 }
 
 public struct CompositeToolProvider: ToolProvider {
@@ -106,6 +203,13 @@ public struct CompositeToolProvider: ToolProvider {
             throw ConversationError.unknownTool(call.name)
         }
         return try await p.execute(call)
+    }
+
+    public func execute(_ call: ToolCall, chatID: UUID) async throws -> String {
+        guard let p = providers.first(where: { $0.specs.contains { $0.name == call.name } }) else {
+            throw ConversationError.unknownTool(call.name)
+        }
+        return try await p.execute(call, chatID: chatID)
     }
 }
 
@@ -141,6 +245,11 @@ enum ToolDate {
 
 // Processes
 
+struct ToolProcessResult: Sendable {
+    var output: String
+    var status: Int32
+}
+
 enum ToolProcess {
     private final class ResumeGate: Sendable {
         private let resumed = Mutex(false)
@@ -153,13 +262,22 @@ enum ToolProcess {
         }
     }
 
-    static func run(_ binary: URL, _ arguments: [String], stdin: Data? = nil, timeout: TimeInterval = 20) async throws -> String {
-        let box = ProcessBox(binary: binary, arguments: arguments, stdin: stdin)
+    static func run(
+        _ binary: URL, _ arguments: [String], stdin: Data? = nil, timeout: TimeInterval = 20, directory: URL? = nil
+    ) async throws -> String {
+        try await runResult(binary, arguments, stdin: stdin, timeout: timeout, directory: directory).output
+    }
+
+    static func runResult(
+        _ binary: URL, _ arguments: [String], stdin: Data? = nil, timeout: TimeInterval = 20, directory: URL? = nil,
+        onOutput: (@Sendable (String) -> Void)? = nil
+    ) async throws -> ToolProcessResult {
+        let box = ProcessBox(binary: binary, arguments: arguments, stdin: stdin, directory: directory, onOutput: onOutput)
         // Guards against a double resume.
         let gate = ResumeGate()
         return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, any Error>) in
-                let finish: @Sendable (Result<String, any Error>) -> Void = { result in
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ToolProcessResult, any Error>) in
+                let finish: @Sendable (Result<ToolProcessResult, any Error>) -> Void = { result in
                     if gate.begin() { continuation.resume(with: result) }
                 }
                 do { try box.start(timeout: timeout) { finish(.success($0)) } } catch { finish(.failure(error)) }
@@ -177,7 +295,7 @@ enum ToolProcess {
 private final class OutputBuffer: Sendable {
     private let storage = Mutex((data: Data(), finished: false))
 
-    func read(from fd: Int32) -> Int? {
+    func read(from fd: Int32, onOutput: (@Sendable (String) -> Void)? = nil) -> Int? {
         storage.withLock { s in
             guard !s.finished else { return nil }
             var buffer = [UInt8](repeating: 0, count: 64 << 10)
@@ -185,6 +303,7 @@ private final class OutputBuffer: Sendable {
             if n < 0 && (errno == EAGAIN || errno == EINTR) { return s.data.count }
             guard n > 0 else { return nil }
             s.data.append(contentsOf: buffer[0..<n])
+            onOutput?(String(decoding: buffer[0..<n], as: UTF8.self))
             return s.data.count
         }
     }
@@ -211,20 +330,25 @@ final class ProcessBox: @unchecked Sendable {
     private let stdin: Data?
     private let collected = OutputBuffer()
     private let state = Mutex((terminated: false, launched: false))
+    private let onOutput: (@Sendable (String) -> Void)?
 
-    init(binary: URL, arguments: [String], stdin: Data?) {
+    init(
+        binary: URL, arguments: [String], stdin: Data?, directory: URL? = nil, onOutput: (@Sendable (String) -> Void)? = nil
+    ) {
         process.executableURL = binary
         process.arguments = arguments
+        process.currentDirectoryURL = directory
         process.standardOutput = output
         process.standardError = output
         self.stdin = stdin
+        self.onOutput = onOutput
         if stdin != nil { process.standardInput = Pipe() }
     }
 
-    func start(timeout: TimeInterval, completion: @escaping @Sendable (String) -> Void) throws {
+    func start(timeout: TimeInterval, completion: @escaping @Sendable (ToolProcessResult) -> Void) throws {
         // Cancelled before launch: do not run, still answer.
         if state.withLock({ $0.terminated }) {
-            completion("")
+            completion(ToolProcessResult(output: "", status: -1))
             return
         }
         let output = self.output
@@ -232,31 +356,32 @@ final class ProcessBox: @unchecked Sendable {
         // Non-blocking read(2) instead of `availableData`, which can throw uncatchable exceptions.
         _ = fcntl(output.fileHandleForReading.fileDescriptor, F_SETFL, O_NONBLOCK)
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            guard let total = collected.read(from: handle.fileDescriptor) else {
+            guard let total = collected.read(from: handle.fileDescriptor, onOutput: self?.onOutput) else {
                 handle.readabilityHandler = nil
                 return
             }
             if total > Self.maxOutputBytes { self?.terminate() }
         }
-        process.terminationHandler = { _ in
+        process.terminationHandler = { process in
             let reader = output.fileHandleForReading
             reader.readabilityHandler = nil
             let data = collected.finish(draining: reader.fileDescriptor)
             var text = String(decoding: data.prefix(Self.maxOutputBytes), as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if data.count > Self.maxOutputBytes { text += "\n…[output truncated]" }
-            completion(text)
+            completion(ToolProcessResult(output: text, status: process.terminationStatus))
         }
         // Launch under the lock so terminate() never sees a half-built task.
         let launched: Bool = try state.withLock { s in
             guard !s.terminated else { return false }
             try process.run()
+            setpgid(process.processIdentifier, process.processIdentifier)
             s.launched = true
             return true
         }
         guard launched else {
             output.fileHandleForReading.readabilityHandler = nil
-            completion("")
+            completion(ToolProcessResult(output: "", status: -1))
             return
         }
         if let stdin, let pipe = process.standardInput as? Pipe {
@@ -281,14 +406,14 @@ final class ProcessBox: @unchecked Sendable {
         let pid: pid_t? = state.withLock { s in
             s.terminated = true
             guard s.launched, process.isRunning else { return nil }
-            process.terminate()
             return process.processIdentifier
         }
-        // pid captured under the lock: a reaped task reports 0, and kill(0) hits our group.
+        // The child leads its own process group, so shells cannot leave their children running.
         guard let pid, pid > 0 else { return }
         let process = self.process
+        if kill(-pid, SIGTERM) != 0 { process.terminate() }
         DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
-            if process.isRunning { kill(pid, SIGKILL) }
+            if process.isRunning, kill(-pid, SIGKILL) != 0 { process.terminate() }
         }
     }
 }

@@ -124,11 +124,13 @@ public struct GenerationRequest: Sendable {
     public var contextTokens: Int?
     public var speculates: Bool
     public var thinks: Bool
+    public var thinkingEffort: String?
     public var rejectsLongPrompt: Bool
 
     public init(
         messages: [EngineMessage], tools: [ToolSpec] = [], sampling: SamplingParams = .init(), keepAlive: KeepAlive = .default,
-        chatID: UUID? = nil, contextTokens: Int? = nil, speculates: Bool = false, thinks: Bool = false, rejectsLongPrompt: Bool = false
+        chatID: UUID? = nil, contextTokens: Int? = nil, speculates: Bool = false, thinks: Bool = false, thinkingEffort: String? = nil,
+        rejectsLongPrompt: Bool = false
     ) {
         self.messages = messages
         self.tools = tools
@@ -138,6 +140,7 @@ public struct GenerationRequest: Sendable {
         self.contextTokens = contextTokens
         self.speculates = speculates
         self.thinks = thinks
+        self.thinkingEffort = thinkingEffort
         self.rejectsLongPrompt = rejectsLongPrompt
     }
 }
@@ -149,15 +152,17 @@ public enum FinishReason: String, Sendable, Codable {
 public struct GenerationUsage: Sendable, Equatable {
     public var promptTokens: Int
     public var completionTokens: Int
+    public var cachedTokens: Int
     public var tokensPerSecond: Double
     public var promptSeconds: TimeInterval
     public var generationSeconds: TimeInterval
     public init(
-        promptTokens: Int, completionTokens: Int, tokensPerSecond: Double, promptSeconds: TimeInterval = 0,
+        promptTokens: Int, completionTokens: Int, cachedTokens: Int = 0, tokensPerSecond: Double, promptSeconds: TimeInterval = 0,
         generationSeconds: TimeInterval = 0
     ) {
         self.promptTokens = promptTokens
         self.completionTokens = completionTokens
+        self.cachedTokens = cachedTokens
         self.tokensPerSecond = tokensPerSecond
         self.promptSeconds = promptSeconds
         self.generationSeconds = generationSeconds
@@ -213,7 +218,8 @@ public protocol InferenceEngine: Actor {
     var loadedModel: ModelDescriptor? { get }
     func load(_ model: ModelDescriptor, progress: @Sendable @escaping (Double) -> Void) async throws
     func unload() async
-    func generate(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error>
+    func generate(_ request: GenerationRequest, model: ModelDescriptor) -> AsyncThrowingStream<GenerationEvent, Error>
+    func cancel(chatID: UUID) async
     func cancelCurrent() async
 }
 
@@ -286,6 +292,9 @@ public actor EngineManager {
     private var idleTask: Task<Void, Never>?
     private var keepForever = false
     private var queueTail: Task<Void, Never>?
+    private var generationTasks: [UUID: (id: UUID, task: Task<Void, Never>)] = [:]
+    private var remoteGenerationIDs: Set<UUID> = []
+    private var localGenerating = false
     private var loadTask: (generation: Int, task: Task<Void, Error>)?
     private var loadingModelID: String?
     private var loadGeneration = 0
@@ -381,7 +390,17 @@ public actor EngineManager {
     }
 
     public func prewarm(_ model: ModelDescriptor) {
+        guard !model.source.isRemote, !localGenerating, loadTask == nil else { return }
         Task { try? await ensureLoaded(model) }
+    }
+
+    public func unloadLocal() async {
+        idleTask?.cancel()
+        idleTask = nil
+        keepForever = false
+        guard !localGenerating, loadTask == nil else { return }
+        await engine.unload()
+        if remoteGenerationIDs.isEmpty { state = .unloaded }
     }
 
     public func unload() async {
@@ -409,6 +428,7 @@ public actor EngineManager {
     private func unloadIfIdle() async {
         if case .generating = state { return }
         if case .loading = state { return }
+        guard remoteGenerationIDs.isEmpty else { return }
         await unload()
     }
 
@@ -416,37 +436,57 @@ public actor EngineManager {
 
     public func generate(model: ModelDescriptor, request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream.makeStream(of: GenerationEvent.self)
-        let previous = queueTail
+        let remote = model.source.isRemote
+        let previous = remote ? nil : queueTail
+        let id = UUID()
         let task = Task { [weak self] in
             _ = await previous?.value
             // A client that gave up while queued must not load a model or start a reply nobody reads.
-            guard let self, !Task.isCancelled else { continuation.finish(throwing: CancellationError()); return }
-            await self.run(model: model, request: request, continuation: continuation)
+            if let self, !Task.isCancelled {
+                await self.run(model: model, request: request, id: id, continuation: continuation)
+            } else {
+                continuation.finish(throwing: CancellationError())
+            }
+            await self?.removeGeneration(id, chatID: request.chatID)
         }
-        queueTail = task
+        if !remote { queueTail = task }
+        if let chatID = request.chatID { generationTasks[chatID] = (id, task) }
         continuation.onTermination = { termination in
             if case .cancelled = termination { task.cancel() }
         }
         return stream
     }
 
+    private func removeGeneration(_ id: UUID, chatID: UUID?) {
+        guard let chatID, generationTasks[chatID]?.id == id else { return }
+        generationTasks[chatID] = nil
+    }
+
     private func run(
-        model: ModelDescriptor, request: GenerationRequest, continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation
+        model: ModelDescriptor, request: GenerationRequest, id: UUID,
+        continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation
     ) async {
-        idleTask?.cancel()
-        do {
-            try await ensureLoaded(model)
-        } catch {
-            continuation.finish(throwing: error)
-            return
+        if model.source.isRemote {
+            remoteGenerationIDs.insert(id)
+            state = .generating(modelID: model.id, chatID: request.chatID, tokensPerSecond: 0)
+        } else {
+            localGenerating = true
+            idleTask?.cancel()
+            do {
+                try await ensureLoaded(model)
+            } catch {
+                localGenerating = false
+                continuation.finish(throwing: error)
+                return
+            }
+            state = .generating(modelID: model.id, chatID: request.chatID, tokensPerSecond: 0)
         }
-        state = .generating(modelID: model.id, chatID: request.chatID, tokensPerSecond: 0)
         var tokenCount = 0
         let start = ContinuousClock.now
         do {
-            for try await event in await engine.generate(request) {
+            for try await event in await engine.generate(request, model: model) {
                 if Task.isCancelled {
-                    await engine.cancelCurrent()
+                    if let chatID = request.chatID { await engine.cancel(chatID: chatID) } else { await engine.cancelCurrent() }
                     continuation.yield(.finished(.cancelled))
                     break
                 }
@@ -464,14 +504,33 @@ public actor EngineManager {
         } catch {
             continuation.finish(throwing: error)
         }
-        // Unload within this request's turn in the queue.
-        await finishGeneration(model: model, keepAlive: request.keepAlive)
+        if model.source.isRemote {
+            await finishRemoteGeneration(model: model, request: request, id: id)
+        } else {
+            localGenerating = false
+            // Unload within this request's turn in the local queue.
+            await finishGeneration(model: model, keepAlive: request.keepAlive)
+        }
+    }
+
+    private func finishRemoteGeneration(model: ModelDescriptor, request: GenerationRequest, id: UUID) async {
+        remoteGenerationIDs.remove(id)
+        guard remoteGenerationIDs.isEmpty else { return }
+        if case .generating(let modelID, let chatID, _) = state, modelID == model.id, chatID == request.chatID {
+            if let loaded = await engine.loadedModel {
+                state = .ready(modelID: loaded.id)
+                scheduleIdleUnload()
+            } else {
+                state = .unloaded
+            }
+        }
     }
 
     private func finishGeneration(model: ModelDescriptor, keepAlive: KeepAlive) async {
         switch keepAlive {
         case .unloadNow:
-            await unload()
+            await engine.unload()
+            if remoteGenerationIDs.isEmpty { state = .unloaded }
         case .forever:
             keepForever = true
             // The load armed the idle timer before this request's keep-alive was known.
@@ -489,7 +548,13 @@ public actor EngineManager {
         }
     }
 
+    public func cancel(chatID: UUID) async {
+        generationTasks[chatID]?.task.cancel()
+        await engine.cancel(chatID: chatID)
+    }
+
     public func cancelCurrent() async {
+        for generation in generationTasks.values { generation.task.cancel() }
         await engine.cancelCurrent()
     }
 }

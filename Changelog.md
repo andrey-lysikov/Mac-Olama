@@ -1,8 +1,19 @@
 # Changelog
 
+## 1.0
+
+- Introducing cloud models! Browser sign-in (OAuth), a live model catalog, per-model context and thinking effort
+- Cloud models appear in every model list and in the app's API, with tool support
+- Dedicated DeepSeek, Alibaba Cloud and OpenAI tabs; DeepSeek balance, Coding Plan limits and ChatGPT quota bars
+- Coding agent: per-chat projects, AGENTS.md and skills, reviewed edits and patches, scripts and commands, Git and PR/MR
+- LSP navigation and diagnostics, persistent coding snapshots/tasks, and mandatory build/test verification after edits
+- Hour and monthly quota bars, remaining quota, a profile with an avatar, and a subscription management link
+- Update dependencies (swift-transformers 1.4.0, SwiftSoup 2.14.4)
+- Bug fixes
+
 ## 0.8
 
-- Remove toolbar in charts
+- Remove toolbar in chats
 - Optimise menu
 - Remove comments
 - Add model descriptions and links in search
@@ -13,13 +24,13 @@
 - Video transcripts for YouTube, VK Video and Rutube
 - Chat export to PDF, Markdown and HTML
 - Update dependencies
-- Chat benhavior update
-- Bugfix
+- Chat behavior update
+- Bug fixes
 
 
 ## 0.6
 
-- Benhavior fixes in chats
+- Behavior fixes in chats
 - Update dependencies
 - About page
 - Maps navigator plugin
@@ -59,12 +70,12 @@
 ## 0.2
 
 - HTML and Markdown reader
-- Panel now is about of message window
-- Allow add models by API
-- Check models and application for update
+- The panel now floats above other windows
+- Allow adding models via API
+- Check models and the application for updates
 - Update app icon
 - Remove Ollama and add ModelScope as models hub
-- Remove usage system keychain
+- Remove system keychain usage
 
 ## 0.1
 

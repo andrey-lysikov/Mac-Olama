@@ -7,6 +7,11 @@ import Foundation
 public protocol ToolProvider: Sendable {
     var specs: [ToolSpec] { get }
     func execute(_ call: ToolCall) async throws -> String
+    func execute(_ call: ToolCall, chatID: UUID) async throws -> String
+}
+
+extension ToolProvider {
+    public func execute(_ call: ToolCall, chatID: UUID) async throws -> String { try await execute(call) }
 }
 
 // ConversationService
@@ -54,12 +59,17 @@ public actor ConversationService {
         public var maxDocumentCharacters = 24_000
         public var contextTokensByModel: [String: Int] = [:]
         public var temperatureByModel: [String: Double] = [:]
+        public var outputTokensByModel: [String: Int] = [:]
         public var checkpointSamplingByModel: [String: SamplingParams] = [:]
         public var speculativeModelIDs: Set<String> = []
         public var greedyModelIDs: Set<String> = []
         public var reasoningModelIDs: Set<String> = []
+        public var thinkingEffortByModel: [String: String] = [:]
         public var preferredLanguage = ""
-        public init(maxToolIterations: Int = 10, reservedTokensForReply: Int = 1024) {
+        public var codingContext: @Sendable (UUID) async -> String? = { _ in nil }
+        public var codingDynamicContext: @Sendable (UUID) async -> String? = { _ in nil }
+        public var codingNeedsVerification: @Sendable (UUID) async -> Bool = { _ in false }
+        public init(maxToolIterations: Int = 50, reservedTokensForReply: Int = 1024) {
             self.maxToolIterations = maxToolIterations
             self.reservedTokensForReply = reservedTokensForReply
         }
@@ -74,6 +84,7 @@ public actor ConversationService {
     public private(set) var activeChatID: UUID?
     public private(set) var activeModelID: String?
     private var runningTasks: [UUID: Task<Void, Never>] = [:]
+    private var startingChats: Set<UUID> = []
 
     public init(
         engineManager: EngineManager, store: any ChatStore, catalog: ModelCatalog,
@@ -94,6 +105,15 @@ public actor ConversationService {
     public func setActiveModel(id: String?) { activeModelID = id }
     public func setActiveChat(id: UUID?) { activeChatID = id }
 
+    public func codingContext(for chatID: UUID) async -> String? { await configuration.codingContext(chatID) }
+
+    public func codingDynamicContext(for chatID: UUID) async -> String? { await configuration.codingDynamicContext(chatID) }
+
+    public func recordApproval(_ request: ToolApprovalRequest, allowed: Bool, automatic: Bool = false) async {
+        let record = ToolApprovalRecord(request: request, allowed: allowed, automatic: automatic)
+        if let message = ToolApprovalRecord.message(for: record) { try? await store.insert(message) }
+    }
+
     // Chats
 
     public func activeChat(origin: ChatOrigin) async throws -> Chat {
@@ -110,20 +130,71 @@ public actor ConversationService {
     }
 
     public func deleteChat(id: UUID) async throws {
-        runningTasks[id]?.cancel()
+        await cancel(chatID: id)
         try await store.deleteChat(id: id)
         if activeChatID == id { activeChatID = nil }
     }
 
     public func isGenerating(chatID: UUID) -> Bool {
-        runningTasks[chatID] != nil
+        runningTasks[chatID] != nil || startingChats.contains(chatID)
     }
 
-    public var generatingChatIDs: Set<UUID> { Set(runningTasks.keys) }
+    public var generatingChatIDs: Set<UUID> { Set(runningTasks.keys).union(startingChats) }
 
     public func cancel(chatID: UUID) async {
         runningTasks[chatID]?.cancel()
-        await engineManager.cancelCurrent()
+        await engineManager.cancel(chatID: chatID)
+    }
+
+    // Compact
+
+    // Summarize the chat into its system prompt; the transcript keeps the full history for the reader.
+    public func compact(chatID: UUID) async throws {
+        print("compact started")
+        guard let chat = try await store.chat(id: chatID) else { throw ConversationError.chatNotFound(chatID) }
+        guard let modelID = chat.modelID ?? activeModelID, let model = await catalog.model(id: modelID) else {
+            throw ConversationError.noActiveModel
+        }
+        let history = try await store.messages(chatID: chatID).filter { !$0.isPartial }
+        guard !history.isEmpty else { return }
+        var engineMessages = try buildContext(
+            chat: chat, history: history, model: model, codingContext: await configuration.codingContext(chatID),
+            codingDynamicContext: await configuration.codingDynamicContext(chatID))
+        engineMessages.append(
+            EngineMessage(
+                role: .user,
+                content: """
+                    Compress the conversation so far into a short summary for continuing it without the history. \
+                    Keep the user's goals, decisions, important facts, names, numbers, file paths, and open questions. \
+                    Describe any images or documents by their content. Write in the conversation's language. \
+                    Answer with the summary only, no preamble.
+                    """))
+        var updated = chat
+        // Mark the cut at once so the divider shows while the summary is being written.
+        updated.compactedAt = .now
+        try await store.update(updated)
+        do {
+            let request = GenerationRequest(
+                messages: engineMessages, sampling: SamplingParams(maxTokens: replyBudget(for: model)),
+                chatID: chatID, contextTokens: effectiveContext(for: model))
+            var summary = ""
+            for try await event in await engineManager.generate(model: model, request: request) {
+                if case .token(let text) = event { summary += text }
+            }
+            let compressed = AnswerText.visible(summary).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !compressed.isEmpty else { throw EngineError.generationFailed(String(localized: "The model returned an empty summary.")) }
+            let header = String(localized: "Summary of the conversation before compaction:")
+            let originalPrompt = chat.systemPrompt?.components(separatedBy: "\n\n\(header)").first ?? chat.systemPrompt
+            updated.systemPrompt = [originalPrompt, "\(header)\n\(compressed)"].compactMap { $0 }.joined(separator: "\n\n")
+            try await store.update(updated)
+            print("compact finished: \(compressed.count) characters")
+        } catch {
+            // A failed compaction must not hide the history from the model: roll the cut back.
+            var reverted = updated
+            reverted.compactedAt = chat.compactedAt
+            try? await store.update(reverted)
+            throw error
+        }
     }
 
     // Send
@@ -132,6 +203,8 @@ public actor ConversationService {
         chatID: UUID, text: String, images: [ImageInput] = [], documents: [DocumentInput] = [],
         sampling: SamplingParams? = nil, keepAlive: KeepAlive = .default, modelID shownModelID: String? = nil
     ) async throws -> AsyncStream<ConversationEvent> {
+        guard runningTasks[chatID] == nil, startingChats.insert(chatID).inserted else { throw EngineError.busy }
+        defer { startingChats.remove(chatID) }
         guard var chat = try await store.chat(id: chatID) else { throw ConversationError.chatNotFound(chatID) }
         if let shownModelID, shownModelID != chat.modelID {
             chat.modelID = shownModelID
@@ -181,23 +254,37 @@ public actor ConversationService {
         chat: Chat, model: ModelDescriptor, sampling: SamplingParams, keepAlive: KeepAlive,
         continuation: AsyncStream<ConversationEvent>.Continuation
     ) async {
-        defer { continuation.finish() }
+        var totalPromptTokens = 0
+        var totalCompletionTokens = 0
+        var totalCachedTokens = 0
+        var requestRounds = 0
+        defer {
+            continuation.finish()
+        }
         var assistant = Message(chatID: chat.id, role: .assistant, text: "", isPartial: true, modelID: model.id)
         do {
             try await store.insert(assistant)
             continuation.yield(.started(messageID: assistant.id))
 
             var iterations = 0
+            var recentCalls: [String] = []
+            var readOnlyResults: [String: String] = [:]
             var finish: FinishReason = .stop
             var retriedEmptyAnswer = false
             loop: while true {
+                requestRounds += 1
                 let history = try await store.messages(chatID: chat.id).filter { $0.id != assistant.id }
-                let toolSpecs = model.supportsTools ? tools.specs : []
-                let engineMessages = try buildContext(chat: chat, history: history, model: model, toolSpecs: toolSpecs)
+                let codingContext = await configuration.codingContext(chat.id)
+                let toolSpecs = model.supportsTools
+                    ? Self.requestToolSpecs(tools.specs, history: history, hasProject: codingContext != nil) : []
+                let codingDynamicContext = await configuration.codingDynamicContext(chat.id)
+                let engineMessages = try buildContext(
+                    chat: chat, history: history, model: model, toolSpecs: toolSpecs, codingContext: codingContext,
+                    codingDynamicContext: codingDynamicContext)
                 let request = GenerationRequest(
                     messages: engineMessages, tools: toolSpecs, sampling: sampling, keepAlive: keepAlive, chatID: chat.id,
                     contextTokens: effectiveContext(for: model), speculates: configuration.speculativeModelIDs.contains(model.id),
-                    thinks: configuration.reasoningModelIDs.contains(model.id))
+                    thinks: configuration.reasoningModelIDs.contains(model.id), thinkingEffort: configuration.thinkingEffortByModel[model.id])
 
                 var pendingCalls: [ToolCall] = []
                 var usage: GenerationUsage?
@@ -229,6 +316,9 @@ public actor ConversationService {
                 if let usage {
                     assistant.completionTokens = (assistant.completionTokens ?? 0) + usage.completionTokens
                     assistant.tokensPerSecond = usage.tokensPerSecond
+                    totalPromptTokens += usage.promptTokens
+                    totalCompletionTokens += usage.completionTokens
+                    totalCachedTokens += usage.cachedTokens
                 }
 
                 // Retry once when a small model derails into a new turn after tools.
@@ -241,16 +331,46 @@ public actor ConversationService {
                     continuation.yield(.retrying)
                     continue loop
                 }
-                if pendingCalls.isEmpty || finish == .cancelled { break loop }
+                if pendingCalls.isEmpty || finish == .cancelled {
+                    let canVerify = tools.specs.contains { $0.name == "verify_changes" }
+                    if finish != .cancelled, canVerify, await configuration.codingNeedsVerification(chat.id) {
+                        pendingCalls = [ToolCall(id: "verify-\(UUID().uuidString)", name: "verify_changes", argumentsJSON: "{}")]
+                    } else {
+                        break loop
+                    }
+                }
 
-                iterations += 1
-                guard iterations <= configuration.maxToolIterations else { throw ConversationError.tooManyToolIterations }
+                if !pendingCalls.allSatisfy({ $0.name == "verify_changes" }) {
+                    iterations += 1
+                    guard iterations <= configuration.maxToolIterations else { throw ConversationError.tooManyToolIterations }
+                }
                 assistant.toolCalls += pendingCalls
                 try await store.update(assistant)
                 for call in pendingCalls {
                     continuation.yield(.toolCallStarted(call))
+                    let signature = call.name + "\n" + call.argumentsJSON
+                    let readOnly = Self.isReadOnlyTool(call.name)
+                    let repeated = !readOnly && recentCalls.suffix(2).count == 2 && recentCalls.suffix(2).allSatisfy { $0 == signature }
+                    recentCalls.append(signature)
                     let result: String
-                    do { result = try await tools.execute(call) } catch { result = "error: \(error)" }
+                    if repeated {
+                        result = "error: this exact tool call has already run twice. Use its existing result, choose a different approach, or answer the user; do not repeat it."
+                    } else if readOnly, let previous = readOnlyResults[signature] {
+                        result = "Unchanged result from earlier tool call \(previous). Use that existing result; no new output was produced."
+                    } else {
+                        do {
+                            if let builtIn = try await executeBuiltIn(call, chatID: chat.id) {
+                                result = builtIn
+                            } else {
+                                result = try await tools.execute(call, chatID: chat.id)
+                            }
+                        } catch { result = "error: \(error)" }
+                        if readOnly, !result.hasPrefix("error:") {
+                            readOnlyResults[signature] = call.id
+                        } else if !readOnly {
+                            readOnlyResults.removeAll()
+                        }
+                    }
                     let toolMessage = Message(chatID: chat.id, role: .tool, text: result, toolCallID: call.id)
                     try await store.insert(toolMessage)
                     continuation.yield(.toolCallFinished(call, resultPreview: String(result.prefix(400))))
@@ -262,6 +382,10 @@ public actor ConversationService {
                 try await store.insert(assistant)
             }
             assistant.isPartial = (finish == .cancelled)
+            assistant.promptTokens = totalPromptTokens
+            assistant.outputTokens = totalCompletionTokens
+            assistant.cachedTokens = totalCachedTokens
+            assistant.toolRounds = requestRounds
             try await store.update(assistant)
             continuation.yield(.finished(assistant))
             // Explain a reply cut off while still reasoning.
@@ -270,13 +394,17 @@ public actor ConversationService {
             }
         } catch {
             assistant.isPartial = true
+            assistant.promptTokens = totalPromptTokens
+            assistant.outputTokens = totalCompletionTokens
+            assistant.cachedTokens = totalCachedTokens
+            assistant.toolRounds = requestRounds
+            assistant.failure = Self.describe(error)
             try? await store.update(assistant)
-            continuation.yield(.failed(Self.describe(error)))
+            continuation.yield(.failed(assistant.failure ?? "\(error)"))
         }
     }
 
-    public static func describe(_ error: Error) -> String {
-        switch error {
+    public static func describe(_ error: Error) -> String {        switch error {
         case let engine as EngineError: engine.description
         case let conversation as ConversationError: conversation.description
         case let url as URLError:
@@ -287,6 +415,46 @@ public actor ConversationService {
     }
 
     // Context
+
+    private static let codingToolNames: Set<String> = [
+        "project_bind", "task_update", "project_read", "project_search", "list_skills", "read_skill", "edit_file", "apply_patch",
+        "rollback_latest", "verify_changes", "create_script", "run_script", "run_process", "run_shell", "command_tasks", "command_output",
+        "command_cancel", "git_clone", "git_status", "git_diff", "git_log", "git_show", "git_branch", "git_add", "git_unstage",
+        "git_commit", "git_fetch", "git_pull", "git_push", "git_stash", "git_merge", "git_rebase", "git_cherry_pick", "git_tag",
+        "review_list", "review_create", "project_index", "project_symbols", "lsp_definition", "lsp_references", "lsp_diagnostics",
+    ]
+
+    private static let outputReaderSpec = ToolSpec(
+        name: "read_tool_output",
+        description: "Read another range of a previous tool result by its tool_call_id. Offset and limit are characters.",
+        parametersJSONSchema: #"{"type":"object","properties":{"tool_call_id":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["tool_call_id"]}"#)
+
+    private static let attachmentReaderSpec = ToolSpec(
+        name: "read_attachment",
+        description: "Read another range of an attached text document by attachment_id. Offset and limit are characters.",
+        parametersJSONSchema: #"{"type":"object","properties":{"attachment_id":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["attachment_id"]}"#)
+
+    static func isReadOnlyTool(_ name: String) -> Bool {
+        [
+            "read_tool_output", "read_attachment", "project_read", "project_search", "project_index", "project_symbols", "list_skills",
+            "read_skill", "git_status", "git_diff", "git_log", "git_show", "command_output", "command_tasks", "web_search", "fetch_url",
+            "read_file", "search_files", "recognize_text",
+        ].contains(name)
+    }
+
+    static func requestToolSpecs(_ specs: [ToolSpec], history: [Message], hasProject: Bool) -> [ToolSpec] {
+        guard !specs.isEmpty else { return [] }
+        let relevant = specs.filter { spec in
+            if spec.name == "read_tool_output" || spec.name == "read_attachment" { return false }
+            if hasProject {
+                return codingToolNames.contains(spec.name) || spec.name == "web_search" || spec.name == "fetch_url"
+            }
+            return !codingToolNames.contains(spec.name) || spec.name == "project_bind" || spec.name == "git_clone"
+        }
+        var result = relevant + [outputReaderSpec]
+        if history.contains(where: { $0.attachments.contains { $0.kind == .document } }) { result.append(attachmentReaderSpec) }
+        return result
+    }
 
     static func guidance(toolSpecs: [ToolSpec], now: Date = .now) -> String {
         let date = now.formatted(Date.FormatStyle(date: .complete, time: .omitted).locale(Locale(identifier: "en_US")))
@@ -300,12 +468,7 @@ public actor ConversationService {
                     + (names.contains("fetch_url") ? ", open the most relevant results with fetch_url," : "")
                     + " and answer from what you found, naming the sources. Never say that you cannot browse the internet.")
             lines.append(
-                "Research thoroughly: if the first results are thin, search again with different wording"
-                    + (names.contains("fetch_url")
-                        ? "; read the full text of at least two or three of the best sources with fetch_url instead of relying on snippets"
-                        : "")
-                    + ". Compare the sources, point out where they disagree or what is uncertain, and give a detailed, structured answer "
-                    + "with the key facts, figures and dates, ending with a list of source links.")
+                "Start with the most relevant source. Search again or read more sources only when the answer remains incomplete or the user asked for thorough research; cite the sources used.")
             lines.append("Never paste raw search results or page text into the answer; write the answer in your own words.")
         }
         if names.contains("fetch_url") {
@@ -408,15 +571,29 @@ public actor ConversationService {
         return lines.joined(separator: "\n")
     }
 
+    public static let defaultCloudOutputTokens = 8_192
+
+    static func cloudOutputBudget(configured: Int?) -> Int {
+        min(max(configured ?? defaultCloudOutputTokens, 1_024), 32_768)
+    }
+
     func replyBudget(for model: ModelDescriptor) -> Int {
-        Self.replyBudget(context: effectiveContext(for: model), atLeast: configuration.reservedTokensForReply)
+        if model.source.isCloud { return Self.cloudOutputBudget(configured: configuration.outputTokensByModel[model.id]) }
+        return Self.replyBudget(context: effectiveContext(for: model), atLeast: configuration.reservedTokensForReply)
     }
 
     static func replyBudget(context: Int, atLeast reserve: Int) -> Int {
         min(max(reserve, context / 4), 32768)
     }
 
-    func buildContext(chat: Chat, history: [Message], model: ModelDescriptor, toolSpecs: [ToolSpec] = []) throws -> [EngineMessage] {
+    func buildContext(
+        chat: Chat, history: [Message], model: ModelDescriptor, toolSpecs: [ToolSpec] = [], codingContext: String? = nil,
+        codingDynamicContext: String? = nil
+    ) throws -> [EngineMessage] {
+        // A compacted chat starts from its summary; older messages stay only on screen.
+        let history = history.filter { message in
+            chat.compactedAt.map { message.createdAt > $0 } ?? true
+        }
         let budgetTokens = max(512, effectiveContext(for: model) - replyBudget(for: model))
         var result: [EngineMessage] = []
         var used = 0
@@ -424,34 +601,44 @@ public actor ConversationService {
         let language = configuration.preferredLanguage
         let system = [
             language.isEmpty ? "" : "Always reply in \(language) unless the user explicitly asks for another language.",
-            Self.guidance(toolSpecs: toolSpecs), chat.systemPrompt ?? "",
+            Self.guidance(toolSpecs: toolSpecs), codingContext ?? "", chat.systemPrompt ?? "",
         ].filter { !$0.isEmpty }.joined(separator: "\n\n")
         result.append(EngineMessage(role: .system, content: system))
-        used += Self.estimateTokens(system)
-        // Current turn goes in whole; tool results share the budget equally.
+        used += Self.estimateTokens(system) + Self.estimateTokens(toolSpecs)
+        // Keep clipping stable between rounds so the server can reuse the prompt prefix.
         let turnStart = history.lastIndex { $0.role == .user } ?? history.startIndex
-        let turnToolResults = history[turnStart...].filter { $0.role == .tool }.count
-        let toolShareCharacters = max(1500, budgetTokens * 4 / (turnToolResults + 2))
-        var items: [(message: Message, content: String, cost: Int)] = []
+        let toolShareCharacters = min(8_000, max(1_500, budgetTokens / 2))
+        var items: [(message: Message, content: String, cost: Int, inCurrentTurn: Bool)] = []
         for (index, message) in history.enumerated() {
-            var content = contentWithDocuments(message)
+            if ToolApprovalRecord.isApproval(message) { continue }
+            var content = contentWithDocuments(message, concise: !toolSpecs.isEmpty)
             // The map a tool stored for the feed is not for the model: it would only eat the context.
             if message.role == .tool { content = ToolMapNote.strip(content) }
             let inCurrentTurn = index >= turnStart
-            // Drop earlier turns' reasoning; keep it in the current turn for cache continuity.
-            if message.role == .assistant, !inCurrentTurn { content = AnswerText.visible(content) }
-            if inCurrentTurn, message.role == .tool, content.count > toolShareCharacters {
+            // Remote APIs accept reasoning as a response field, not as text replayed in later requests.
+            if message.role == .assistant, model.source.isRemote || !inCurrentTurn { content = AnswerText.visible(content) }
+            // An empty assistant turn (e.g. an interrupted retry) is not a valid message for strict APIs.
+            if message.role == .assistant, message.toolCalls.isEmpty,
+                content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
+            let outputLimit = inCurrentTurn ? toolShareCharacters : min(toolShareCharacters, 2_000)
+            if message.role == .tool, content.count > outputLimit {
                 // Keep the closing untrusted-data marker, it tells the model where the external text ends.
                 let closing = content.range(of: "</untrusted_content>", options: .backwards).map { String(content[$0.lowerBound...]) } ?? ""
-                content = String(content.prefix(toolShareCharacters)) + "\n…[truncated to fit the context]\n" + closing
+                let reference = toolSpecs.isEmpty ? "" : message.toolCallID.map {
+                    " Use read_tool_output with tool_call_id=\"\($0)\" and offset=\(outputLimit) for more."
+                } ?? ""
+                content = String(content.prefix(outputLimit)) + "\n…[truncated to fit the context." + reference + "]\n" + closing
             }
-            let cost = Self.estimateTokens(content) + message.attachments.filter { $0.kind == .image }.count * 512
-            items.append((message, content, cost))
+            let cost = Self.estimateTokens(content) + Self.estimateTokens(message.toolCalls)
+                + message.attachments.filter { $0.kind == .image }.count * 512
+            items.append((message, content, cost, inCurrentTurn))
         }
         // The current turn always goes in whole; earlier turns fill what is left.
-        let turnCost = items[turnStart...].reduce(0) { $0 + $1.cost }
+        // Skipped empty turns shift positions, so the turn's start is found in the filtered list.
+        let turnFirst = items.firstIndex(where: \.inCurrentTurn) ?? items.endIndex
+        let turnCost = items[turnFirst...].reduce(0) { $0 + $1.cost }
         let first = Self.firstKeptMessage(
-            costs: items[..<turnStart].map(\.cost), isQuestion: history[..<turnStart].map { $0.role == .user },
+            costs: items[..<turnFirst].map(\.cost), isQuestion: items[..<turnFirst].map { $0.message.role == .user },
             room: budgetTokens - used - turnCost, step: max(1, budgetTokens / 4))
         var kept: [EngineMessage] = []
         for item in items[first...] {
@@ -465,6 +652,9 @@ public actor ConversationService {
         // never start history with an orphan tool result
         while let head = kept.first, head.role == .tool { kept.removeFirst() }
         result.append(contentsOf: kept)
+        if let codingDynamicContext, !codingDynamicContext.isEmpty {
+            result.append(EngineMessage(role: .system, content: codingDynamicContext))
+        }
         return result
     }
 
@@ -496,19 +686,86 @@ public actor ConversationService {
 
     static func estimateTokens(_ text: String) -> Int { max(1, text.utf8.count / 4) }
 
-    func contentWithDocuments(_ message: Message) -> String {
+    static func estimateTokens(_ calls: [ToolCall]) -> Int {
+        calls.reduce(0) { $0 + estimateTokens($1.name) + estimateTokens($1.argumentsJSON) + 4 }
+    }
+
+    static func estimateTokens(_ specs: [ToolSpec]) -> Int {
+        specs.reduce(0) { $0 + estimateTokens($1.name) + estimateTokens($1.description) + estimateTokens($1.parametersJSONSchema) + 8 }
+    }
+
+    static func contextEstimate(
+        chat: Chat?, history: [Message], streamingText: String, input: String,
+        toolSpecs: [ToolSpec], codingContext: String?, preferredLanguage: String, codingDynamicContext: String? = nil
+    ) -> Int {
+        let history = history.filter { message in
+            chat?.compactedAt.map { message.createdAt > $0 } ?? true
+        }
+        let specs = requestToolSpecs(toolSpecs, history: history, hasProject: codingContext != nil)
+        let system = [
+            preferredLanguage.isEmpty ? "" : "Always reply in \(preferredLanguage) unless the user explicitly asks for another language.",
+            guidance(toolSpecs: specs), codingContext ?? "", chat?.systemPrompt ?? "",
+        ].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        let turnStart = history.lastIndex { $0.role == .user } ?? history.startIndex
+        var total = estimateTokens(system) + estimateTokens(specs) + estimateTokens(codingDynamicContext ?? "")
+        for (index, message) in history.enumerated() where !ToolApprovalRecord.isApproval(message) {
+            let content = message.role == .assistant && index < turnStart ? AnswerText.visible(message.text) : message.text
+            total += estimateTokens(content) + estimateTokens(message.toolCalls)
+            total += message.attachments.filter { $0.kind == .image }.count * 512
+        }
+        return total + estimateTokens(streamingText + input)
+    }
+
+    func contentWithDocuments(_ message: Message, concise: Bool = false) -> String {
         let docs = message.attachments.filter { $0.kind == .document }
         guard !docs.isEmpty else { return message.text }
         var out = message.text
         for doc in docs {
             let url = attachmentsDirectory.appendingPathComponent(doc.relativePath)
             guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
-            let clipped =
-                text.count > configuration.maxDocumentCharacters
-                ? String(text.prefix(configuration.maxDocumentCharacters)) + "\n…[truncated]" : text
-            out += "\n\n<attached_file name=\"\(doc.displayName ?? "file")\">\n\(clipped)\n</attached_file>"
+            let maximum = concise ? 4_000 : configuration.maxDocumentCharacters
+            let clipped = String(text.prefix(maximum))
+            let reference = text.count > maximum
+                ? "\n…[truncated. Use read_attachment with attachment_id=\"\(doc.id.uuidString)\" and offset=\(maximum) for more.]" : ""
+            out += "\n\n<attached_file name=\"\(doc.displayName ?? "file")\" attachment_id=\"\(doc.id.uuidString)\">\n"
+                + clipped + reference + "\n</attached_file>"
         }
         return out
+    }
+
+    func refineTitle(chatID: UUID) async throws {
+        guard let chat = try await store.chat(id: chatID),
+            let modelID = chat.modelID ?? activeModelID, let model = await catalog.model(id: modelID)
+        else { return }
+        let history = try await store.messages(chatID: chatID).filter { !$0.isPartial && ($0.role == .user || $0.role == .assistant) }
+        let recent = history.suffix(6).compactMap { message -> String? in
+            let text = message.role == .assistant ? AnswerText.visible(message.text) : message.text
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : "\(message.role.rawValue): \(String(trimmed.prefix(3_000)))"
+        }
+        guard !recent.isEmpty else { return }
+        let messages = [
+            EngineMessage(
+                role: .system,
+                content: """
+                    Name the chat from its recent conversation. Capture its current main topic rather than keeping the first question's wording. \
+                    Use the conversation's language. Return one plain-text title of at most 80 characters, without Markdown or quotation marks.
+                    """),
+            EngineMessage(role: .user, content: "Current title: \(chat.title)\n\n\(recent.joined(separator: "\n\n"))"),
+        ]
+        let request = GenerationRequest(
+            messages: messages, sampling: SamplingParams(maxTokens: 256), contextTokens: effectiveContext(for: model))
+        var output = ""
+        for try await event in await engineManager.generate(model: model, request: request) {
+            if case .token(let text) = event { output += text }
+        }
+        var title = AnswerText.visible(output).split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        title = title.replacing(/[#*_`"«»“”]/, with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard title.count > 1 else { return }
+        if title.count > 80 { title = String(title.prefix(79)) + "…" }
+        guard var latest = try await store.chat(id: chatID), latest.title != title else { return }
+        latest.title = title
+        try await store.update(latest)
     }
 
     static func makeTitle(from text: String) -> String {
@@ -516,6 +773,37 @@ public actor ConversationService {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         // Enough for three sidebar lines.
         return trimmed.count > 120 ? String(trimmed.prefix(117)) + "…" : trimmed
+    }
+
+    private func executeBuiltIn(_ call: ToolCall, chatID: UUID) async throws -> String? {
+        guard call.name == "read_tool_output" || call.name == "read_attachment" else { return nil }
+        let args = ToolArguments(call.argumentsJSON)
+        let offset = max(args.int("offset") ?? 0, 0)
+        let limit = min(max(args.int("limit") ?? 12_000, 1), 12_000)
+        let messages = try await store.messages(chatID: chatID)
+        let text: String
+        let source: String
+        if call.name == "read_tool_output" {
+            guard let id = args.string("tool_call_id") else { return toolFailure(missing: "tool_call_id") }
+            guard let message = messages.first(where: { $0.role == .tool && $0.toolCallID == id }) else {
+                return "error: unknown tool_call_id \(id)"
+            }
+            text = ToolMapNote.strip(message.text)
+            source = "tool_output: \(id)"
+        } else {
+            guard let id = args.string("attachment_id").flatMap(UUID.init) else { return toolFailure(missing: "attachment_id") }
+            guard let attachment = messages.flatMap(\.attachments).first(where: { $0.id == id && $0.kind == .document }) else {
+                return "error: unknown attachment_id \(id.uuidString)"
+            }
+            let url = attachmentsDirectory.appendingPathComponent(attachment.relativePath)
+            text = try String(contentsOf: url, encoding: .utf8)
+            source = "attachment: \(attachment.displayName ?? id.uuidString)"
+        }
+        let safeOffset = min(offset, text.count)
+        let start = text.index(text.startIndex, offsetBy: safeOffset)
+        let endOffset = safeOffset + min(limit, text.count - safeOffset)
+        let end = text.index(text.startIndex, offsetBy: endOffset)
+        return ToolOutput.wrap(String(text[start..<end]), source: "\(source) [characters \(safeOffset)..<\(endOffset)]")
     }
 
     // Attachments
@@ -565,7 +853,9 @@ enum AnswerText {
         var text = stripChannels(stripAngleChannels(raw))
         for (open, close) in reasoningBlocks {
             // A template that opened the block in the prompt leaves only the closing tag in the reply.
-            if let end = text.range(of: close), !text[..<end.lowerBound].contains(open) { text = String(text[end.upperBound...]) }
+            if let end = tagRange(of: close, in: text),
+                tagRange(of: open, in: text, range: text.startIndex..<end.lowerBound) == nil
+            { text = String(text[end.upperBound...]) }
             text = stripBlocks(text, open: open, close: close)
         }
         // Echoed tool results are not the answer. VERIFY(gemma4): `<|tool_call>` spelling.
@@ -586,13 +876,15 @@ enum AnswerText {
         for (open, close) in reasoningBlocks {
             var rest = Substring(raw)
             // Only a closing tag: everything before it is thought.
-            if let end = rest.range(of: close), !rest[..<end.lowerBound].contains(open) {
+            if let end = tagRange(of: close, in: rest),
+                tagRange(of: open, in: rest, range: rest.startIndex..<end.lowerBound) == nil
+            {
                 parts.append(String(rest[..<end.lowerBound]))
                 rest = rest[end.upperBound...]
             }
-            while let start = rest.range(of: open) {
+            while let start = tagRange(of: open, in: rest) {
                 let after = rest[start.upperBound...]
-                if let end = after.range(of: close) {
+                if let end = tagRange(of: close, in: after) {
                     parts.append(String(after[..<end.lowerBound]))
                     rest = after[end.upperBound...]
                 } else {
@@ -843,6 +1135,78 @@ enum AnswerText {
         case "run_shortcut":
             return line(
                 shown.text("name").map { String(localized: "Running the shortcut \($0)…") } ?? String(localized: "Running a shortcut…"), "bolt")
+        case "project_bind":
+            return line(shown.file("path").map { String(localized: "Binding the project \($0)…") } ?? String(localized: "Binding the project…"), "folder")
+        case "task_update":
+            return line(String(localized: "Updating the coding plan…"), "list.bullet.clipboard")
+        case "read_tool_output":
+            return line(String(localized: "Reading more tool output…"), "doc.text")
+        case "read_attachment":
+            return line(String(localized: "Reading more of the attachment…"), "doc.text")
+        case "project_read":
+            return line(shown.file("path").map { String(localized: "Reading \($0)…") } ?? String(localized: "Reading the project…"), "doc.text")
+        case "project_search", "project_symbols":
+            return line(shown.text("query").map { String(localized: "Searching the project for “\($0)”…") } ?? String(localized: "Searching the project…"), "magnifyingglass")
+        case "list_skills":
+            return line(String(localized: "Looking for project skills…"), "sparkles")
+        case "read_skill":
+            return line(shown.file("path").map { String(localized: "Reading the skill \($0)…") } ?? String(localized: "Reading a project skill…"), "sparkles")
+        case "edit_file":
+            return line(shown.file("path").map { String(localized: "Editing \($0)…") } ?? String(localized: "Editing a file…"), "square.and.pencil")
+        case "apply_patch":
+            return line(String(localized: "Applying a patch…"), "square.and.pencil")
+        case "rollback_latest":
+            return line(String(localized: "Rolling back coding changes…"), "arrow.uturn.backward")
+        case "verify_changes":
+            return line(shown.text("command").map { String(localized: "Verifying with \($0)…") } ?? String(localized: "Verifying changes with a build or tests…"), "checkmark.circle")
+        case "create_script":
+            return line(shown.file("path").map { String(localized: "Creating the script \($0)…") } ?? String(localized: "Creating a script…"), "square.and.pencil")
+        case "run_script":
+            return line(shown.file("path").map { String(localized: "Running the script \($0)…") } ?? String(localized: "Running a script…"), "play")
+        case "run_process":
+            return line(shown.text("executable").map { String(localized: "Running \($0)…") } ?? String(localized: "Running a process…"), "terminal")
+        case "run_shell":
+            return line(shown.text("command", limit: 100).map { String(localized: "Running \($0)…") } ?? String(localized: "Running a shell command…"), "terminal")
+        case "command_output":
+            return line(String(localized: "Reading background command output…"), "terminal")
+        case "command_cancel":
+            return line(String(localized: "Cancelling a background command…"), "stop.circle")
+        case "command_tasks":
+            return line(String(localized: "Checking background commands…"), "terminal")
+        case "git_clone":
+            return line(shown.text("url").map { String(localized: "Cloning \($0)…") } ?? String(localized: "Cloning a repository…"), "arrow.triangle.branch")
+        case "git_status":
+            return line(String(localized: "Checking Git status…"), "arrow.triangle.branch")
+        case "git_diff":
+            return line(String(localized: "Reviewing the Git diff…"), "arrow.triangle.branch")
+        case "git_log", "git_show":
+            return line(String(localized: "Reading Git history…"), "arrow.triangle.branch")
+        case "git_add", "git_unstage":
+            return line(shown.list("paths").map { String(localized: "Changing the Git index: \($0)…") } ?? String(localized: "Changing the Git index…"), "arrow.triangle.branch")
+        case "git_commit":
+            return line(shown.text("message").map { String(localized: "Committing “\($0)”…") } ?? String(localized: "Creating a commit…"), "arrow.triangle.branch")
+        case "git_fetch", "git_pull", "git_push":
+            return line(String(localized: "Synchronizing with the remote repository…"), "arrow.triangle.branch")
+        case "git_branch", "git_stash", "git_tag":
+            let action = shown.text("action") ?? call.name.replacingOccurrences(of: "git_", with: "")
+            return line(String(localized: "Git \(action)…"), "arrow.triangle.branch")
+        case "git_merge", "git_rebase":
+            let branch = shown.text("branch") ?? shown.text("onto")
+            return line(branch.map { String(localized: "Updating the branch from \($0)…") } ?? String(localized: "Updating the branch…"), "arrow.triangle.branch")
+        case "git_cherry_pick":
+            return line(String(localized: "Cherry-picking commits…"), "arrow.triangle.branch")
+        case "review_list":
+            return line(String(localized: "Reading pull requests or merge requests…"), "arrow.triangle.branch")
+        case "review_create":
+            return line(shown.text("title").map { String(localized: "Creating the review “\($0)”…") } ?? String(localized: "Creating a pull request or merge request…"), "arrow.triangle.branch")
+        case "project_index":
+            return line(String(localized: "Indexing the project…"), "folder")
+        case "lsp_definition":
+            return line(shown.file("path").map { String(localized: "Finding a definition in \($0)…") } ?? String(localized: "Finding a definition…"), "location")
+        case "lsp_references":
+            return line(shown.file("path").map { String(localized: "Finding references in \($0)…") } ?? String(localized: "Finding references…"), "location")
+        case "lsp_diagnostics":
+            return line(shown.file("path").map { String(localized: "Checking diagnostics in \($0)…") } ?? String(localized: "Checking diagnostics…"), "stethoscope")
         default:
             return line(String(localized: "Using \(call.name)…"), "wrench.and.screwdriver")
         }
@@ -894,6 +1258,11 @@ enum AnswerText {
         }
 
         func flag(_ key: String) -> Bool { values[key] as? Bool ?? false }
+
+        func list(_ key: String) -> String? {
+            guard let items = values[key] as? [String], !items.isEmpty else { return nil }
+            return items.joined(separator: ", ").prefix(100).description
+        }
 
         func file(_ key: String) -> String? {
             guard let path = text(key, limit: 400), !path.contains("://") else { return nil }
@@ -974,14 +1343,43 @@ enum AnswerText {
 
     private static func stripBlocks(_ text: String, open: String, close: String) -> String {
         var result = text
-        while let start = result.range(of: open) {
-            if let end = result.range(of: close, range: start.upperBound..<result.endIndex) {
+        while let start = tagRange(of: open, in: result) {
+            if let end = tagRange(of: close, in: result, range: start.upperBound..<result.endIndex) {
                 result.removeSubrange(start.lowerBound..<end.upperBound)
             } else {
                 result.removeSubrange(start.lowerBound..<result.endIndex)
             }
         }
         return result
+    }
+
+    // Tags inside Markdown code are literal text, not model control markers.
+    private static func tagRange<S: StringProtocol>(
+        of tag: String, in text: S, range: Range<String.Index>? = nil
+    ) -> Range<String.Index>? {
+        var searchRange = range ?? text.startIndex..<text.endIndex
+        while let found = text.range(of: tag, range: searchRange) {
+            if !isInsideCode(found.lowerBound, in: text) { return found }
+            searchRange = found.upperBound..<searchRange.upperBound
+        }
+        return nil
+    }
+
+    private static func isInsideCode<S: StringProtocol>(_ index: String.Index, in text: S) -> Bool {
+        var delimiter: S.SubSequence?
+        var cursor = text.startIndex
+        while let start = text[cursor..<index].firstIndex(of: "`") {
+            var end = text.index(after: start)
+            while end < index, text[end] == "`" { end = text.index(after: end) }
+            let run = text[start..<end]
+            if delimiter == run {
+                delimiter = nil
+            } else if delimiter == nil {
+                delimiter = run
+            }
+            cursor = end
+        }
+        return delimiter != nil
     }
 }
 

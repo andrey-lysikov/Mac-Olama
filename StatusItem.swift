@@ -157,9 +157,7 @@ struct StatusMenuBuilder {
         menu.autoenablesItems = false
 
         menu.addItem(
-            item(
-                String(localized: "Open Chat List"), "bubble.left.and.bubble.right", #selector(MenuActions.openChats), actions, key: "C",
-                mask: [.command, .shift]))
+            item(String(localized: "Open Chat List"), "bubble.left.and.bubble.right", #selector(MenuActions.openChats), actions))
         menu.addItem(.separator())
         menu.addItem(submenu(String(localized: "Model"), "cpu", modelSubmenu(actions)))
         menu.addItem(item(String(localized: "Model Library…"), "square.stack.3d.up", #selector(MenuActions.openDownload), actions))
@@ -175,7 +173,7 @@ struct StatusMenuBuilder {
         menu.addItem(item(String(localized: "Settings"), "gearshape", #selector(MenuActions.openSettings), actions))
         menu.addItem(.separator())
         menu.addItem(item(String(localized: "About"), "info.circle", #selector(MenuActions.openAbout), actions))
-        menu.addItem(item(String(localized: "Quit"), "xmark.circle", #selector(MenuActions.quit), actions, key: "q"))
+        menu.addItem(item(String(localized: "Quit"), "xmark.circle", #selector(MenuActions.quit), actions))
         menu.items.forEach { $0.representedObject = actions }  // keep `actions` alive while the menu is open
         return menu
     }
@@ -187,8 +185,8 @@ struct StatusMenuBuilder {
         sub.autoenablesItems = false
         if container.models.isEmpty { sub.addItem(disabled(String(localized: "No models installed"), "tray")) }
         for (index, group) in container.modelsBySource.enumerated() {
+            // No source headers: just the models, separated between source groups.
             if index > 0 { sub.addItem(.separator()) }
-            sub.addItem(header(group.source.displayName))
             for model in group.models {
                 let fit = container.fit(for: model)
                 // Size and fit omitted when unknown (API models).
@@ -202,7 +200,12 @@ struct StatusMenuBuilder {
                 mi.representedObject = model.id
                 // Model icon; the checkmark marks the active model.
                 Self.setModelIcon(model, on: mi)
-                mi.toolTip = model.kind == .vlm ? String(localized: "Understands images and text") : String(localized: "Text only")
+                if container.isQuotaExhausted(model) {
+                    Self.setSymbol("exclamationmark.triangle", on: mi, color: .systemRed)
+                    mi.toolTip = container.exhaustedText(for: model)
+                } else {
+                    mi.toolTip = model.kind == .vlm ? String(localized: "Understands images and text") : String(localized: "Text only")
+                }
                 mi.state = model.id == container.activeModel?.id ? .on : .off
                 if !container.isAvailable(model) {
                     mi.isEnabled = false
@@ -235,13 +238,15 @@ struct StatusMenuBuilder {
         return mi
     }
 
-    private static func setSymbol(_ name: String, on item: NSMenuItem) {
+    private static func setSymbol(_ name: String, on item: NSMenuItem, color: NSColor? = nil) {
         let base =
             NSImage(systemSymbolName: name, accessibilityDescription: item.title)
             ?? NSImage(systemSymbolName: "circle.fill", accessibilityDescription: item.title)
         // Same optical size for all menu pictograms.
-        let image = base?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .regular))
-        image?.isTemplate = true
+        var configuration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+        if let color { configuration = configuration.applying(NSImage.SymbolConfiguration(hierarchicalColor: color)) }
+        let image = base?.withSymbolConfiguration(configuration)
+        image?.isTemplate = color == nil
         item.image = image
         // macOS 27 hides menu item images unless the item asks for them.
         if #available(macOS 27.0, *) {
@@ -254,18 +259,6 @@ struct StatusMenuBuilder {
         if #available(macOS 27.0, *) {
             item.preferredImageVisibility = .visible
         }
-    }
-
-    private func header(_ title: String) -> NSMenuItem {
-        let mi = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        mi.isEnabled = false
-        mi.attributedTitle = NSAttributedString(
-            string: title.uppercased(),
-            attributes: [
-                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
-                .foregroundColor: NSColor.secondaryLabelColor,
-            ])
-        return mi
     }
 
     private func disabled(_ title: String, _ symbol: String) -> NSMenuItem {

@@ -4,11 +4,11 @@
 import AppKit
 import Observation
 import UserNotifications
-import os
 
 // NotificationService
 
 @MainActor
+@Observable
 final class NotificationService: NSObject, UNUserNotificationCenterDelegate, ToolConfirmation {
     static let shared = NotificationService()
 
@@ -30,10 +30,8 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
         case openPrivacy = "OPEN_PRIVACY"
     }
 
-    private var pendingConfirmations: [String: CheckedContinuation<Bool, Never>] = [:]
-    private static let confirmationTimeout: TimeInterval = 90
-
-    private let logger = Logger(subsystem: "ru.lysnet.macolama", category: "notifications")
+    @ObservationIgnored private var pendingApprovals: [UUID: CheckedContinuation<Bool, Never>] = [:]
+    private(set) var approvalRequests: [UUID: ToolApprovalRequest] = [:]
     private weak var container: AppContainer?
 
     private(set) var isDenied = false
@@ -82,7 +80,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
         do {
             isDenied = !(try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]))
         } catch {
-            logger.error("notification authorization failed: \(error)")
+            print("notification authorization failed: \(error)")
             isDenied = true
         }
         return !isDenied
@@ -124,35 +122,69 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
         content.userInfo = userInfo
         content.sound = .default
         let request = UNNotificationRequest(identifier: identifier ?? UUID().uuidString, content: content, trigger: nil)
-        Task { @MainActor [logger] in
-            guard await authorize() else { return logger.notice("notification dropped: not allowed") }
-            do { try await UNUserNotificationCenter.current().add(request) } catch { logger.error("notification failed: \(error)") }
+        Task { @MainActor [] in
+            guard await authorize() else { return print("notification dropped: not allowed") }
+            do { try await UNUserNotificationCenter.current().add(request) } catch { print("notification failed: \(error)") }
         }
     }
 
     func confirm(title: String, detail: String) async -> Bool {
-        // Without notifications the question would never show and silently time out as Deny.
-        guard await ensureAllowed() else { return false }
-        let id = "confirm-\(UUID().uuidString)"
-        return await withCheckedContinuation { continuation in
-            // Hop to the main actor explicitly; callers may be off-main.
-            Task { @MainActor in askConfirmation(id: id, title: title, detail: detail, continuation: continuation) }
+        await confirm(title: title, detail: detail, chatID: container?.settings.activeChatID)
+    }
+
+    func confirmDiff(title: String, diff: String) async -> Bool {
+        await confirmDiff(title: title, diff: diff, chatID: container?.settings.activeChatID)
+    }
+
+    func confirm(title: String, detail: String, chatID: UUID?) async -> Bool {
+        await confirm(title: title, detail: detail, chatID: chatID, category: .other)
+    }
+
+    func confirmDiff(title: String, diff: String, chatID: UUID?) async -> Bool {
+        await confirmDiff(title: title, diff: diff, chatID: chatID, category: .other)
+    }
+
+    func confirm(title: String, detail: String, chatID: UUID?, category: ToolApprovalCategory) async -> Bool {
+        await approval(title: title, detail: detail, chatID: chatID, isDiff: false, category: category)
+    }
+
+    func confirmDiff(title: String, diff: String, chatID: UUID?, category: ToolApprovalCategory) async -> Bool {
+        await approval(title: title, detail: diff, chatID: chatID, isDiff: true, category: category)
+    }
+
+    private func approval(
+        title: String, detail: String, chatID: UUID?, isDiff: Bool, category: ToolApprovalCategory
+    ) async -> Bool {
+        guard let chatID = chatID ?? container?.settings.activeChatID else { return false }
+        let request = ToolApprovalRequest(chatID: chatID, title: title, detail: detail, isDiff: isDiff, category: category)
+        let mode = container?.settings.permissionMode(for: chatID) ?? .ask
+        if mode.allowsAutomatically(category) {
+            await container?.conversation.recordApproval(request, allowed: true, automatic: true)
+            return true
+        }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                pendingApprovals[request.id] = continuation
+                approvalRequests[request.id] = request
+            }
+        } onCancel: {
+            Task { @MainActor in resolveApproval(id: request.id, allowed: false) }
         }
     }
 
-    private func askConfirmation(id: String, title: String, detail: String, continuation: CheckedContinuation<Bool, Never>) {
-        pendingConfirmations[id] = continuation
-        send(title: title, body: detail, category: .confirm, identifier: id)
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(Self.confirmationTimeout))
-            self?.resolveConfirmation(id: id, allowed: false)
-            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id])
-        }
-    }
-
-    private func resolveConfirmation(id: String, allowed: Bool) {
-        guard let continuation = pendingConfirmations.removeValue(forKey: id) else { return }
+    func resolveApproval(id: UUID, allowed: Bool) {
+        let request = approvalRequests[id]
+        approvalRequests[id] = nil
+        guard let continuation = pendingApprovals.removeValue(forKey: id) else { return }
         continuation.resume(returning: allowed)
+        if let request {
+            Task { await container?.conversation.recordApproval(request, allowed: allowed) }
+        }
+    }
+
+    func approvals(for chatID: UUID?) -> [ToolApprovalRequest] {
+        guard let chatID else { return [] }
+        return approvalRequests.values.filter { $0.chatID == chatID }.sorted { $0.id.uuidString < $1.id.uuidString }
     }
 
     // Show banners even while the app is frontmost.
@@ -164,11 +196,9 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let info = response.notification.request.content.userInfo
-        let requestID = response.notification.request.identifier
         await MainActor.run {
             switch Action(rawValue: response.actionIdentifier) {
-            case .allow: resolveConfirmation(id: requestID, allowed: true)
-            case .deny: resolveConfirmation(id: requestID, allowed: false)
+            case .allow, .deny: break
             case .openPrivacy:
                 if let s = info["url"] as? String, let url = URL(string: s) { NSWorkspace.shared.open(url) }
             case .downloadUpdate:
@@ -178,10 +208,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, Too
             case .openChats:
                 WindowManager.shared.open(.chats)
             case nil:
-                // Default tap: confirm → deny, app → release, model → library, else chats.
-                if pendingConfirmations[requestID] != nil {
-                    resolveConfirmation(id: requestID, allowed: false)
-                } else if let s = info["url"] as? String, let url = URL(string: s) {
+                if let s = info["url"] as? String, let url = URL(string: s) {
                     NSWorkspace.shared.open(url)
                 } else if info["repoID"] != nil {
                     WindowManager.shared.openModels()
@@ -209,7 +236,6 @@ final class UpdateChecker {
     }
 
     private unowned let container: AppContainer
-    private let logger = Logger(subsystem: "ru.lysnet.macolama", category: "updates")
     private var timer: Timer?
     private var appTask: Task<Void, Never>?
     private var modelsTask: Task<Void, Never>?

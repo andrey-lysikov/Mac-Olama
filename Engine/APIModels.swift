@@ -426,10 +426,16 @@ public struct OpenAIChatRequest: Codable, Sendable {
 }
 
 public struct OpenAIUsage: Codable, Sendable {
+    public struct PromptTokensDetails: Codable, Sendable {
+        public var cached_tokens: Int?
+    }
     // Optional for other servers' usage objects.
     public var prompt_tokens: Int?
     public var completion_tokens: Int?
     public var total_tokens: Int?
+    public var prompt_tokens_details: PromptTokensDetails?
+    public var prompt_cache_hit_tokens: Int?
+    public var prompt_cache_miss_tokens: Int?
 }
 
 // Optional fields: `RemoteEngine` decodes other servers' streams with this type.
@@ -517,74 +523,4 @@ public struct OpenAIErrorBody: Codable, Sendable {
         public var code: String?
     }
     public var error: Detail
-}
-
-// Anthropic requests; replies are built as `JSON`.
-
-public enum AnthropicContent: EitherCodable, Sendable {
-    case text(String), list([AnthropicBlock])
-
-    public init(first: String) { self = .text(first) }
-    public init(second: [AnthropicBlock]) { self = .list(second) }
-    public var first: String? { if case .text(let s) = self { s } else { nil } }
-    public var second: [AnthropicBlock]? { if case .list(let b) = self { b } else { nil } }
-    public init(from decoder: Decoder) throws { self = try Self.decodeEither(from: decoder) }
-    public func encode(to encoder: Encoder) throws { try encodeEither(to: encoder) }
-
-    public var blocks: [AnthropicBlock] {
-        switch self {
-        case .text(let s): [AnthropicBlock(type: "text", text: s)]
-        case .list(let b): b
-        }
-    }
-}
-
-public struct AnthropicBlock: Codable, Sendable {
-    public struct Source: Codable, Sendable {
-        public var type: String
-        public var media_type: String?
-        public var data: String?
-    }
-    public var type: String
-    public var text: String?
-    public var source: Source?
-    public var id: String?
-    public var name: String?
-    public var input: JSON?
-    public var tool_use_id: String?
-    public var content: AnthropicContent?
-}
-
-public struct AnthropicMessage: Codable, Sendable {
-    public var role: String
-    public var content: AnthropicContent
-}
-
-public struct AnthropicTool: Codable, Sendable {
-    public var name: String
-    public var description: String?
-    public var input_schema: JSON?
-}
-
-public struct AnthropicRequest: Codable, Sendable {
-    public struct Thinking: Codable, Sendable { public var type: String }
-    public var model: String
-    public var messages: [AnthropicMessage]
-    public var system: AnthropicContent?
-    public var max_tokens: Int?
-    public var stream: Bool?
-    public var temperature: Double?
-    public var top_p: Double?
-    public var top_k: Int?
-    public var stop_sequences: [String]?
-    public var tools: [AnthropicTool]?
-    public var thinking: Thinking?
-
-    public func sampling(default base: SamplingParams) -> SamplingParams {
-        var s = base.over(SamplingParams(temperature: temperature, topP: top_p, topK: top_k.map { max(0, $0) }))
-        if let max_tokens, max_tokens > 0 { s.maxTokens = max_tokens }
-        return s
-    }
-
-    public var thinks: Bool { thinking.map { $0.type != "disabled" } ?? false }
 }

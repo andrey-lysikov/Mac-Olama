@@ -20,8 +20,48 @@ public struct FileToolProvider: ToolProvider {
         public var maxContentScanFiles = 400
         public var skippedDirectories: Set<String> = [".git", "node_modules", ".build", "DerivedData", "Library", ".Trash"]
         public var textExtensions: Set<String> = [
-            "txt", "md", "markdown", "json", "yaml", "yml", "csv", "tsv", "xml", "html", "htm", "swift", "py", "js", "ts",
-            "rs", "go", "java", "kt", "c", "h", "cpp", "m", "mm", "sh", "toml", "ini", "cfg", "log", "rtf", "tex", "sql", "plist",
+            // Текст и документация
+            "txt", "md", "markdown", "rst", "adoc", "rtf", "tex", "log",
+
+            // Данные и конфиги
+            "json", "jsonl", "yaml", "yml", "csv", "tsv", "xml", "toml",
+            "ini", "cfg", "conf", "env", "properties", "plist", "lock", "editorconfig",
+
+            // Веб
+            "html", "htm", "xhtml", "css", "scss", "sass", "less",
+            "js", "jsx", "ts", "tsx", "mjs", "cjs", "vue", "svelte", "astro",
+
+            // Системное программирование
+            "c", "h", "cpp", "cxx", "cc", "hpp", "hh", "m", "mm", "swift",
+
+            // .NET
+            "cs", "csx", "csproj", "fsproj", "vbproj", "sln", "slnx",
+            "fs", "fsx", "vb", "razor", "cshtml", "xaml", "aspx", "ashx",
+
+            // JVM и мобильные
+            "java", "kt", "kts", "scala", "groovy", "gradle", "dart",
+
+            // Скрипты и шеллы
+            "py", "pyi", "rb", "pl", "pm", "lua", "sh", "bash", "zsh", "fish",
+            "ps1", "psm1", "bat", "cmd", "applescript",
+
+            // Системные языки и функциональные
+            "rs", "go", "zig", "nim", "d", "hs", "ml", "mli", "ex", "exs",
+            "erl", "hrl", "clj", "cljs", "lisp", "scm", "r", "jl", "php",
+
+            // Базы данных и запросы
+            "sql", "graphql", "gql", "prisma",
+
+            // Разметка интерфейсов и шаблоны
+            "storyboard", "xib", "mustache", "hbs", "ejs", "pug", "jinja", "j2", "twig",
+
+            // Сборка, CI/CD, инфраструктура
+            "makefile", "mk", "cmake", "gradle.kts", "dockerfile", "containerfile",
+            "tf", "tfvars", "hcl", "nix", "bazel", "bzl", "proto",
+
+            // Прочее
+            "gitignore", "gitattributes", "diff", "patch", "po", "pot",
+            "sol", "wasm.txt", "ipynb", "srt", "vtt",
         ]
         public init(allowedFolders: [URL], confirmation: (any ToolConfirmation)? = nil) {
             self.allowedFolders = allowedFolders.map { $0.standardizedFileURL.resolvingSymlinksInPath() }
@@ -87,7 +127,11 @@ public struct FileToolProvider: ToolProvider {
         ]
     }
 
-    public func execute(_ call: ToolCall) async throws -> String {
+    public func execute(_ call: ToolCall) async throws -> String { try await perform(call, chatID: nil) }
+
+    public func execute(_ call: ToolCall, chatID: UUID) async throws -> String { try await perform(call, chatID: chatID) }
+
+    private func perform(_ call: ToolCall, chatID: UUID?) async throws -> String {
         let args = ToolArguments(call.argumentsJSON)
         guard !configuration.allowedFolders.isEmpty else {
             return "error: no folders are allowed; ask the user to add one in the Mac-Olama menu → Features → Folder Access"
@@ -109,16 +153,16 @@ public struct FileToolProvider: ToolProvider {
             guard let path = args.string("path"), let content = args.string("content") else {
                 return toolFailure(missing: "path or content")
             }
-            return await writeFile(path: path, content: content, append: args.bool("append") ?? false)
+            return await writeFile(path: path, content: content, append: args.bool("append") ?? false, chatID: chatID)
         case "open_item":
             guard let target = args.string("target") else { return toolFailure(missing: "target") }
-            return await openItem(target)
+            return await openItem(target, chatID: chatID)
         case "move_file":
             guard let from = args.string("from"), let to = args.string("to") else { return toolFailure(missing: "from or to") }
-            return await move(from: from, to: to)
+            return await move(from: from, to: to, chatID: chatID)
         case "make_archive":
             guard let path = args.string("path") else { return toolFailure(missing: "path") }
-            return try await archive(path, to: args.string("to"))
+            return try await archive(path, to: args.string("to"), chatID: chatID)
         default:
             throw ConversationError.unknownTool(call.name)
         }
@@ -207,7 +251,7 @@ public struct FileToolProvider: ToolProvider {
         return ToolOutput.wrap(text.clipped(to: configuration.maxFileCharacters), source: "recognize_text: \(url.path)")
     }
 
-    func writeFile(path: String, content: String, append: Bool) async -> String {
+    func writeFile(path: String, content: String, append: Bool, chatID: UUID? = nil) async -> String {
         guard content.count <= configuration.maxWrittenCharacters else {
             return "error: content longer than \(configuration.maxWrittenCharacters) characters"
         }
@@ -219,7 +263,7 @@ public struct FileToolProvider: ToolProvider {
                 append && exists ? String(localized: "Append to") : exists ? String(localized: "Replace") : String(localized: "Create")
             let allowed = await confirmation.confirm(
                 title: String(localized: "\(action) file \(url.lastPathComponent)?"),
-                detail: "\(url.path)\n\(content.prefix(200))")
+                detail: "\(url.path)\n\(content.prefix(200))", chatID: chatID, category: .fileEdit)
             guard allowed else { return "error: the user declined the write" }
         }
         do {
@@ -236,7 +280,7 @@ public struct FileToolProvider: ToolProvider {
         }
     }
 
-    func openItem(_ target: String) async -> String {
+    func openItem(_ target: String, chatID: UUID? = nil) async -> String {
         let url: URL
         if let link = URL(string: target), ["http", "https"].contains(link.scheme ?? "") {
             url = link
@@ -247,14 +291,14 @@ public struct FileToolProvider: ToolProvider {
         }
         if let confirmation = configuration.confirmation {
             let allowed = await confirmation.confirm(
-                title: String(localized: "Open \(url.lastPathComponent)?"), detail: url.absoluteString)
+                title: String(localized: "Open \(url.lastPathComponent)?"), detail: url.absoluteString, chatID: chatID)
             guard allowed else { return "error: the user declined to open it" }
         }
         let opened = await MainActor.run { NSWorkspace.shared.open(url) }
         return opened ? "Opened \(url.absoluteString)." : "error: the system could not open it"
     }
 
-    func move(from: String, to: String) async -> String {
+    func move(from: String, to: String, chatID: UUID? = nil) async -> String {
         guard let source = resolve(from) else { return "error: \(from) is not inside the allowed folders" }
         var destination: URL
         if let folder = resolve(to), (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
@@ -275,7 +319,9 @@ public struct FileToolProvider: ToolProvider {
             renaming
             ? String(localized: "Rename \(source.lastPathComponent) to \(destination.lastPathComponent)?")
             : String(localized: "Move \(source.lastPathComponent)?")
-        guard await confirmation.confirm(title: title, detail: "\(source.path)\n→ \(destination.path)") else {
+        guard await confirmation.confirm(
+            title: title, detail: "\(source.path)\n→ \(destination.path)", chatID: chatID, category: .fileEdit)
+        else {
             return "error: the user declined the move"
         }
         do {
@@ -286,7 +332,7 @@ public struct FileToolProvider: ToolProvider {
         }
     }
 
-    func archive(_ path: String, to target: String?) async throws -> String {
+    func archive(_ path: String, to target: String?, chatID: UUID? = nil) async throws -> String {
         guard let source = resolve(path) else { return "error: \(path) is not inside the allowed folders" }
         var name = target ?? source.lastPathComponent + ".zip"
         if !name.lowercased().hasSuffix(".zip") { name += ".zip" }
@@ -299,7 +345,7 @@ public struct FileToolProvider: ToolProvider {
         guard
             await confirmation.confirm(
                 title: String(localized: "Pack \(source.lastPathComponent) into \(destination.lastPathComponent)?"),
-                detail: destination.path)
+                detail: destination.path, chatID: chatID, category: .fileEdit)
         else { return "error: the user declined the archive" }
         let out = try await ToolProcess.run(
             URL(fileURLWithPath: "/usr/bin/ditto"), ["-c", "-k", "--sequesterRsrc", "--keepParent", source.path, destination.path],

@@ -3,8 +3,8 @@
 
 import AppKit
 import CoreImage
+import ImageIO
 import SwiftUI
-import os
 
 // ModelIcons
 
@@ -27,7 +27,6 @@ final class ModelIcons {
         cache.countLimit = 300
         return cache
     }()
-    nonisolated private static let logger = Logger(subsystem: "ru.lysnet.macolama", category: "icons")
 
     func avatar(_ owner: String) -> NSImage? {
         _ = revision
@@ -109,16 +108,18 @@ final class ModelIcons {
                 (response as? HTTPURLResponse)?.statusCode == 200,
                 let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                 let link = (json["avatarUrl"] as? String).flatMap(URL.init(string:)),
-                let (imageData, _) = try? await URLSession.shared.data(from: link)
+                let (imageData, imageResponse) = try? await URLSession.shared.data(from: link),
+                let http = imageResponse as? HTTPURLResponse, http.statusCode == 200,
+                http.mimeType?.hasPrefix("image/") != false
             else { continue }
             if let png = squarePNG(imageData, side: 64) { return png }
         }
-        logger.info("No avatar for \(owner, privacy: .public)")
         return nil
     }
 
     nonisolated private static func squarePNG(_ data: Data, side: Int) -> Data? {
-        guard let output = CIImage(data: data), output.extent.width > 0, output.extent.height > 0,
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetType(source) != nil,
+            let output = CIImage(data: data), output.extent.width > 0, output.extent.height > 0,
             let cg = CIContext().createCGImage(output, from: output.extent),
             let context = CGContext(
                 data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
@@ -136,8 +137,14 @@ final class ModelIcons {
         return NSBitmapImageRep(cgImage: square).representation(using: .png, properties: [:])
     }
 
+    func providerImage(_ provider: CloudProvider, size: CGFloat) -> NSImage? {
+        guard let image = NSImage(named: provider.iconName) else { return nil }
+        return Self.rounded(image, side: size)
+    }
+
     func menuImage(for model: ModelDescriptor, size: CGFloat) -> NSImage? {
-        if model.source != .remote, let icon = icon(for: model.owners, size: size) { return icon }
+        if let provider = CloudProvider(source: model.source), let image = providerImage(provider, size: size) { return image }
+        if !model.source.isRemote, let icon = icon(for: model.owners, size: size) { return icon }
         let image = NSImage(systemSymbolName: model.source.symbol, accessibilityDescription: model.source.displayName)?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: size * 0.8, weight: .regular))
         image?.isTemplate = true
@@ -154,17 +161,14 @@ struct ModelIconView: View {
 
     var body: some View {
         Group {
-            if let owners, source != .remote, let image = ModelIcons.shared.icon(for: owners, size: size) {
+            if let provider = CloudProvider(source: source), let image = ModelIcons.shared.providerImage(provider, size: size) {
+                Image(nsImage: image).resizable().interpolation(.high)
+            } else if let owners, !source.isRemote, let image = ModelIcons.shared.icon(for: owners, size: size) {
                 Image(nsImage: image).resizable().interpolation(.high)
             } else {
                 Image(systemName: source.symbol).font(.system(size: size * 0.7)).foregroundStyle(.secondary)
             }
         }
         .frame(width: size, height: size)
-        .help(helpText)
-    }
-
-    private var helpText: String {
-        [owners?.author, owners?.community].compactMap { $0 }.joined(separator: " · ")
     }
 }

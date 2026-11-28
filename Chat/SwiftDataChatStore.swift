@@ -16,6 +16,7 @@ final class ChatRecord {
     var systemPrompt: String?
     var originRaw: String
     var isArchived: Bool
+    var compactedAt: Date?
     @Relationship(deleteRule: .cascade, inverse: \MessageRecord.chat) var messages: [MessageRecord] = []
 
     init(_ chat: Chat) {
@@ -35,12 +36,14 @@ final class ChatRecord {
         systemPrompt = chat.systemPrompt
         originRaw = chat.origin.rawValue
         isArchived = chat.isArchived
+        compactedAt = chat.compactedAt
     }
 
     var value: Chat {
         Chat(
             id: id, title: title, createdAt: createdAt, updatedAt: updatedAt, modelID: modelID,
-            systemPrompt: systemPrompt, origin: ChatOrigin(rawValue: originRaw) ?? .window, isArchived: isArchived)
+            systemPrompt: systemPrompt, origin: ChatOrigin(rawValue: originRaw) ?? .window, isArchived: isArchived,
+            compactedAt: compactedAt)
     }
 }
 
@@ -55,9 +58,14 @@ final class MessageRecord {
     var toolCallID: String?
     var createdAt: Date
     var completionTokens: Int?
+    var promptTokens: Int?
+    var outputTokens: Int?
+    var cachedTokens: Int?
+    var toolRounds: Int?
     var tokensPerSecond: Double?
     var isPartial: Bool
     var modelID: String?
+    var failureText: String?
     var chat: ChatRecord?
 
     init(_ m: Message) {
@@ -78,9 +86,14 @@ final class MessageRecord {
         toolCallsJSON = (try? JSONCoding.encoder.encode(m.toolCalls)) ?? Data()
         toolCallID = m.toolCallID
         completionTokens = m.completionTokens
+        promptTokens = m.promptTokens
+        outputTokens = m.outputTokens
+        cachedTokens = m.cachedTokens
+        toolRounds = m.toolRounds
         tokensPerSecond = m.tokensPerSecond
         isPartial = m.isPartial
         modelID = m.modelID
+        failureText = m.failure
     }
 
     var value: Message {
@@ -89,21 +102,15 @@ final class MessageRecord {
             attachments: (try? JSONCoding.decoder.decode([Attachment].self, from: attachmentsJSON)) ?? [],
             toolCalls: (try? JSONCoding.decoder.decode([ToolCall].self, from: toolCallsJSON)) ?? [],
             toolCallID: toolCallID, createdAt: createdAt, completionTokens: completionTokens,
-            tokensPerSecond: tokensPerSecond, isPartial: isPartial, modelID: modelID
+            promptTokens: promptTokens, outputTokens: outputTokens, cachedTokens: cachedTokens, toolRounds: toolRounds,
+            tokensPerSecond: tokensPerSecond, isPartial: isPartial, modelID: modelID, failure: failureText
         )
     }
 }
 
-// Schema versions
-
-enum ChatSchemaV1: VersionedSchema {
-    static var versionIdentifier: Schema.Version { .init(1, 0, 0) }
+enum ChatSchemaV4: VersionedSchema {
+    static var versionIdentifier: Schema.Version { .init(4, 0, 0) }
     static var models: [any PersistentModel.Type] { [ChatRecord.self, MessageRecord.self] }
-}
-
-enum ChatMigrationPlan: SchemaMigrationPlan {
-    static var schemas: [any VersionedSchema.Type] { [ChatSchemaV1.self] }
-    static var stages: [MigrationStage] { [] }
 }
 
 // Store
@@ -117,9 +124,9 @@ actor SwiftDataChatStore: ModelActor, ChatStore {
 
     init(directory: URL) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let schema = Schema(versionedSchema: ChatSchemaV1.self)
+        let schema = Schema(versionedSchema: ChatSchemaV4.self)
         let config = ModelConfiguration("MacOlama", schema: schema, url: directory.appendingPathComponent("MacOlama.store"))
-        let container = try ModelContainer(for: schema, migrationPlan: ChatMigrationPlan.self, configurations: [config])
+        let container = try ModelContainer(for: schema, configurations: [config])
         self.modelContainer = container
         self.modelExecutor = DefaultSerialModelExecutor(modelContext: ModelContext(container))
     }

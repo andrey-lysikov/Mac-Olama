@@ -7,11 +7,8 @@ import MLXLLM
 import MLXLMCommon
 import MLXNN
 import MLXVLM
-import os
 
 enum MTPDrafter {
-    static let logger = Logger(subsystem: "ru.lysnet.macolama", category: "mtp")
-
     private static let registration = Task {
         await Qwen35TextMTPRegistration.register()
         await Qwen35VLMMTPRegistration.register()
@@ -50,22 +47,16 @@ enum MTPDrafter {
     // Loading
 
     static func load(modelDirectory: URL) async -> (any MTPDrafterModel)? {
-        let name = modelDirectory.lastPathComponent
         if isInstalled(forModel: modelDirectory) {
-            logger.info("\(name, privacy: .public): loading the paired drafter")
             return await build(from: directory(forModel: modelDirectory), target: modelDirectory)
         }
         let config = (try? Data(contentsOf: modelDirectory.appending(path: "config.json"))) ?? Data()
         guard declaresHeads(config) else {
-            logger.info("\(name, privacy: .public): no drafter, the config declares no prediction heads")
             return nil
         }
         guard carriesHeadWeights(in: modelDirectory) else {
-            // Common for MLX conversions: config keys kept, heads dropped.
-            logger.info("\(name, privacy: .public): no drafter, the config declares heads but the weights hold none")
             return nil
         }
-        logger.info("\(name, privacy: .public): loading the heads inside the checkpoint")
         return await build(from: modelDirectory, target: modelDirectory)
     }
 
@@ -79,9 +70,7 @@ enum MTPDrafter {
     }
 
     static func build(from directory: URL, target: URL) async -> (any MTPDrafterModel)? {
-        let name = directory.lastPathComponent
         guard let own = try? Data(contentsOf: directory.appending(path: "config.json")) else {
-            logger.error("\(name, privacy: .public): no config.json in the folder")
             return nil
         }
         let (config, sees) = aligned(own, withTargetAt: target)
@@ -91,15 +80,12 @@ enum MTPDrafter {
             let model = try await MTPDrafterTypeRegistry.shared.createModel(configuration: config, modelType: base.modelType)
             // A text drafter with a vision model crashes inside the library.
             guard String(reflecting: type(of: model)).hasPrefix("MLXVLM") == sees else {
-                logger.error("\(name, privacy: .public): drafter built for the other kind of target, not using it")
                 return nil
             }
             alignTensorNames(in: directory, to: model)
             try await loadWeights(modelDirectory: directory, model: model, perLayerQuantization: base.perLayerQuantization)
-            logger.info("\(name, privacy: .public): drafter ready, type \(base.modelType, privacy: .public)")
             return model
         } catch {
-            logger.error("\(name, privacy: .public): drafter not built — \(error.localizedDescription, privacy: .public)")
             return nil
         }
     }
@@ -112,7 +98,6 @@ enum MTPDrafter {
         guard own.isEmpty != vision.isEmpty else { return (config, !own.isEmpty) }
         root["vision_config"] = vision
         guard let merged = try? JSONSerialization.data(withJSONObject: root) else { return (config, !own.isEmpty) }
-        logger.info("drafter config aligned with the target, images \(vision.isEmpty ? "off" : "on", privacy: .public)")
         return (merged, !vision.isEmpty)
     }
 
@@ -134,9 +119,8 @@ enum MTPDrafter {
                 _ = try fm.replaceItemAt(file, withItemAt: staged)
             }
             try rewriteIndex(in: directory, prefix: root)
-            logger.info("\(directory.lastPathComponent, privacy: .public): tensors renamed under \(root, privacy: .public)")
         } catch {
-            logger.error("\(directory.lastPathComponent, privacy: .public): renaming failed — \(error.localizedDescription)")
+            print("\(directory.lastPathComponent): renaming failed — \(error.localizedDescription)")
         }
     }
 

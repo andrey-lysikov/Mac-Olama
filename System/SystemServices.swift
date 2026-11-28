@@ -5,7 +5,6 @@ import AppKit
 import Foundation
 import Security
 import ServiceManagement
-import os
 
 // ServicesProvider
 
@@ -52,7 +51,6 @@ enum NetworkInterfaces {
 
 @MainActor
 enum LaunchAtLogin {
-    private static let logger = Logger(subsystem: "ru.lysnet.macolama", category: "launch-at-login")
 
     static var isEnabled: Bool { SMAppService.mainApp.status == .enabled }
 
@@ -64,7 +62,7 @@ enum LaunchAtLogin {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            logger.error("SMAppService failed: \(error)")
+            print("SMAppService failed: \(error)")
         }
     }
 }

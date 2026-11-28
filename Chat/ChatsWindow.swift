@@ -15,9 +15,13 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
     private var remoteGenerating = false
     private(set) var transcriptToken = 0
     private(set) var focusToken = 0
+
+    // Returns the keyboard to the composer (after the file dialog, an attachment, etc.).
+    func focusComposer() { focusToken += 1 }
     var selectedChatID: UUID? {
         didSet {
             container.windowChatID = selectedChatID
+            stream.display(chatID: selectedChatID)
             guard selectedChatID != oldValue else { return }
             // The chat open here is the one the panel opens too: one chat for both.
             if let selectedChatID { container.setActiveChat(selectedChatID) }
@@ -29,7 +33,6 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
     }
     private var contentMatches: Set<UUID> = []
     @ObservationIgnored private var searchTask: Task<Void, Never>?
-    // `nonisolated(unsafe)` so `deinit` can tear them down.
     @ObservationIgnored nonisolated(unsafe) private var changesTask: Task<Void, Never>?
     @ObservationIgnored nonisolated(unsafe) private var pasteMonitor: Any?
     @ObservationIgnored nonisolated(unsafe) private var activationObserver: Any?
@@ -58,6 +61,9 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
         if let id = selectedChat?.modelID, let m = container.models.first(where: { $0.id == id }) { return m }
         return container.activeModel
     }
+
+    var quotaBlocked: Bool { activeModel.map { container.isQuotaExhausted($0) } ?? false }
+    private(set) var compacting = false
 
     init(container: AppContainer) {
         self.container = container
@@ -119,12 +125,18 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
     }
 
     private(set) var answerStarts: [UUID: String] = [:]
+    // Messages do not change on chat-level updates; reloading every chat's history each time
+    // a title or a token count is written stalls the window after every reply.
+    @ObservationIgnored private var answerStartsLoadedAt = ContinuousClock.now
 
-    private func loadAnswerStarts() async {
-        for chat in chats where answerStarts[chat.id] == nil {
+    private func loadAnswerStarts(force: Bool = false) async {
+        // Cheap path: once a minute is plenty for sidebar previews.
+        guard force || ContinuousClock.now - answerStartsLoadedAt >= .seconds(60) else { return }
+        answerStartsLoadedAt = .now
+        for chat in chats {
             guard let messages = try? await container.chatStore.messages(chatID: chat.id) else { continue }
             let answer = messages.lazy.filter { $0.role == .assistant && !$0.isPartial }.map { AnswerText.visible($0.text) }
-                .first { !$0.isEmpty }
+                .reversed().first { !$0.isEmpty }
             guard let answer else { continue }
             // One line of plain words: the row has no room for Markdown's marks.
             let words = answer.prefix(400).replacing(/[#*`>|_~]+/, with: " ").split(whereSeparator: \.isWhitespace)
@@ -159,24 +171,13 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
         // Same-chat reloads do not jump; a new chat does.
         let opened = loadedChatID != id
         stream.setMessages(loaded)
+        await stream.refreshContext(chatID: id)
         loadedChatID = id
-        if opened { upgradeShortTitle(chatID: id, messages: loaded) }
         let wasRemote = remoteGenerating
         remoteGenerating = await container.conversation.isGenerating(chatID: id) && stream.streamingChatID != id
         // A reply that ran on another surface just ended: questions queued here may go out now.
         if wasRemote, !remoteGenerating { stream.drainQueue() }
         if opened { transcriptToken += 1 }
-    }
-
-    private func upgradeShortTitle(chatID: UUID, messages: [Message]) {
-        guard var chat = chats.first(where: { $0.id == chatID }), chat.title.hasSuffix("…"),
-            let question = messages.first(where: { $0.role == .user })?.text
-        else { return }
-        let longer = ConversationService.makeTitle(from: question)
-        guard longer.count > chat.title.count, longer.hasPrefix(chat.title.dropLast()) else { return }
-        chat.title = longer
-        if let i = chats.firstIndex(where: { $0.id == chatID }) { chats[i].title = longer }
-        Task { try? await container.chatStore.update(chat) }
     }
 
     private(set) var loadedChatID: UUID?
@@ -208,27 +209,63 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
                 await self?.refreshGeneratingChats()
                 // Follow replies written elsewhere through the store.
                 guard let self, chatID == self.selectedChatID, !self.streamsHere else { return }
-                await self.loadMessages()
+                await self.loadMessagesThrottled()
             })
     }
 
     private(set) var generatingChatIDs: Set<UUID> = []
     @ObservationIgnored private var generatingPoll: Task<Void, Never>?
+    // Remote generation persists ~4×/s; reloading the whole chat that often stalls scrolling.
+    @ObservationIgnored private var lastStoreReload = ContinuousClock.now
 
     private func refreshGeneratingChats() async {
         let ids = await container.conversation.generatingChatIDs
-        if ids != generatingChatIDs { generatingChatIDs = ids }
-        guard !ids.isEmpty, generatingPoll == nil else { return }
+        // Between "the reply ended" and "the next queued question reached the engine" the service
+        // reports nothing running; queued questions and local stream tasks keep the spinner
+        // honest through that gap (a dequeued question is no longer in queuedQuestions).
+        let active = ids
+            .union(stream.queuedQuestions.compactMap(\.chatID))
+            .union(stream.locallyActiveChatIDs)
+        let finished = generatingChatIDs.subtracting(active)
+        if active != generatingChatIDs { generatingChatIDs = active }
+        // A reply just ended elsewhere: refresh its sidebar preview now, not on the minute mark.
+        if !finished.isEmpty {
+            for chatID in finished { await refreshAnswerStart(chatID: chatID) }
+        }
+        guard !active.isEmpty, generatingPoll == nil else { return }
         generatingPoll = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(500))
                 guard let self else { return }
                 let ids = await self.container.conversation.generatingChatIDs
-                if ids != self.generatingChatIDs { self.generatingChatIDs = ids }
-                if ids.isEmpty { break }
+                let active = ids
+                    .union(self.stream.queuedQuestions.compactMap(\.chatID))
+                    .union(self.stream.locallyActiveChatIDs)
+                if active != self.generatingChatIDs { self.generatingChatIDs = active }
+                if active.isEmpty {
+                    await self.reload()
+                    break
+                }
             }
             self?.generatingPoll = nil
         }
+    }
+
+    // Throttled reload for a chat another surface is writing: two hertz is plenty for a watcher.
+    private func loadMessagesThrottled() async {
+        guard ContinuousClock.now - lastStoreReload >= .milliseconds(500) else { return }
+        lastStoreReload = .now
+        await loadMessages()
+    }
+
+    // One chat's sidebar preview, refreshed right after its reply ended.
+    private func refreshAnswerStart(chatID: UUID) async {
+        guard let messages = try? await container.chatStore.messages(chatID: chatID) else { return }
+        let answer = messages.lazy.filter { $0.role == .assistant && !$0.isPartial }.map { AnswerText.visible($0.text) }
+            .reversed().first { !$0.isEmpty }
+        guard let answer else { return }
+        let words = answer.prefix(400).replacing(/[#*`>|_~]+/, with: " ").split(whereSeparator: \.isWhitespace)
+        answerStarts[chatID] = String(words.joined(separator: " ").prefix(160))
     }
 
     // Chats
@@ -253,18 +290,19 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
     func setModel(_ model: ModelDescriptor) {
         // Shown at once; the store update follows.
         if let i = chats.firstIndex(where: { $0.id == selectedChatID }) { chats[i].modelID = model.id }
-        container.chooseModel(model)
+        container.chooseModel(model, chatID: selectedChatID)
     }
 
     // Context
 
     var contextLimit: Int? { activeModel.flatMap { container.contextTokens(for: $0) } }
 
-    var contextUsed: Int { stream.contextUsed(systemPrompt: selectedChat?.systemPrompt) }
+    var contextUsed: Int { stream.contextUsed(chat: selectedChat, model: activeModel) }
 
     // Messages
 
     func send() {
+        guard !quotaBlocked, !compacting else { return }
         stream.send(chatID: selectedChatID, surfaceBusy: remoteGenerating)
         transcriptToken += 1
     }
@@ -278,10 +316,27 @@ final class ChatsViewModel: ConversationStreamDelegate, ConversationStreamHostin
         transcriptToken += 1
     }
 
-    func stop() {
-        // Stops the reply of the chat on screen.
-        guard let id = streamsIntoShownChat ? stream.streamingChatID ?? selectedChatID : selectedChatID else { return }
-        Task { await container.conversation.cancel(chatID: id) }
+    func compact() {
+        guard let chatID = selectedChatID, !isGenerating, !compacting else { return }
+        compacting = true
+        Task {
+            defer { compacting = false }
+            do {
+                try await container.conversation.compact(chatID: chatID)
+                await loadMessages()
+            } catch {
+                stream.errorMessage = ConversationService.describe(error)
+            }
+        }
+    }
+
+    func retryFailed() {
+        // A failure before the run started already returned the question to the composer.
+        if stream.messages.last?.role == .assistant { regenerate() } else if !input.isEmpty { send() }
+    }
+
+    func stop(chatID: UUID) {
+        Task { await container.conversation.cancel(chatID: chatID) }
     }
 
     private func installPasteMonitor() {
@@ -327,7 +382,7 @@ private struct StoreFailureBanner: View {
                 failure.recovered
                     ? String(
                         localized:
-                            "The chat database was damaged and has been reset (\(failure.message)). The old one was backed up.")
+                            "The chat database is incompatible or damaged and has been reset (\(failure.message)). The old one was backed up.")
                     : String(
                         localized:
                             "Chat history is unavailable (\(failure.message)). New chats will not be saved. A backup of the database was made."
@@ -339,6 +394,7 @@ private struct StoreFailureBanner: View {
                 Button(String(localized: "Show Backup in Finder")) {
                     NSWorkspace.shared.activateFileViewerSelecting([backup])
                 }
+                .buttonStyle(.glass)
             }
         }
         .font(.callout)
@@ -348,24 +404,83 @@ private struct StoreFailureBanner: View {
     }
 }
 
+private struct ChatActivityIcon: View {
+    let isAnswering: Bool
+    let isCoding: Bool
+    let isChosen: Bool
+    let onStop: () -> Void
+    @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Group {
+            if isAnswering, hovering {
+                Button(action: onStop) {
+                    Image(systemName: "stop.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(String(localized: "Stop Generation"))
+            } else if isAnswering {
+                // A custom spinner: ProgressView stops animating when nothing else redraws,
+                // which is exactly what a long thinking pause looks like.
+                Spinner(color: isChosen ? .white : .accentColor, still: reduceMotion)
+            } else {
+                Image(systemName: isCoding ? "chevron.left.forwardslash.chevron.right" : "bubble.left")
+                    .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(Color.accentColor))
+            }
+        }
+        .frame(width: 20, height: 20)
+        .font(.system(size: 16))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+    }
+}
+
+// Spinner
+
+/// A spinning arc driven by a repeating Core Animation, so it keeps turning under load:
+/// a TimelineView's schedule can stall while the window redraws for the streaming text.
+private struct Spinner: View {
+    var color: Color = .accentColor
+    var still = false
+    @State private var rotating = false
+
+    var body: some View {
+        if still {
+            Circle().strokeBorder(color.opacity(0.4), lineWidth: 2).frame(width: 14, height: 14)
+        } else {
+            Circle()
+                .trim(from: 0.15, to: 0.85)
+                .stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(rotating ? 360 : 0))
+                .frame(width: 14, height: 14)
+                .frame(width: 20, height: 20)
+                .onAppear {
+                    withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) { rotating = true }
+                }
+        }
+    }
+}
+
 private struct ChatsSplitView: View {
-    @ScaledMetric(relativeTo: .body) private var scaledText: CGFloat = ChatMessageView.textSize
     @Bindable var viewModel: ChatsViewModel
     @Environment(AppContainer.self) private var container
     @FocusState private var composerFocused: Bool
     @State private var models: DownloadViewModel?
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var previewedImage: ConversationStreamCoordinator.PendingImage?
+    @State private var previewedDocument: DocumentInput?
 
     var body: some View {
         // System sidebar window from AppKit, nothing hand-drawn.
         NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
                 .navigationSplitViewColumnWidth(
-                    min: 250, ideal: min(max(CGFloat(container.settings.sidebarWidth), 250), 420), max: 420)
+                    min: 150, ideal: min(max(CGFloat(container.settings.sidebarWidth), 150), 420), max: 420)
                 // Restore and save the sidebar width.
                 .background(
                     SidebarWidthKeeper(
-                        initial: min(max(CGFloat(container.settings.sidebarWidth), 250), 420),
+                        initial: min(max(CGFloat(container.settings.sidebarWidth), 150), 420),
                         save: { width in
                             if Double(width) != container.settings.sidebarWidth { container.settings.sidebarWidth = Double(width) }
                         }))
@@ -378,7 +493,6 @@ private struct ChatsSplitView: View {
                             Label(String(localized: "New Chat"), systemImage: "square.and.pencil")
                         }
                         .keyboardShortcut("n", modifiers: .command)
-                        .help(String(localized: "New Chat"))
                     }
                 }
         } detail: {
@@ -414,6 +528,7 @@ private struct ChatsSplitView: View {
         // Right column content by section.
         VStack(spacing: 0) {
             switch container.section {
+            case .cloud(let provider): CloudSectionView(provider: provider)
             case .models:
                 if let models {
                     ModelLibraryHeader(viewModel: models).padding(.horizontal, 12).padding(.vertical, 8)
@@ -426,16 +541,15 @@ private struct ChatsSplitView: View {
         }
         // Content column extends to the window's top edge, no toolbar strip.
         .ignoresSafeArea(.container, edges: .top)
-        // The reading background of the content column; the sidebar floats over the window's own.
         .background(Color(nsColor: .textBackgroundColor))
-        // No toolbar title, background or scroll edge effect over the content.
         .toolbar(removing: .title)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .scrollEdgeEffectHidden(true, for: .top)
     }
 
     private var windowTitle: String {
-        if container.section == .models { return String(localized: "Models") }
+        if let provider = container.section.cloudProvider { return provider.title }
+        if container.section == .models { return String(localized: "Local Models") }
         if container.section == .settings { return String(localized: "Settings") }
         if container.section == .about { return String(localized: "About") }
         return viewModel.selectedChat.map { $0.title.isEmpty ? String(localized: "Untitled chat") : $0.title }
@@ -488,9 +602,9 @@ private struct ChatsSplitView: View {
         .listStyle(.sidebar)
         // Picking a chat always leaves the model library.
         .onChange(of: viewModel.selectedChatID) { _, id in if id != nil { container.section = .chat } }
-        // Hard edge so rows do not show through the pinned sections.
-        .safeAreaBar(edge: .bottom, spacing: 0) { modelsEntry }
-        .scrollEdgeEffectStyle(.hard, for: .bottom)
+        // The bottom block reserves its own space (no bar edge), so the models divider
+        // below stays the single full-width line.
+        .safeAreaInset(edge: .bottom, spacing: 0) { modelsEntry }
         // Scroll the open chat's row into view minimally.
         .onChange(of: viewModel.selectedChatID, initial: true) { _, _ in reveal(viewModel.selectedChatID, with: proxy) }
         .onChange(of: viewModel.focusToken) { _, _ in reveal(viewModel.selectedChatID, with: proxy) }
@@ -499,19 +613,11 @@ private struct ChatsSplitView: View {
 
     private func chatRow(_ chat: Chat, isChosen: Bool) -> some View {
         let isAnswering = viewModel.generatingChatIDs.contains(chat.id)
+        let isCoding = container.settings.chatProjectPaths[chat.id.uuidString] != nil
         return HStack(alignment: .top, spacing: 6) {
-            // While the model answers in the chat, a spinner stands in the bubble's place, at its size.
-            Image(systemName: "bubble.left")
-                .font(.system(size: 14))
-                .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(Color.accentColor))
-                .opacity(isAnswering ? 0 : 1)
-                .overlay {
-                    if isAnswering {
-                        ProgressView().controlSize(.small).tint(isChosen ? .white : nil)
-                            .help(String(localized: "The model is answering in this chat"))
-                    }
-                }
-                // The bubble sits on the title's first line.
+            ChatActivityIcon(
+                isAnswering: isAnswering, isCoding: isCoding, isChosen: isChosen,
+                onStop: { viewModel.stop(chatID: chat.id) })
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
                 // Title from the first question, followed by the answer's first words.
@@ -519,7 +625,7 @@ private struct ChatsSplitView: View {
                 let answer = Text(viewModel.answerStarts[chat.id].map { "  " + Hyphenation.soft($0) } ?? "")
                     .foregroundStyle(isChosen ? AnyShapeStyle(.white.opacity(0.7)) : AnyShapeStyle(.secondary))
                 Text("\(title)\(answer)")
-                    .font(.system(size: 14)).lineLimit(3)
+                    .font(.system(size: 12)).lineLimit(4)
                 // Plain date, no ticking relative time.
                 HStack(spacing: 4) {
                     Text(chat.updatedAt.formatted(date: .abbreviated, time: .shortened))
@@ -544,27 +650,89 @@ private struct ChatsSplitView: View {
     }
 
     private var modelsEntry: some View {
-        VStack(spacing: 2) {
-            sectionEntry(.models, title: String(localized: "Models"), symbol: "square.stack.3d.up")
+        // Sources the user can actually work with: signed-in clouds and installed local models.
+        let connectedProviders = CloudProvider.allCases.filter { container.cloudStore(for: $0).isSignedIn }
+        let hasLocal = container.models.contains { !$0.source.isCloud }
+        let anyConnected = !connectedProviders.isEmpty || hasLocal
+        // With nothing connected the full list is the only way in, so it always shows.
+        let expanded = container.settings.sidebarModelsExpanded || !anyConnected || chosenModelSectionIsHidden(
+            connectedProviders: connectedProviders, hasLocal: hasLocal)
+        return VStack(spacing: 2) {
+            modelsDivider(expandable: anyConnected, expanded: expanded)
+            if expanded {
+                ForEach(CloudProvider.allCases) { provider in
+                    sectionEntry(.cloud(provider), title: provider.title, provider: provider)
+                }
+                sectionEntry(.models, title: String(localized: "Local LLMs"), symbol: "cpu")
+            } else {
+                ForEach(connectedProviders) { provider in
+                    sectionEntry(.cloud(provider), title: provider.title, provider: provider)
+                }
+                if hasLocal {
+                    sectionEntry(.models, title: String(localized: "Local LLMs"), symbol: "cpu")
+                }
+            }
+            Divider().padding(.vertical, 6)
             sectionEntry(.settings, title: String(localized: "Settings"), symbol: "gearshape")
             sectionEntry(.about, title: String(localized: "About"), symbol: "info.circle")
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
     }
 
-    private func sectionEntry(_ section: AppContainer.Section, title: String, symbol: String) -> some View {
+    // The chosen section is not listed while the block is folded: unfold so the selection stays visible.
+    private func chosenModelSectionIsHidden(connectedProviders: [CloudProvider], hasLocal: Bool) -> Bool {
+        switch container.section {
+        case .cloud(let provider): !connectedProviders.contains(provider)
+        case .models: !hasLocal
+        default: false
+        }
+    }
+
+    // A plain divider that doubles as the models list toggle: the chevron folds and unfolds it.
+    private func modelsDivider(expandable: Bool, expanded: Bool) -> some View {
+        Button {
+            guard expandable else { return }
+            container.settings.sidebarModelsExpanded = !expanded
+        } label: {
+            HStack(spacing: 6) {
+                if expandable {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.up")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 12)
+                }
+                // The line runs the full width of the sidebar.
+                Rectangle().fill(.quaternary).frame(height: 1)
+            }
+            .padding(.leading, 10).padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!expandable)
+        .accessibilityLabel(String(localized: "Models"))
+    }
+
+    private func sectionEntry(
+        _ section: AppContainer.Section, title: String, symbol: String? = nil, provider: CloudProvider? = nil, prominent: Bool = true
+    ) -> some View {
         let isChosen = container.section == section
         return Button {
             container.section = section
             viewModel.selectedChatID = nil
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: symbol)
-                    .font(.system(size: 14))
-                    .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(Color.accentColor))
-                    .frame(width: 20)
+                Group {
+                    if let provider, let image = ModelIcons.shared.providerImage(provider, size: 18) {
+                        Image(nsImage: image).resizable().interpolation(.high)
+                    } else {
+                        Image(systemName: symbol ?? "questionmark")
+                            .font(.system(size: 14))
+                            .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(Color.accentColor))
+                    }
+                }
+                .frame(width: 20, height: 20)
                 Text(title)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: 14, weight: prominent ? .bold : .regular))
                     .foregroundStyle(isChosen ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
                 Spacer(minLength: 0)
             }
@@ -580,6 +748,7 @@ private struct ChatsSplitView: View {
     }
 
     @State private var collapsedSections: Set<String> = []
+    @State private var historyLimit = 40
 
     private func expansion(of section: String) -> Binding<Bool> {
         Binding(
@@ -614,9 +783,10 @@ private struct ChatsSplitView: View {
         // The chat title is the window title, not a transcript line.
         VStack(alignment: .leading, spacing: 0) {
             if viewModel.isLoadingChat {
-                // Nothing, rather than the empty-chat prompt flashing before the history arrives.
-                Spacer().frame(maxWidth: .infinity)
-            } else if viewModel.messages.isEmpty && viewModel.streamingText.isEmpty && viewModel.errorMessage == nil {
+                Text(String(localized: "Loading…"))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if viewModel.messages.isEmpty && !viewModel.isGenerating && viewModel.errorMessage == nil {
                 emptyState
             } else {
                 transcript
@@ -636,117 +806,118 @@ private struct ChatsSplitView: View {
     }
 
     private var transcript: some View {
-        let visible = viewModel.messages.filter { $0.role == .user || $0.role == .assistant }
-        // All messages: maps ride on hidden tool results.
-        let maps = TranscriptMaps.byAnswer(viewModel.messages)
-        return ScrollView {
-            // Not lazy: lazy rows mismeasured and jumped while streaming.
+        // Only the tail is rendered; scrolling to the top pulls in older messages.
+        let shown = visibleMessages.suffix(historyLimit)
+        return ScrollViewReader { proxy in
+        ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                ForEach(Array(visible.enumerated()), id: \.element.id) { position, m in
+                ForEach(Array(shown.enumerated()), id: \.element.id) { position, m in
+                    // The summary replaces the older history for the model; a divider marks the cut for the reader.
+                    if let cut = viewModel.selectedChat?.compactedAt,
+                        m.id == visibleMessages.first(where: { $0.createdAt > cut })?.id {
+                        CompactionDivider()
+                    }
                     TranscriptRow(
-                        message: m, position: position, context: visible,
+                        message: m, position: position, context: Array(shown),
                         isStreamedPlaceholder: isStreamedPlaceholder(m),
                         thoughtSeconds: viewModel.thoughtSeconds[m.id]
                     ) { message, summary in
                         ChatMessageView(
-                            message: message, summary: summary, maps: maps[message.id] ?? [],
-                            onRegenerate: message.id == visible.last?.id && message.role == .assistant && !viewModel.isGenerating
+                            message: message, summary: summary, maps: transcriptMaps[message.id] ?? [],
+                            onRegenerate: message.id == visibleMessages.last?.id && message.role == .assistant && !viewModel.isGenerating
                                 && !viewModel.stream.isGenerating
                                 ? { viewModel.regenerate() } : nil)
                     }
                 }
-                TranscriptTail(
-                    progress: viewModel.progress, engineState: viewModel.engineState,
-                    errorMessage: viewModel.errorMessage
-                ) {
-                    // While the model's thinking is shown, the raw stream goes in and the view splits it.
-                    let thinkingShown = viewModel.activeModel.map { container.showsReasoning(modelID: $0.id) } ?? false
-                    if !viewModel.visibleStreamingText.isEmpty || (thinkingShown && !viewModel.streamingText.isEmpty) {
-                        ChatMessageView(
-                            message: Message(
-                                chatID: UUID(), role: .assistant,
-                                text: thinkingShown ? viewModel.streamingText : viewModel.visibleStreamingText, isPartial: true,
-                                modelID: thinkingShown ? viewModel.activeModel?.id : nil),
-                            onRegenerate: nil
-                        )
-                        .id("streaming")
-                    }
-                }
+                // Its own view: streaming ticks update the tail, not this message list.
+                ChatStreamTail(viewModel: viewModel)
             }
             // Top padding matching the sides and bottom.
             .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .scrollTargetLayout()
         }
         // Follow the end while the user has not scrolled up.
-        .followsTranscriptEnd(jumpOn: viewModel.transcriptToken)
+        .followsTranscriptEnd(jumpOn: viewModel.transcriptToken) {
+            guard historyLimit < visibleMessages.count else { return }
+            // Keep the message that was on screen in place after older ones arrive above it.
+            let anchor = shown.first?.id
+            historyLimit += 40
+            DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .top) }
+        }
+        .onChange(of: viewModel.selectedChatID) { _, _ in historyLimit = 40 }
+        }
+        .onAppear { rebuildDerived() }
+        .onChange(of: viewModel.messages) { _, _ in rebuildDerived() }
+    }
+
+    // Derived once per `messages` change; streaming ticks must not recompute them.
+    @State private var visibleMessages: [Message] = []
+    @State private var transcriptMaps: [UUID: [TranscriptMap]] = [:]
+
+    private func rebuildDerived() {
+        visibleMessages = viewModel.messages.filter { $0.role == .user || $0.role == .assistant || ToolApprovalRecord.isApproval($0) }
+        transcriptMaps = TranscriptMaps.byAnswer(viewModel.messages)
     }
 
     private func isStreamedPlaceholder(_ message: Message) -> Bool {
         viewModel.streamsHere && message.id == viewModel.messages.last?.id && message.role == .assistant && message.toolCalls.isEmpty
     }
 
-    // Composer: text on top; below it attach, context usage, the chat's model and send/stop.
-
-    private var hasComposerInput: Bool {
-        !viewModel.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !viewModel.pendingImages.isEmpty
-            || !viewModel.pendingDocuments.isEmpty
-    }
+    // Composer: the same single-row layout as the quick panel.
 
     private var composer: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(spacing: 0) {
             if !viewModel.pendingImages.isEmpty || !viewModel.pendingDocuments.isEmpty { pendingAttachments }
-            TextField(String(localized: "Ask a question…"), text: $viewModel.input, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: scaledText))
-                .lineLimit(1...10)
-                .focused($composerFocused)
-                .onKeyPress(.return, phases: .down) { press in
-                    if press.modifiers.contains(.shift) { return .ignored }
-                    viewModel.send()
-                    return .handled
-                }
-            HStack(spacing: 10) {
-                Button {
-                    chooseFile()
-                } label: {
-                    Image(systemName: "paperclip")
-                }
-                .buttonStyle(.plain).foregroundStyle(.secondary)
-                .help(String(localized: "Attach files"))
+            HStack(alignment: .center, spacing: 10) {
                 if container.settings.voiceInputEnabled {
                     VoiceInputButton(text: $viewModel.input, disabled: viewModel.isGenerating) { viewModel.send() }
-                        .buttonStyle(.plain).foregroundStyle(.secondary)
+                        .buttonStyle(.plain).font(.system(size: 16)).foregroundStyle(.secondary)
                 }
-                Spacer(minLength: 4)
-                // Narrow window: drop the context estimate first.
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) {
-                        contextUsage
-                        modelPicker
+                Button(action: chooseFile) {
+                    Image(systemName: "paperclip")
+                }
+                .buttonStyle(.plain).font(.system(size: 14)).foregroundStyle(.secondary)
+                TextField(String(localized: "Ask a question…"), text: $viewModel.input, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    // Follows ⌘+ / ⌘−, slightly smaller than the transcript as before (12 at the base 13).
+                    .font(.system(size: max(container.settings.chatFontSize - 1, 8), weight: .regular))
+                    .lineLimit(1...6)
+                    .padding(.horizontal, 10).padding(.vertical, 8)
+                    .focused($composerFocused)
+                    .disabled(viewModel.quotaBlocked)
+                    .onSubmit { viewModel.send() }
+                    .onKeyPress(.return, phases: .down) { press in
+                        if press.modifiers.contains(.shift) { return .ignored }
+                        viewModel.send()
+                        return .handled
                     }
+                HStack(spacing: 12) {
                     modelPicker
+                    ContextPermissionControl(
+                        used: viewModel.contextUsed, limit: viewModel.contextLimit,
+                        modelName: viewModel.activeModel?.name ?? String(localized: "No model"),
+                        mode: viewModel.selectedChatID.map { container.permissionMode(for: $0) } ?? .ask,
+                        compacting: viewModel.compacting,
+                        canCompact: viewModel.selectedChatID != nil && !viewModel.isGenerating && !viewModel.messages.isEmpty
+                            && !viewModel.compacting,
+                        isEnabled: viewModel.selectedChatID != nil,
+                        onMode: { mode in
+                            guard let chatID = viewModel.selectedChatID else { return }
+                            container.setPermissionMode(mode, for: chatID)
+                        },
+                        onCompact: viewModel.compact)
                 }
-                if viewModel.isGenerating {
-                    // No spinner here: the transcript above already shows the reply being written.
-                    Button(action: viewModel.stop) {
-                        Image(systemName: "stop.fill")
-                    }
-                    .keyboardShortcut(".", modifiers: .command)
-                    .buttonStyle(.borderedProminent).buttonBorderShape(.circle)
-                    .help(String(localized: "Stop"))
-                } else {
-                    Button(action: viewModel.send) {
-                        Image(systemName: "arrow.up")
-                    }
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .buttonStyle(.borderedProminent).buttonBorderShape(.circle)
-                    .disabled(!hasComposerInput)
-                    .help(String(localized: "Send"))
-                }
+                .buttonStyle(.plain)
+                .font(.system(size: 16))
+                .foregroundStyle(.secondary)
+                .fixedSize()
+                .layoutPriority(1)
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
         }
-        .padding(.horizontal, 14).padding(.vertical, 12)
-        .glassCard(radius: 22)
+        .glassCard(radius: 20)
         .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 16)
         .frame(maxWidth: .infinity)
         .attachmentDrop(
@@ -758,18 +929,67 @@ private struct ChatsSplitView: View {
     private var pendingAttachments: some View {
         HStack(spacing: 8) {
             ForEach(viewModel.pendingImages) { img in
-                AttachmentThumbnail(image: img.thumbnail, side: 48)
+                AttachmentThumbnail(
+                    image: img.thumbnail, side: 48,
+                    onPreview: { previewedImage = img },
+                    onRemove: { viewModel.removeImage(img.id) }
+                )
+                .popover(isPresented: previewBinding(for: img)) {
+                    ImagePreviewPopover(image: img.thumbnail, isPresented: previewBinding(for: img))
+                }
             }
             ForEach(viewModel.pendingDocuments, id: \.name) { doc in
-                DocumentChip(name: doc.name)
+                DocumentChip(
+                    name: doc.name,
+                    onPreview: { previewedDocument = doc },
+                    onRemove: { viewModel.removeDocument(doc.name) }
+                )
+                .popover(isPresented: previewBinding(for: doc)) {
+                    DocumentPreviewPopover(document: doc, isPresented: previewBinding(for: doc))
+                }
             }
             Spacer()
         }
+        .padding(.horizontal, 16).padding(.top, 10)
+    }
+
+    private func previewBinding(for image: ConversationStreamCoordinator.PendingImage) -> Binding<Bool> {
+        Binding(
+            get: { previewedImage?.id == image.id },
+            set: { if !$0, previewedImage?.id == image.id { previewedImage = nil } })
+    }
+
+    private func previewBinding(for document: DocumentInput) -> Binding<Bool> {
+        Binding(
+            get: { previewedDocument?.name == document.name },
+            set: { if !$0, previewedDocument?.name == document.name { previewedDocument = nil } })
     }
 
     private func modelImage(_ model: ModelDescriptor) -> Image {
         _ = ModelIcons.shared.revision
+        if container.isQuotaExhausted(model) { return Image(systemName: "exclamationmark.triangle") }
         return ModelIcons.shared.menuImage(for: model, size: 16).map { Image(nsImage: $0) } ?? Image(systemName: model.source.symbol)
+    }
+
+    private func compactName(_ model: ModelDescriptor) -> String {
+        func isSuffix(_ part: Substring) -> Bool {
+            let p = part.lowercased()
+            if ["mlx", "gguf", "it", "instruct", "chat", "base"].contains(p) { return true }
+            if p.hasPrefix("q"), p.dropFirst().first?.isNumber == true { return true }
+            if p.hasSuffix("bit"), p.dropLast(3).allSatisfy(\.isNumber) { return true }
+            for prefix in ["bf", "fp", "int", "iq"] where p.hasPrefix(prefix) {
+                if p.dropFirst(prefix.count).allSatisfy(\.isNumber) { return true }
+            }
+            let size = p.hasPrefix("e") ? p.dropFirst() : p[...]
+            if let last = size.last, last == "b" || last == "m" {
+                let digits = size.dropLast()
+                if !digits.isEmpty, digits.allSatisfy({ $0.isNumber || $0 == "." }), digits.contains(where: \.isNumber) { return true }
+            }
+            return false
+        }
+        let parts = model.name.split(separator: "-", omittingEmptySubsequences: false)
+        guard let cut = parts.firstIndex(where: isSuffix), cut > 0 else { return model.name }
+        return parts[..<cut].joined(separator: "-")
     }
 
     private var modelPicker: some View {
@@ -785,10 +1005,14 @@ private struct ChatsSplitView: View {
                         Text(verbatim: m.name)
                     } icon: {
                         modelImage(m)
+                            .foregroundStyle(container.isQuotaExhausted(m) ? AnyShapeStyle(.red) : container.isAvailable(m) ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
                     }
                     .labelStyle(.titleAndIcon)  // macOS 26 menus hide icons otherwise
                 }
-                .disabled(!container.isAvailable(m))
+                // A model whose window cannot hold this chat is not a choice for it.
+                .disabled(
+                    !container.isAvailable(m)
+                        || (container.contextTokens(for: m).map { viewModel.contextUsed > $0 } ?? false))
             }
             if container.models.isEmpty {
                 Button(String(localized: "Model Library…")) { WindowManager.shared.openModels() }
@@ -797,36 +1021,21 @@ private struct ChatsSplitView: View {
             if let model = viewModel.activeModel {
                 // An unreachable server greys the chat's model out, like its row in the list.
                 Label {
-                    Text(verbatim: model.name).font(.callout).lineLimit(1).truncationMode(.middle)
+                    Text(verbatim: compactName(model)).font(.callout).lineLimit(1).truncationMode(.middle)
                 } icon: {
                     modelImage(model)
+                        .foregroundStyle(container.isQuotaExhausted(model) ? AnyShapeStyle(.red) : container.isAvailable(model) ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
                 }
                 .foregroundStyle(container.isAvailable(model) ? .primary : .tertiary)  // VERIFY(mac): menu label keeps the style
-                .help(
-                    container.isAvailable(model)
-                        ? String(localized: "Model for this chat") : String(localized: "The server does not answer"))
             } else {
                 Text(String(localized: "No model")).font(.callout)
             }
         }
         .menuStyle(.borderlessButton)
-        .frame(maxWidth: 260)
+        .frame(maxWidth: 160)
         .fixedSize(horizontal: true, vertical: false)
-        .help(String(localized: "Model for this chat"))
         // Locked while this chat is answering.
         .disabled(viewModel.isGenerating)
-    }
-
-    @ViewBuilder
-    private var contextUsage: some View {
-        if let limit = viewModel.contextLimit, limit > 0 {
-            let used = min(viewModel.contextUsed, limit)
-            // The same compact form as the pace line under a reply, so 33k reads the same everywhere.
-            Text(verbatim: ChatMessageView.contextLeft(limit - used))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(used > limit * 9 / 10 ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-                .help(String(localized: "Context left for this chat, estimated"))
-        }
     }
 
     private func chooseFile() {
@@ -834,9 +1043,44 @@ private struct ChatsSplitView: View {
         let documents = AttachableTypes.documents
         panel.allowedContentTypes = viewModel.activeModel?.kind == .vlm ? [.image] + documents : documents
         panel.allowsMultipleSelection = true
-        panel.begin { response in
-            guard response == .OK else { return }
+        panel.begin { [weak viewModel] response in
+            guard response == .OK, let viewModel else { return }
             for url in panel.urls { viewModel.attach(fileURL: url) }
+            // Hand the keyboard back to the composer once the dialog is gone,
+            // so typing continues right where the attachments landed.
+            viewModel.focusComposer()
+        }
+    }
+}
+
+// ChatStreamTail
+
+/// The live part of the chats-window transcript: progress, approvals, errors and the streaming
+/// reply. Streaming ticks invalidate this view alone — the message list above stays untouched.
+private struct ChatStreamTail: View {
+    @Bindable var viewModel: ChatsViewModel
+    @Environment(AppContainer.self) private var container
+
+    var body: some View {
+        TranscriptTail(
+            progress: viewModel.progress, engineState: viewModel.engineState,
+            // A persisted failure shows here too, with the retry button.
+            errorMessage: viewModel.errorMessage ?? viewModel.messages.last?.failure,
+            approvals: NotificationService.shared.approvals(for: viewModel.selectedChatID),
+            onRetry: { viewModel.retryFailed() }
+        ) {
+            // While the model's thinking is shown, the raw stream goes in and the view splits it.
+            let thinkingShown = viewModel.activeModel.map { container.showsReasoning(modelID: $0.id) } ?? false
+            if !viewModel.visibleStreamingText.isEmpty || (thinkingShown && !viewModel.streamingText.isEmpty) {
+                ChatMessageView(
+                    message: Message(
+                        chatID: UUID(), role: .assistant,
+                        text: thinkingShown ? viewModel.streamingText : viewModel.visibleStreamingText, isPartial: true,
+                        modelID: thinkingShown ? viewModel.activeModel?.id : nil),
+                    onRegenerate: nil
+                )
+                .id("streaming")
+            }
         }
     }
 }
@@ -844,13 +1088,15 @@ private struct ChatsSplitView: View {
 // ChatMessageView
 
 struct ChatMessageView: View {
-    @ScaledMetric(relativeTo: .body) private var scaledText: CGFloat = ChatMessageView.textSize
-    static let textSize: CGFloat = 15
+    static let textSize: CGFloat = 13
     let message: Message
     var summary: String?
     var maps: [TranscriptMap] = []
     var onRegenerate: (() -> Void)?
     @Environment(AppContainer.self) private var container
+
+    // ⌘+ / ⌘− change the setting; Observation re-renders every message at once.
+    private var scaledText: CGFloat { container.settings.chatFontSize }
 
     private var answer: String { AnswerText.visible(message.text) }
 
@@ -901,8 +1147,8 @@ struct ChatMessageView: View {
             VStack(alignment: .leading, spacing: 6) {
                 if let summary { ProgressSummaryLine(text: summary) }
                 ReasoningBlock(message: message, fontSize: scaledText)
-                // Tool-asking replies have no answer of their own.
-                if message.toolCalls.isEmpty {
+                // Keep the model's rationale visible when it precedes tool calls.
+                if message.toolCalls.isEmpty || !answer.isEmpty {
                     AnswerBody(message: message, answer: answer, fontSize: scaledText)
                     ForEach(Array(maps.enumerated()), id: \.offset) { _, map in TranscriptMapView(map: map, height: 240) }
                 }
@@ -913,7 +1159,6 @@ struct ChatMessageView: View {
                             Button(action: onRegenerate) {
                                 Image(systemName: "arrow.clockwise")
                             }
-                            .help(String(localized: "Regenerate"))
                         }
                         // The count is read against its limit, so a reply cut short says what it ran into.
                         let limit = message.modelID.flatMap { container.replyLimit(forModel: $0) }
@@ -923,6 +1168,7 @@ struct ChatMessageView: View {
                         }
                     }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
+                    TokenUsageView(message: message)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1021,7 +1267,6 @@ private struct ChatExportLink: View {
         // The date's own colour, set here: a plain button would paint its words in the primary one.
         .foregroundStyle(colour)
         .onHover { hovering = $0 }
-        .help(String(localized: "Export Chat…"))
     }
 
     private var colour: AnyShapeStyle {

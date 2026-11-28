@@ -425,7 +425,6 @@ struct ModelLibraryHeader: View {
             .menuStyle(.button).menuIndicator(.hidden)
             .buttonStyle(.glass).buttonBorderShape(.capsule)
             .fixedSize()
-            .help(String(localized: "Hub"))
             .accessibilityLabel(String(localized: "Hub"))
             // Search capsule: magnifier left, clear right; exact-name modes confirm on the right.
             HStack(spacing: 6) {
@@ -443,7 +442,6 @@ struct ModelLibraryHeader: View {
                         Image(systemName: "xmark.circle.fill").font(.system(size: 14))
                     }
                     .buttonStyle(.plain).foregroundStyle(.tertiary)
-                    .help(String(localized: "Clear"))
                     .accessibilityLabel(String(localized: "Clear"))
                 }
                 if confirmsName { actionButton.padding(.leading, 4) }
@@ -456,7 +454,6 @@ struct ModelLibraryHeader: View {
             }
             .buttonStyle(.glass)
             .buttonBorderShape(.circle)
-            .help(String(localized: "Access token for gated Hugging Face repositories"))
             .accessibilityLabel(String(localized: "Hugging Face Token"))
             .popover(isPresented: $showsToken, arrowEdge: .bottom) {
                 TokenSettingsView(isPresented: $showsToken).environment(container)
@@ -477,12 +474,6 @@ struct ModelLibraryHeader: View {
             Image(systemName: confirmsName ? "checkmark.circle" : "magnifyingglass").font(.system(size: 16))
         }
         .buttonStyle(.plain).foregroundStyle(.secondary)
-        .help(
-            viewModel.hub == .api
-                ? String(localized: "Add this model: enter its server address below")
-                : viewModel.hub == .link
-                    ? String(localized: "Check that the model exists and show its size") : String(localized: "Search")
-        )
         .accessibilityLabel(viewModel.hub == .api ? String(localized: "Add") : String(localized: "Search"))
     }
 
@@ -563,11 +554,9 @@ struct ModelLibraryView: View {
             Image(systemName: verdict.symbol)
                 .font(.system(size: Self.pictogramSize))
                 .foregroundStyle(.secondary)  // monochrome: the shape carries the verdict
-                .help(verdict.detail)
                 .accessibilityLabel(verdict.detail)
             if installed {
                 Image(systemName: "checkmark").font(.system(size: Self.pictogramSize)).foregroundStyle(.secondary).frame(width: 24)
-                    .help(String(localized: "Installed"))
             } else {
                 symbolButton("arrow.down.circle", String(localized: "Download")) {
                     container.download(repoID: row.repoID, title: row.title, quantization: row.quantization, sizeBytes: row.sizeBytes)
@@ -598,7 +587,7 @@ struct ModelLibraryView: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     Text(line).font(.title3).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                    if gated { Image(systemName: "lock.fill").foregroundStyle(.secondary).help(String(localized: "Gated: requires token")) }
+                    if gated { Image(systemName: "lock.fill").foregroundStyle(.secondary) }
                 }
                 if !detail.isEmpty {
                     Text(verbatim: detail).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
@@ -613,11 +602,11 @@ struct ModelLibraryView: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             if let summary {
                 Text(verbatim: summary).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled).help(summary)
+                    .textSelection(.enabled)
             }
             if let pageURL, let host = pageURL.host() {
                 Link(destination: pageURL) { Text(verbatim: host.replacingOccurrences(of: "www.", with: "") + " ↗") }
-                    .fixedSize().help(pageURL.absoluteString)
+                    .fixedSize()
             }
         }
         .font(.caption)
@@ -641,7 +630,7 @@ struct ModelLibraryView: View {
 
     private var library: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Downloaded Models").font(.headline).padding(.bottom, 4)
+            Text("Connected Models").font(.headline).padding(.bottom, 4)
             ViewThatFits(in: .vertical) {
                 libraryRows
                 ScrollView { libraryRows }
@@ -657,7 +646,7 @@ struct ModelLibraryView: View {
         return container.orderedDownloads.filter { !installed.contains($0.repoID.lowercased()) }
     }
 
-    private var installedModels: [ModelDescriptor] { container.models }
+    private var installedModels: [ModelDescriptor] { container.models.filter { !$0.source.isCloud } }
 
     private var libraryRows: some View {
         VStack(spacing: 0) {
@@ -719,7 +708,6 @@ struct ModelLibraryView: View {
             Spacer(minLength: 8)
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: Self.pictogramSize)).foregroundStyle(.secondary)
-                .help(model.reason)
             if reference != nil {
                 symbolButton("arrow.down.circle", String(localized: "Download Again")) { container.redownload(model) }
             }
@@ -737,7 +725,7 @@ struct ModelLibraryView: View {
         if container.drafterIsInstalled(for: model) { drafter = container.isSpeculative(model) ? .on : .off }
         // Show context only for remote models; local ones have a menu.
         let detailText = detail(
-            repoID: model.repoID, kind: model.kind, contextLength: model.source == .remote ? model.contextLength : nil,
+            repoID: model.repoID, kind: model.kind, contextLength: model.source.isRemote ? model.contextLength : nil,
             drafter: drafter)
         return HStack(alignment: .center, spacing: 14) {
             rowText(
@@ -757,8 +745,8 @@ struct ModelLibraryView: View {
                     }
                     reasoningButton(model)
                     if container.canSpeculate(model) { speculationButton(model) }
-                    if model.source == .remote {
-                        // Remote models: only availability is checked.
+                    if model.source.isRemote {
+                        // Cloud models: only availability is checked.
                         if unavailable {
                             let checking = container.isCheckingAvailability
                             symbolButton("arrow.clockwise", String(localized: "Check whether the server answers")) {
@@ -840,7 +828,6 @@ struct ModelLibraryView: View {
                 .font(.callout)
         }
         .fixedSize()
-        .help(String(localized: "Context window for this model"))
     }
 
     private func updateStatus(_ model: ModelDescriptor) -> String? {
@@ -878,10 +865,6 @@ struct ModelLibraryView: View {
         }
         .fixedSize()
         .disabled(greedy)
-        .help(
-            greedy
-                ? String(localized: "This drafter only verifies greedy decoding, so the temperature stays at 0")
-                : String(localized: "Sampling temperature for this model"))
     }
 
     private static let temperatures: [Double] = [0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2]
@@ -915,7 +898,6 @@ struct ModelLibraryView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(on ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
-        .help(help)
         .accessibilityLabel(help)
         .popover(
             isPresented: Binding(get: { drafterTarget == model.id }, set: { if !$0 { drafterTarget = nil } }), arrowEdge: .bottom
@@ -1096,6 +1078,7 @@ struct ModelLibraryView: View {
     private static func mtpMark(installed: Bool) -> some View {
         Text(verbatim: "MTP")
             .font(.system(size: 8, weight: installed ? .bold : .regular, design: .rounded))
+            .fixedSize()  // never squeeze into vertical letters
             .padding(.horizontal, 3).padding(.vertical, 1)
             .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(.foreground, lineWidth: installed ? 1 : 0.7))
     }
@@ -1127,7 +1110,6 @@ struct TokenSettingsView: View {
                     Image(systemName: "globe").font(.title3)
                 }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
-                .help(String(localized: "Get a token on huggingface.co"))
                 .accessibilityLabel(String(localized: "Get a token on huggingface.co"))
             }
             Text("Needed only for gated models. Create a token with the Read role and paste it here.")

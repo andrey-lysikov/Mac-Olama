@@ -92,16 +92,21 @@ extension AnswerText {
         var calls: [ToolCall] = []
         var i = index - 1
         while i >= 0, isToolStep(messages[i]) {
-            calls = messages[i].toolCalls + calls
+            if !hasToolPreamble(messages[i]) { calls = messages[i].toolCalls + calls }
             i -= 1
         }
         return calls
     }
 
     static func isFoldedIntoAnswer(_ index: Int, in messages: [Message]) -> Bool {
+        if hasToolPreamble(messages[index]) { return false }
         var i = index + 1
         while i < messages.count, isToolStep(messages[i]) { i += 1 }
         return i < messages.count && messages[i].role == .assistant
+    }
+
+    private static func hasToolPreamble(_ message: Message) -> Bool {
+        message.role == .assistant && (!AnswerText.visible(message.text).isEmpty || !AnswerText.reasoning(message.text).isEmpty)
     }
 
     private static func isToolStep(_ message: Message) -> Bool {
@@ -117,15 +122,14 @@ struct GenerationProgressView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // While the answer streams, only the speed stays.
-            if progress.answeringSince == nil {
-                ForEach(progress.steps) { step in
-                    HStack(spacing: 8) {
-                        if step.done { Image(systemName: "checkmark").frame(width: 16) } else { ProgressView().controlSize(.small) }
-                        // A finished step keeps its wording, without the ellipsis that says it is still running.
-                        Text(step.done ? step.activity.text.replacingOccurrences(of: "…", with: "") : step.activity.text)
-                            .lineLimit(2).truncationMode(.middle)
-                    }
+            // Steps stay visible through the answer too: a running tool must keep its spinner,
+            // even while the model is already typing code or text below.
+            ForEach(progress.steps) { step in
+                HStack(spacing: 8) {
+                    if step.done { Image(systemName: "checkmark").frame(width: 16) } else { ProgressView().controlSize(.small) }
+                    // A finished step keeps its wording, without the ellipsis that says it is still running.
+                    Text(step.done ? step.activity.text.replacingOccurrences(of: "…", with: "") : step.activity.text)
+                        .lineLimit(2).truncationMode(.middle)
                 }
             }
             if case .loading(_, let fraction) = engineState {
@@ -189,6 +193,7 @@ struct ProgressSummaryLine: View {
 struct QueuedQuestion: Identifiable, Equatable {
     let id = UUID()
     var chatID: UUID?
+    var modelID: String? = nil
     var text: String
     var images: [ImageInput]
     var documents: [DocumentInput]
@@ -202,9 +207,12 @@ struct QueuedQuestion: Identifiable, Equatable {
 }
 
 struct QueuedQuestionsView: View {
-    @ScaledMetric(relativeTo: .body) private var scaledText: CGFloat = ChatMessageView.textSize
+    @Environment(AppContainer.self) private var container
     let questions: [QueuedQuestion]
     var onRemove: (UUID) -> Void
+
+    // A waiting question is read next to the answers, so it keeps their size (⌘+ / ⌘−).
+    private var scaledText: CGFloat { container.settings.chatFontSize }
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
@@ -224,7 +232,7 @@ struct QueuedQuestionsView: View {
                     } label: {
                         Image(systemName: "xmark.circle")
                     }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).help(String(localized: "Remove from queue"))
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
                 }
             }
         }

@@ -5,8 +5,8 @@ import Foundation
 import Markdown
 
 enum FormulaAttribute: AttributedStringKey {
+    static let name = Bundle.main.bundleIdentifier ?? "macolama"
     typealias Value = Formula
-    static let name = "ru.lysnet.macolama.formula"
 }
 
 enum MarkdownBlocks {

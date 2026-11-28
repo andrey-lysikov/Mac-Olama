@@ -84,29 +84,93 @@ final class ConversationStreamCoordinator {
         get { container.draft.documents }
         set { container.draft.documents = newValue }
     }
-    var errorMessage: String?
-    private(set) var messages: [Message] = []
-    private(set) var streamingText = ""
-    private var unshownText = ""
-    private var unshownTokens = 0
-    private var lastShown = ContinuousClock.now
-    private(set) var progress: GenerationProgress? { didSet { publishProgress() } }
+    private struct RunState {
+        var streamingText = ""
+        var unshownText = ""
+        var unshownTokens = 0
+        var lastShown = ContinuousClock.now
+        var progress: GenerationProgress?
+        var errorMessage: String?
+        var answerStarted = false
+    }
+
+    private var runStates: [UUID: RunState] = [:]
+    private var streamTasks: [UUID: Task<Void, Never>] = [:]
+    private var startingChats: Set<UUID> = []
+    private var startingNewChat = false
+    private var displayedChatID: UUID?
+    private var generalError: String?
+
+    var errorMessage: String? {
+        get { displayedChatID.flatMap { runStates[$0]?.errorMessage } ?? generalError }
+        set {
+            if let displayedChatID {
+                runStates[displayedChatID, default: RunState()].errorMessage = newValue
+            } else {
+                generalError = newValue
+            }
+        }
+    }
+    private(set) var messages: [Message] = [] {
+        didSet { contextBaseDirty = true }
+    }
+    var streamingText: String { displayedChatID.flatMap { runStates[$0]?.streamingText } ?? "" }
+    var progress: GenerationProgress? { displayedChatID.flatMap { runStates[$0]?.progress } }
     private(set) var queuedQuestions: [QueuedQuestion] = []
     private(set) var thoughtSeconds: [UUID: Int] = [:]
-    private(set) var isGenerating = false
+    var isGenerating: Bool {
+        startingNewChat || displayedChatID.map { startingChats.contains($0) || streamTasks[$0] != nil } ?? false
+    }
 
     var streamsHere: Bool { progress != nil }
     var visibleStreamingText: String { AnswerText.visible(streamingText) }
 
-    func contextUsed(systemPrompt: String?) -> Int {
-        let system = (systemPrompt?.count ?? 0) / 3
-        let history = messages.reduce(0) { $0 + ($1.role == .assistant ? $1.completionTokens ?? $1.text.count / 3 : $1.text.count / 3) }
-        return system + history + (streamingText.count + input.count) / 3
+    func display(chatID: UUID?) { displayedChatID = chatID }
+
+    // A chat whose stream task is alive here: covers the whole consume(), including
+    // the gap where the service has not registered the run yet.
+    var locallyActiveChatIDs: Set<UUID> { Set(streamTasks.keys).union(startingChats) }
+
+    private var contextChatID: UUID?
+    private var codingContext: String?
+    private var codingDynamicContext: String?
+
+    // Token estimate cache: contextEstimate walks the whole history, so it must not run
+    // on every keystroke. The draft's own tokens are estimated separately and added on top.
+    @ObservationIgnored private var contextBaseChatID: UUID?
+    @ObservationIgnored private var contextBaseValue = 0
+    @ObservationIgnored private var contextBaseDirty = true
+
+    func invalidateContextBase() { contextBaseDirty = true }
+
+    func contextUsed(chat: Chat?, model: ModelDescriptor?) -> Int {
+        let chatID = chat?.id
+        if contextBaseDirty || contextBaseChatID != chatID {
+            contextBaseChatID = chatID
+            contextBaseValue = ConversationService.contextEstimate(
+                chat: chat, history: messages, streamingText: "", input: "",
+                toolSpecs: model?.supportsTools == true ? container.toolSpecs : [],
+                codingContext: contextChatID == chatID ? codingContext : nil,
+                preferredLanguage: container.settings.preferredLanguage,
+                codingDynamicContext: contextChatID == chatID ? codingDynamicContext : nil)
+            contextBaseDirty = false
+        }
+        return contextBaseValue + ConversationService.estimateTokens(streamingText + input)
     }
 
-    private var answerStarted = false
-    private var generation = 0
-    private var streamTask: Task<Void, Never>?
+    func refreshContext(chatID: UUID?) async {
+        contextChatID = chatID
+        codingContext = nil
+        codingDynamicContext = nil
+        guard let chatID else { return }
+        async let stable = container.conversation.codingContext(for: chatID)
+        async let dynamic = container.conversation.codingDynamicContext(for: chatID)
+        let (value, dynamicValue) = await (stable, dynamic)
+        guard contextChatID == chatID else { return }
+        codingContext = value
+        codingDynamicContext = dynamicValue
+        invalidateContextBase()
+    }
 
     init(container: AppContainer) {
         self.container = container
@@ -147,7 +211,7 @@ final class ConversationStreamCoordinator {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !pendingImages.isEmpty || !pendingDocuments.isEmpty else { return }
         let question = QueuedQuestion(
-            chatID: chatID, text: text,
+            chatID: chatID, modelID: delegate?.modelIDForSending(), text: text,
             images: pendingImages.map { ImageInput(data: $0.data, mimeType: $0.mimeType) },
             documents: pendingDocuments)
         input = ""
@@ -161,8 +225,15 @@ final class ConversationStreamCoordinator {
     }
 
     func drainQueue() {
-        guard !isGenerating, errorMessage == nil, !queuedQuestions.isEmpty else { return }
-        ask(queuedQuestions.removeFirst())
+        guard let displayedChatID else { return }
+        drainQueue(chatID: displayedChatID)
+    }
+
+    private func drainQueue(chatID: UUID) {
+        guard streamTasks[chatID] == nil, !startingChats.contains(chatID), runStates[chatID]?.errorMessage == nil,
+            let index = queuedQuestions.firstIndex(where: { $0.chatID == chatID })
+        else { return }
+        ask(queuedQuestions.remove(at: index))
     }
 
     func regenerate(chatID: UUID) {
@@ -185,26 +256,17 @@ final class ConversationStreamCoordinator {
                 }
             }
             for message in tail { try? await container.chatStore.deleteMessage(id: message.id) }
-            ask(QueuedQuestion(chatID: chatID, text: user.text, images: images, documents: documents))
+            ask(QueuedQuestion(chatID: chatID, modelID: delegate?.modelIDForSending(), text: user.text, images: images, documents: documents))
         }
     }
 
     func reset() {
-        streamTask?.cancel()
-        streamTask = nil
-        generation += 1
+        displayedChatID = nil
         input = ""
         messages = []
-        streamingText = ""
-        dropUnshown()
-        progress = nil
-        queuedQuestions = []
-        errorMessage = nil
+        generalError = nil
         pendingImages = []
         pendingDocuments = []
-        isGenerating = false
-        answerStarted = false
-        streamingChatID = nil
     }
 
     // Attachments
@@ -242,6 +304,9 @@ final class ConversationStreamCoordinator {
         pendingDocuments.removeAll { $0.name == name }
     }
 
+    // Long pastes become a document, as in other chat clients; short ones go into the field as usual.
+    static let pastedTextThreshold = 150
+
     func pasteFromClipboard() -> Bool {
         switch PasteboardAttachments.read() {
         case .files(let urls): urls.forEach { attach(fileURL: $0) }
@@ -252,6 +317,9 @@ final class ConversationStreamCoordinator {
                 return true
             }
             attach(image: image)
+        case .text(let text):
+            guard text.count >= Self.pastedTextThreshold else { return false }
+            pendingDocuments.append(DocumentInput(name: String(localized: "Pasted text"), text: text))
         case nil: return false
         }
         return true
@@ -259,111 +327,139 @@ final class ConversationStreamCoordinator {
 
     // Run loop
 
-    private(set) var streamingChatID: UUID? { didSet { publishProgress() } }
+    var streamingChatID: UUID? { displayedChatID.flatMap { streamTasks[$0] == nil ? nil : $0 } }
 
-    private func publishProgress() {
-        if let streamingChatID { container.liveProgress[streamingChatID] = progress }
+    private func publishProgress(chatID: UUID) {
+        container.liveProgress[chatID] = runStates[chatID]?.progress
     }
 
     private func ask(_ question: QueuedQuestion) {
-        streamTask?.cancel()
-        generation += 1
-        let gen = generation
-        // Set synchronously so a racing send() queues.
-        isGenerating = true
-        errorMessage = nil
-        streamingText = ""
-        dropUnshown()
-        answerStarted = false
-        progress = GenerationProgress()
-        streamTask = Task {
+        if let chatID = question.chatID {
+            startingChats.insert(chatID)
+        } else {
+            startingNewChat = true
+        }
+        Task {
             let resolved = await delegate?.chatIDForSending(question: question)
-            guard generation == gen else { return }
+            if let chatID = question.chatID { startingChats.remove(chatID) }
+            startingNewChat = false
             guard let chatID = resolved else {
-                isGenerating = false
-                progress = nil
+                if let chatID = question.chatID { runStates[chatID, default: RunState()].errorMessage = generalError }
                 restoreToComposer(question)
                 return
             }
-            streamingChatID = chatID
-            do {
-                let stream = try await container.conversation.send(
-                    chatID: chatID, text: question.text, images: question.images, documents: question.documents,
-                    modelID: delegate?.modelIDForSending())
-                for await event in stream {
-                    guard generation == gen else { return }
-                    switch event {
-                    case .started:
-                        await reloadIfDisplayed(chatID, generation: gen)
-                    case .token(let t):
-                        unshownText += t
-                        unshownTokens += 1
-                        if lastShown.duration(to: .now) >= .milliseconds(33) { showUnshown() }
-                    case .generated(let count):
-                        progress?.generated(count)
-                    case .toolCallStarted(let call):
-                        showUnshown()
-                        // The call stays out of the transcript; whatever preceded it was a preamble, not the answer.
-                        progress?.toolStarted(AnswerText.activity(for: call, searchProvider: container.settings.searchProvider))
-                        streamingText = ""
-                        answerStarted = false
-                    case .toolCallFinished(let call, let result):
-                        progress?.toolFinished(detail: AnswerText.detail(for: call, result: result))
-                    case .retrying:
-                        dropUnshown()
-                        streamingText = ""
-                        answerStarted = false
-                    case .failed(let message):
-                        showUnshown()
-                        errorMessage = message
-                    case .finished(let message):
-                        showUnshown()
-                        progress?.endThinking()
-                        thoughtSeconds[message.id] = progress?.reportedThoughtSeconds
-                        container.answerFinished(message)
-                    }
-                }
-            } catch {
-                guard generation == gen else { return }
-                errorMessage = ConversationService.describe(error)
-                restoreToComposer(question)
-            }
-            guard generation == gen else { return }
-            isGenerating = false
-            streamingText = ""
-            dropUnshown()
-            progress = nil
-            answerStarted = false
-            streamingChatID = nil
-            await reloadIfDisplayed(chatID, generation: gen)
-            // A fresh send may have started during the reload; its run owns the state now.
-            guard generation == gen else { return }
-            // Send the next queued question; pause after a failure.
-            if errorMessage == nil, !queuedQuestions.isEmpty { ask(queuedQuestions.removeFirst()) }
+            start(question, chatID: chatID)
         }
     }
 
-    private func showUnshown() {
-        guard unshownTokens > 0 else { return }
-        streamingText += unshownText
-        if !answerStarted { answerStarted = !AnswerText.visible(streamingText).isEmpty }
-        for _ in 0..<unshownTokens { progress?.token(answerStarted: answerStarted) }
-        dropUnshown()
+    private func start(_ question: QueuedQuestion, chatID: UUID) {
+        guard streamTasks[chatID] == nil else {
+            queuedQuestions.insert(question, at: 0)
+            return
+        }
+        runStates[chatID] = RunState(progress: GenerationProgress())
+        publishProgress(chatID: chatID)
+        let task = Task { await consume(question, chatID: chatID) }
+        streamTasks[chatID] = task
     }
 
-    private func dropUnshown() {
-        unshownText = ""
-        unshownTokens = 0
-        lastShown = .now
+    private func consume(_ question: QueuedQuestion, chatID: UUID) async {
+        do {
+            let stream = try await container.conversation.send(
+                chatID: chatID, text: question.text, images: question.images, documents: question.documents,
+                modelID: question.modelID ?? delegate?.modelIDForSending())
+            for await event in stream {
+                switch event {
+                case .started:
+                    await reloadIfDisplayed(chatID)
+                case .token(let text):
+                    runStates[chatID]?.unshownText += text
+                    runStates[chatID]?.unshownTokens += 1
+                    // Show whole lines, not words: an update per finished line is far cheaper
+                    // than 30 per second. The time fallback keeps a long unbroken line moving.
+                    let pending = runStates[chatID]?.unshownText ?? ""
+                    let due = (runStates[chatID]?.lastShown.duration(to: .now) ?? .zero) >= .milliseconds(150)
+                    if pending.hasSuffix("\n") || (due && !pending.isEmpty) { showUnshown(chatID: chatID) }
+                case .generated(let count):
+                    runStates[chatID]?.progress?.generated(count)
+                    publishProgress(chatID: chatID)
+                case .toolCallStarted(let call):
+                    showUnshown(chatID: chatID)
+                    // The call stays out of the transcript; whatever preceded it was a preamble, not the answer.
+                    runStates[chatID]?.progress?.toolStarted(
+                        AnswerText.activity(for: call, searchProvider: container.settings.searchProvider))
+                    // The reply that preceded the calls is persisted by now. Load it into the
+                    // transcript *before* clearing the streaming tail, so the text never blinks:
+                    // in every frame it is visible in exactly one place.
+                    await reloadIfDisplayed(chatID)
+                    runStates[chatID]?.streamingText = ""
+                    runStates[chatID]?.answerStarted = false
+                    publishProgress(chatID: chatID)
+                case .toolCallFinished(let call, let result):
+                    runStates[chatID]?.progress?.toolFinished(detail: AnswerText.detail(for: call, result: result))
+                    publishProgress(chatID: chatID)
+                case .retrying:
+                    dropUnshown(chatID: chatID)
+                    runStates[chatID]?.streamingText = ""
+                    runStates[chatID]?.answerStarted = false
+                case .failed(let message):
+                    showUnshown(chatID: chatID)
+                    runStates[chatID]?.errorMessage = message
+                case .finished(let message):
+                    showUnshown(chatID: chatID)
+                    runStates[chatID]?.progress?.endThinking()
+                    thoughtSeconds[message.id] = runStates[chatID]?.progress?.reportedThoughtSeconds
+                    container.answerFinished(message)
+                }
+            }
+        } catch {
+            runStates[chatID]?.errorMessage = ConversationService.describe(error)
+            restoreToComposer(question, chatID: chatID)
+        }
+        streamTasks[chatID] = nil
+        runStates[chatID]?.streamingText = ""
+        dropUnshown(chatID: chatID)
+        runStates[chatID]?.progress = nil
+        runStates[chatID]?.answerStarted = false
+        publishProgress(chatID: chatID)
+        await reloadIfDisplayed(chatID)
+        drainQueue(chatID: chatID)
     }
 
-    private func reloadIfDisplayed(_ chatID: UUID, generation gen: Int) async {
+    private func showUnshown(chatID: UUID) {
+        guard var state = runStates[chatID], state.unshownTokens > 0 else { return }
+        state.streamingText += state.unshownText
+        if !state.answerStarted { state.answerStarted = !AnswerText.visible(state.streamingText).isEmpty }
+        for _ in 0..<state.unshownTokens { state.progress?.token(answerStarted: state.answerStarted) }
+        state.unshownText = ""
+        state.unshownTokens = 0
+        state.lastShown = .now
+        runStates[chatID] = state
+        publishProgress(chatID: chatID)
+    }
+
+    private func dropUnshown(chatID: UUID) {
+        runStates[chatID]?.unshownText = ""
+        runStates[chatID]?.unshownTokens = 0
+        runStates[chatID]?.lastShown = .now
+    }
+
+    private func reloadIfDisplayed(_ chatID: UUID) async {
         let loaded = await fetchMessages(chatID: chatID)
-        guard generation == gen, delegate?.displaysChat(chatID) != false else { return }
+        guard delegate?.displaysChat(chatID) != false else { return }
         messages = loaded
+        await refreshContext(chatID: chatID)
     }
 
-    private func restoreToComposer(_ question: QueuedQuestion) {
+    private func restoreToComposer(_ question: QueuedQuestion, chatID: UUID? = nil) {
+        if let chatID, displayedChatID != chatID {
+            queuedQuestions.insert(question, at: 0)
+            return
+        }
+        guard question.chatID == nil || displayedChatID == question.chatID else {
+            queuedQuestions.insert(question, at: 0)
+            return
+        }
         if input.isEmpty { input = question.text }
         for image in question.images {
             guard let thumbnail = NSImage(data: image.data) else { continue }

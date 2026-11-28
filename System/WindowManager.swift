@@ -65,14 +65,11 @@ final class WindowManager: NSObject, NSWindowDelegate {
         }
         hidePanel?()
         if window.isMiniaturized { window.deminiaturize(nil) }
-        // Order front even if the cooperative activation is refused.
         window.orderFrontRegardless()
-        NSApp.activate()
-        window.makeKeyAndOrderFront(nil)
         DispatchQueue.main.async {
-            // Activating our own app is not refused like `NSApp.activate()`.
-            if !NSApp.isActive { NSRunningApplication.current.activate(options: [.activateAllWindows]) }
-            window.makeKeyAndOrderFront(nil)
+            // Activate after the status menu has closed, once and only for a window that accepts key status.
+            NSApp.activate(ignoringOtherApps: true)
+            if window.canBecomeKey { window.makeKeyAndOrderFront(nil) }
         }
     }
 

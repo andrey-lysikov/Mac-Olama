@@ -14,7 +14,9 @@ struct TranscriptRow<Row: View>: View {
     @ViewBuilder let row: (Message, String?) -> Row
 
     var body: some View {
-        if isStreamedPlaceholder {
+        if let approval = ToolApprovalRecord.record(from: message) {
+            ToolApprovalHistoryCard(record: approval)
+        } else if isStreamedPlaceholder {
             EmptyView()
         } else if message.toolCalls.isEmpty {
             row(
@@ -35,6 +37,8 @@ struct TranscriptTail<Streaming: View>: View {
     let progress: GenerationProgress?
     let engineState: EngineState
     let errorMessage: String?
+    var approvals: [ToolApprovalRequest] = []
+    var onRetry: (() -> Void)? = nil
     @ViewBuilder let streaming: () -> Streaming
 
     var body: some View {
@@ -43,7 +47,97 @@ struct TranscriptTail<Streaming: View>: View {
         if let progress {
             GenerationProgressView(progress: progress, engineState: engineState)
         }
-        if let errorMessage { ErrorLine(text: errorMessage) }
+        ForEach(approvals) { request in
+            ToolApprovalCard(request: request)
+        }
+        if let errorMessage {
+            HStack(alignment: .top, spacing: 8) {
+                ErrorLine(text: errorMessage)
+                if let onRetry {
+                    Button(action: onRetry) {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+// ToolApprovalCard
+
+struct ToolApprovalCard: View {
+    let request: ToolApprovalRequest
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(request.title, systemImage: request.isDiff ? "doc.text.magnifyingglass" : "shield")
+                .font(.callout.weight(.semibold))
+            if request.isDiff {
+                ScrollView {
+                    Text(request.detail)
+                        .font(.system(size: 12, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                }
+                .frame(maxHeight: 320)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            } else {
+                Text(request.detail).font(.callout).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack(spacing: 12) {
+                Button(String(localized: "Allow")) { NotificationService.shared.resolveApproval(id: request.id, allowed: true) }
+                    .buttonStyle(.glass)
+                Button(String(localized: "Deny"), role: .destructive) {
+                    NotificationService.shared.resolveApproval(id: request.id, allowed: false)
+                }
+                .buttonStyle(.glass)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+// ToolApprovalHistoryCard
+
+struct ToolApprovalHistoryCard: View {
+    let record: ToolApprovalRecord
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label(record.request.title, systemImage: record.allowed ? "checkmark.shield" : "xmark.shield")
+                    .font(.callout.weight(.semibold))
+                Spacer()
+                Text(record.decidedAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text(
+                record.allowed
+                    ? String(localized: record.automatic ? "Allowed Automatically" : "Allowed")
+                    : String(localized: "Denied")
+            )
+            .font(.callout.weight(.medium)).foregroundStyle(record.allowed ? .green : .red)
+            if record.request.isDiff {
+                ScrollView {
+                    Text(record.request.detail)
+                        .font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                }
+                .frame(maxHeight: 320)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            } else {
+                Text(record.request.detail).font(.callout).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
@@ -61,10 +155,22 @@ struct ErrorLine: View {
     }
 }
 
+// CompactionDivider
+
+struct CompactionDivider: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            Divider()
+            Text(String(localized: "Compacted")).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
 // TranscriptFollow
 
 struct TranscriptFollow<Jump: Equatable>: ViewModifier {
     let jumpOn: Jump
+    var onNearTop: (() -> Void)? = nil
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var following = true
     @State private var userScrolling = false
@@ -83,26 +189,31 @@ struct TranscriptFollow<Jump: Equatable>: ViewModifier {
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             // Anchor the end while following; off while the user reads.
             .defaultScrollAnchor(following ? .bottom : nil, for: .sizeChanges)
+            // Lazy rows do not exist yet on the first pass: scroll after the layout lands.
+            .onAppear { DispatchQueue.main.async { toEnd() } }
             .onScrollPhaseChange { _, phase, context in
                 let wasUser = userScrolling
-                userScrolling = phase == .interacting || phase == .decelerating
+                let scrolling = phase == .interacting || phase == .decelerating
+                if scrolling != userScrolling { userScrolling = scrolling }
                 // On gesture end: at the bottom follow, otherwise stay.
                 if wasUser, !userScrolling { following = Self.gap(context.geometry) <= Self.slack }
             }
             .onScrollGeometryChange(for: Place.self) { geometry in
                 Place(offset: geometry.contentOffset.y, gap: Self.gap(geometry), height: geometry.contentSize.height)
             } action: { old, new in
+                // Once per crossing, not on every frame at the top.
+                if new.offset <= 0, old.offset > 0 { onNearTop?() }
                 if new.gap <= Self.slack {
-                    following = true
+                    if !following, !userScrolling { following = true }
                 } else if userScrolling || (new.offset < old.offset - 1 && new.height >= old.height - 1) {
                     // A gesture or knob drag up means the user scrolled away.
-                    following = false
-                } else if following {
-                    // Cases the anchor misses: tail swap, tool round.
+                    if following { following = false }
+                } else if following, !userScrolling {
+                    // Cases the anchor misses: tail swap, tool round. Never fight an active gesture.
                     position.scrollTo(edge: .bottom)
                 }
             }
-            .onChange(of: jumpOn) { _, _ in toEnd() }
+            .onChange(of: jumpOn) { _, _ in DispatchQueue.main.async { toEnd() } }
             .overlay(alignment: .bottomTrailing) {
                 ZStack {
                     if !following {
@@ -110,7 +221,6 @@ struct TranscriptFollow<Jump: Equatable>: ViewModifier {
                             Image(systemName: "arrow.down")
                         }
                         .buttonStyle(.glass).buttonBorderShape(.circle).controlSize(.large)
-                        .help(String(localized: "Scroll to the end"))
                         .padding(16)
                         .transition(.opacity)
                     }
@@ -125,14 +235,16 @@ struct TranscriptFollow<Jump: Equatable>: ViewModifier {
     }
 
     private func toEnd() {
+        // A deliberate jump (another chat, a new question) also ends any gesture still in progress.
+        userScrolling = false
         following = true
         position.scrollTo(edge: .bottom)
     }
 }
 
 extension View {
-    func followsTranscriptEnd(jumpOn: some Equatable) -> some View {
-        modifier(TranscriptFollow(jumpOn: jumpOn))
+    func followsTranscriptEnd(jumpOn: some Equatable, onNearTop: (() -> Void)? = nil) -> some View {
+        modifier(TranscriptFollow(jumpOn: jumpOn, onNearTop: onNearTop))
     }
 }
 
@@ -187,5 +299,24 @@ struct PaceText: View {
         Text(verbatim: pace)
             .font(.caption2).monospacedDigit()
             .foregroundStyle(atLimit ? AnyShapeStyle(.red) : AnyShapeStyle(.tertiary))
+    }
+}
+
+struct TokenUsageView: View {
+    let message: Message
+
+    var body: some View {
+        if let prompt = message.promptTokens {
+            let cached = min(message.cachedTokens ?? 0, prompt)
+            let fresh = prompt - cached
+            let output = message.outputTokens ?? message.completionTokens ?? 0
+            let rounds = message.toolRounds ?? 1
+            Text(
+                String(
+                    localized:
+                        "↑ \(ChatMessageView.compact(fresh)) + \(ChatMessageView.compact(cached)) cached · ↓ \(ChatMessageView.compact(output)) · \(rounds) calls")
+            )
+            .font(.caption2).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
+        }
     }
 }

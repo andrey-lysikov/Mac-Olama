@@ -1,7 +1,6 @@
 //  Copyright © AndreyLysikov
 //  SPDX-License-Identifier: Apache-2.0
 
-import AppIntents
 import AppKit
 
 // AppKit lifecycle, LSUIElement app: menu bar, quick panel and the chats window.
@@ -41,7 +40,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         servicesProvider = ServicesProvider(panel: panel)
         NSApp.servicesProvider = servicesProvider
-        NSUpdateDynamicServices()
         applyHotkey()
 
         LaunchAtLogin.sync(enabled: container.settings.launchAtLogin)
@@ -75,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func applyHotkey() {
         GlobalHotkey.shared.register(container.hotkey) { [weak self] in self?.panel.toggle() }
+        GlobalHotkey.shared.register(container.chatsHotkey, id: 2) { WindowManager.shared.open(.chats) }
     }
 
     private func installMainMenu() {

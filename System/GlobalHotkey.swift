@@ -11,61 +11,85 @@ final class GlobalHotkey {
     struct Combination: Equatable {
         var keyCode: Int
         var modifiers: Int
-        var isSet: Bool { keyCode > 0 && modifiers != 0 }
+        var isSet: Bool { keyCode >= 0 && modifiers != 0 }
     }
 
     static let modifierMasks: [(symbol: String, mask: Int)] = [
         ("⌃", controlKey), ("⌥", optionKey), ("⇧", shiftKey), ("⌘", cmdKey),
     ]
 
-    static let keys: [(title: String, code: Int)] = {
-        var keys: [(String, Int)] = [
-            ("Space", kVK_Space), ("Return", kVK_Return), ("Tab", kVK_Tab), ("⌫", kVK_Delete), ("Esc", kVK_Escape),
-            ("←", kVK_LeftArrow), ("→", kVK_RightArrow), ("↑", kVK_UpArrow), ("↓", kVK_DownArrow),
-        ]
-        let letters: [(String, Int)] = [
-            ("A", kVK_ANSI_A), ("B", kVK_ANSI_B), ("C", kVK_ANSI_C), ("D", kVK_ANSI_D), ("E", kVK_ANSI_E), ("F", kVK_ANSI_F),
-            ("G", kVK_ANSI_G), ("H", kVK_ANSI_H), ("I", kVK_ANSI_I), ("J", kVK_ANSI_J), ("K", kVK_ANSI_K), ("L", kVK_ANSI_L),
-            ("M", kVK_ANSI_M), ("N", kVK_ANSI_N), ("O", kVK_ANSI_O), ("P", kVK_ANSI_P), ("Q", kVK_ANSI_Q), ("R", kVK_ANSI_R),
-            ("S", kVK_ANSI_S), ("T", kVK_ANSI_T), ("U", kVK_ANSI_U), ("V", kVK_ANSI_V), ("W", kVK_ANSI_W), ("X", kVK_ANSI_X),
-            ("Y", kVK_ANSI_Y), ("Z", kVK_ANSI_Z),
-        ]
-        let function: [(String, Int)] = [
-            ("F1", kVK_F1), ("F2", kVK_F2), ("F3", kVK_F3), ("F4", kVK_F4), ("F5", kVK_F5), ("F6", kVK_F6), ("F7", kVK_F7),
-            ("F8", kVK_F8), ("F9", kVK_F9), ("F10", kVK_F10), ("F11", kVK_F11), ("F12", kVK_F12),
-        ]
-        keys.append(contentsOf: letters)
-        keys.append(contentsOf: function)
-        return keys
-    }()
+    static let keys: [(title: String, code: Int)] = [
+        ("F1", kVK_F1), ("F2", kVK_F2), ("F3", kVK_F3), ("F4", kVK_F4), ("F5", kVK_F5), ("F6", kVK_F6), ("F7", kVK_F7),
+        ("F8", kVK_F8), ("F9", kVK_F9), ("F10", kVK_F10), ("F11", kVK_F11), ("F12", kVK_F12),
+    ]
 
-    private var hotKey: EventHotKeyRef?
     private var handler: EventHandlerRef?
-    private var action: (() -> Void)?
+    private var hotKeys: [UInt32: EventHotKeyRef] = [:]
+    private var actions: [UInt32: () -> Void] = [:]
 
-    func register(_ combination: Combination, action: @escaping () -> Void) {
-        unregister()
-        guard combination.isSet else { return }
-        self.action = action
+    @discardableResult
+    func register(_ combination: Combination, id: UInt32 = 1, action: @escaping () -> Void) -> Bool {
+        unregister(id: id)
+        guard combination.isSet else { return false }
+        guard installHandlerIfNeeded() else { return false }
+
+        actions[id] = action
         Self.active = self
-        if handler == nil {
-            var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-            InstallEventHandler(GetApplicationEventTarget(), Self.callback, 1, &spec, nil, &handler)
+
+        let hotKeyID = EventHotKeyID(signature: OSType(0x4D4F_4C41), id: id)  // 'MOLA'
+        var ref: EventHotKeyRef?
+        let status = RegisterEventHotKey(
+            UInt32(combination.keyCode), UInt32(combination.modifiers), hotKeyID, GetApplicationEventTarget(), 0, &ref)
+        guard status == noErr, let ref else {
+            actions[id] = nil
+            let description = Self.describe(combination) ?? "?"
+            if status == OSStatus(eventHotKeyExistsErr) {
+                print("Hotkey \(description) (slot \(id)) is already in use")
+            } else {
+                print(
+                    "RegisterEventHotKey failed for \(description) (slot \(id)): \(status)")
+            }
+            return false
         }
-        let id = EventHotKeyID(signature: OSType(0x4D4F_4C41), id: 1)  // 'MOLA'
-        RegisterEventHotKey(UInt32(combination.keyCode), UInt32(combination.modifiers), id, GetApplicationEventTarget(), 0, &hotKey)
+        hotKeys[id] = ref
+        return true
     }
 
-    func unregister() {
-        if let hotKey { UnregisterEventHotKey(hotKey) }
-        hotKey = nil
-        action = nil
+    func unregister(id: UInt32? = nil) {
+        for (key, ref) in hotKeys where id == nil || key == id { UnregisterEventHotKey(ref) }
+        if let id { hotKeys[id] = nil; actions[id] = nil } else { hotKeys.removeAll(); actions.removeAll() }
+    }
+
+    private func installHandlerIfNeeded() -> Bool {
+        if handler != nil { return true }
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        let status = InstallEventHandler(GetApplicationEventTarget(), Self.callback, 1, &spec, nil, &handler)
+        guard status == noErr else {
+            handler = nil
+            return false
+        }
+        return true
     }
 
     private nonisolated(unsafe) static weak var active: GlobalHotkey?
 
-    private static let callback: EventHandlerUPP = { _, _, _ in
-        Task { @MainActor in GlobalHotkey.active?.action?() }
+    private func performAction(id: UInt32) {
+        actions[id]?()
+    }
+
+    private static let callback: EventHandlerUPP = { _, event, _ in
+        guard let event else { return OSStatus(eventNotHandledErr) }
+        var hotKeyID = EventHotKeyID()
+        // Имя параметра — kEventParamDirectObject ('----'),
+        // а 'hkid' (typeEventHotKeyID) — это его ТИП.
+        let status = GetEventParameter(
+            event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil,
+            MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID)
+        guard status == noErr, hotKeyID.signature == OSType(0x4D4F_4C41) else {
+            return OSStatus(eventNotHandledErr)
+        }
+        let id = hotKeyID.id
+        Task { @MainActor in GlobalHotkey.active?.performAction(id: id) }
         return noErr
     }
 
@@ -77,7 +101,19 @@ final class GlobalHotkey {
 
     static func name(ofKey code: Int) -> String {
         if let known = keys.first(where: { $0.code == code })?.title { return known }
-        return character(ofKey: code) ?? "#\(code)"
+        switch character(ofKey: code) {
+        case " ": return "Space"
+        case "\r", "\n": return "Return"
+        case "\t": return "Tab"
+        case "\u{7F}": return "⌫"
+        case "\u{1B}": return "Esc"
+        case "\u{F700}": return "↑"
+        case "\u{F701}": return "↓"
+        case "\u{F702}": return "←"
+        case "\u{F703}": return "→"
+        case let character?: return character
+        case nil: return "#\(code)"
+        }
     }
 
     private static func character(ofKey code: Int) -> String? {
@@ -91,7 +127,9 @@ final class GlobalHotkey {
         let status = data.withUnsafeBytes { buffer -> OSStatus in
             guard let layout = buffer.bindMemory(to: UCKeyboardLayout.self).baseAddress else { return -1 }
             return UCKeyTranslate(
-                layout, UInt16(code), UInt16(kUCKeyActionDisplay), 0, UInt32(LMGetKbdType()), UInt32(kUCKeyTranslateNoDeadKeysBit),
+                layout, UInt16(code), UInt16(kUCKeyActionDisplay), 0, UInt32(LMGetKbdType()),
+                // Нужна маска (1 << bit), а не номер бита, иначе dead keys не отключаются.
+                UInt32(kUCKeyTranslateNoDeadKeysMask),
                 &dead, characters.count, &length, &characters)
         }
         guard status == noErr, length > 0 else { return nil }

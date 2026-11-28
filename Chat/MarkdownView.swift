@@ -15,9 +15,17 @@ struct MarkdownView: View {
             let (stable, tail) = MarkdownStreamSplit.split(markdown)
             VStack(alignment: .leading, spacing: 8) {
                 if !stable.isEmpty { blocksView(MarkdownCache.blocks(for: String(stable))) }
-                if !tail.isEmpty {
+                // Unfinished markup is not drawn raw: a placeholder stands in until the block
+                // is complete, then it renders formatted. Plain prose keeps streaming as text.
+                switch MarkdownStreamSplit.tailKind(of: tail) {
+                case .empty: EmptyView()
+                case .prose:
                     Text(String(tail)).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                case .code:
+                    TailPlaceholder(symbol: "chevron.left.forwardslash.chevron.right", title: String(localized: "Writing code…"))
+                case .markup:
+                    TailPlaceholder(symbol: "text.alignleft", title: String(localized: "Formatting…"))
                 }
             }
             .font(.system(size: baseFontSize))
@@ -38,8 +46,8 @@ struct MarkdownView: View {
     private func render(_ block: MarkdownBlocks.Block) -> some View {
         switch block.kind {
         case .header(let level):
-            let size = baseFontSize + CGFloat(max(0, 4 - level)) * 3
-            text(block.text, size: size).font(.system(size: size, weight: .semibold)).padding(.top, 4)
+            let size = baseFontSize + CGFloat(max(0, 4 - level)) * 2
+            text(block.text, size: size).font(.system(size: size, weight: .semibold)).padding(.top, 3)
         case .paragraph:
             text(block.text).textSelection(.enabled).padding(.leading, CGFloat(block.quoteDepth) * 12)
                 .overlay(alignment: .leading) { if block.quoteDepth > 0 { Rectangle().fill(.quaternary).frame(width: 3) } }
@@ -76,8 +84,16 @@ struct MarkdownView: View {
 extension MarkdownView {
     fileprivate func text(_ attributed: AttributedString, size: CGFloat? = nil) -> Text {
         var styled = attributed
-        for run in attributed.runs where run.inlinePresentationIntent?.contains(.code) == true {
-            styled[run.range].backgroundColor = Color(nsColor: .quaternaryLabelColor)
+        let fontSize = size ?? baseFontSize
+        for run in attributed.runs {
+            let intent = run.inlinePresentationIntent ?? []
+            if intent.contains(.code) {
+                styled[run.range].font = .system(size: fontSize - 0.5, design: .monospaced)
+                styled[run.range].backgroundColor = Color.primary.opacity(0.07)
+            } else if intent.contains(.stronglyEmphasized) {
+                let font = Font.system(size: fontSize, weight: .semibold)
+                styled[run.range].font = intent.contains(.emphasized) ? font.italic() : font
+            }
         }
         // Links: accent colour, underline and ↗; inserted backwards to keep ranges valid.
         for (url, range) in styled.runs[\.link].reversed() {
@@ -89,7 +105,7 @@ extension MarkdownView {
             arrow.foregroundColor = .accentColor
             styled.insert(arrow, at: range.upperBound)
         }
-        return FormulaRenderer.text(styled, fontSize: size ?? baseFontSize, dark: colorScheme == .dark)
+        return FormulaRenderer.text(styled, fontSize: fontSize, dark: colorScheme == .dark)
     }
 }
 
@@ -145,6 +161,49 @@ enum MarkdownStreamSplit {
             index = next
         }
         return (text[..<boundary], text[boundary...])
+    }
+
+    enum TailKind { case empty, prose, code, markup }
+
+    // What the unfinished tail is: plain prose keeps streaming as text,
+    // markup waits for its closing line and renders formatted at once.
+    static func tailKind(of tail: Substring) -> TailKind {
+        guard !tail.isEmpty else { return .empty }
+        var fence = CodeFence()
+        var markup = false
+        for line in tail.split(separator: "\n", omittingEmptySubsequences: false) {
+            if fence.consume(line) { markup = true; continue }
+            if fence.isOpen { continue }  // code lines inside an open fence
+            let trimmed = line.drop { $0 == " " }
+            if trimmed.hasPrefix("#") || trimmed.hasPrefix(">") || trimmed.hasPrefix("|")
+                || trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("+ ")
+                || trimmed.hasPrefix("$$") || trimmed.hasPrefix("---")
+                || trimmed.range(of: #"^\d+[.)] "#, options: .regularExpression) != nil
+            { markup = true }
+        }
+        if fence.isOpen { return .code }
+        return markup ? .markup : .prose
+    }
+}
+
+// TailPlaceholder
+
+/// Stands in for an unfinished code block or formatted passage while the model writes it.
+private struct TailPlaceholder: View {
+    let symbol: String
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbol)
+            Text(title)
+            ProgressView().controlSize(.small)
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
 

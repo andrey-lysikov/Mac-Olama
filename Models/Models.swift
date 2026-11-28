@@ -61,20 +61,34 @@ public enum ModelSource: String, Codable, Sendable, CaseIterable {
     case huggingFace = "huggingface"
     case modelScope = "modelscope"
     case remote = "remote"
+    case kimi = "kimi"
+    case deepSeek = "deepseek"
+    case alibaba = "alibaba"
+    case openAI = "openai"
 
     public var displayName: String {
         switch self {
         case .huggingFace: "Hugging Face"
         case .modelScope: "ModelScope"
         case .remote: "API"
+        case .kimi: "Kimi"
+        case .deepSeek: "DeepSeek"
+        case .alibaba: "Alibaba"
+        case .openAI: "OpenAI"
         }
     }
+
+    // Models served over the network (user's API servers and cloud providers) route to RemoteEngine.
+    public var isRemote: Bool { self != .huggingFace && self != .modelScope }
+
+    // Managed cloud providers have their own tabs; user-added API servers stay in the local library.
+    public var isCloud: Bool { self != .huggingFace && self != .modelScope && self != .remote }
 
     public var avatarOwner: String? {
         switch self {
         case .huggingFace: "huggingface"
         case .modelScope: "modelscope"
-        case .remote: nil
+        case .remote, .kimi, .deepSeek, .alibaba, .openAI: nil
         }
     }
 
@@ -82,6 +96,7 @@ public enum ModelSource: String, Codable, Sendable, CaseIterable {
         switch self {
         case .huggingFace, .modelScope: "shippingbox"
         case .remote: "network"
+        case .kimi, .deepSeek, .alibaba, .openAI: "cloud"
         }
     }
 }
@@ -319,7 +334,7 @@ public struct ModelManifest: Codable, Sendable, Equatable {
 
     // `supportsTools` and `kind` re-read each refresh; remote models report their own.
     public func descriptor(directory: URL) -> ModelDescriptor {
-        let remote = source == .remote
+        let remote = source?.isRemote == true
         return ModelDescriptor(
             id: remote ? directory.lastPathComponent : ModelDescriptor.directoryName(forRepo: repoID),
             name: ModelDescriptor.shortName(forRepo: repoID),
@@ -361,10 +376,19 @@ public struct RemoteEndpoint: Codable, Sendable, Equatable {
     public static let fileName = "remote.json"
     public var baseURL: URL
     public var model: String
+    public var headers: [String: String]?
+    public var responsesLite: Bool?
+    public var maximumOutputTokens: Int?
 
-    public init(baseURL: URL, model: String) {
+    public init(
+        baseURL: URL, model: String, headers: [String: String]? = nil, responsesLite: Bool? = nil,
+        maximumOutputTokens: Int? = nil
+    ) {
         self.baseURL = baseURL
         self.model = model
+        self.headers = headers
+        self.responsesLite = responsesLite
+        self.maximumOutputTokens = maximumOutputTokens
     }
 
     public static func load(from directory: URL) throws -> RemoteEndpoint {

@@ -15,7 +15,8 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
     private var panel: QuickPanel!
     private var focusObserver: Any?
     private var screenObserver: Any?
-    private var overlayObserver: Any?
+    private var overlayObservers: [Any] = []
+    private var fontShortcutMonitor: Any?
 
     // Plain constants: `PanelPlacement` and the tests read them outside the main actor.
     nonisolated static let defaultWidth: CGFloat = 680
@@ -37,12 +38,46 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.screenParametersDidChange() }
         }
-        // Lift tooltips and popovers above the panel's level as they appear.
-        overlayObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.didChangeOcclusionStateNotification, object: nil, queue: .main
-        ) { note in
-            let window = note.object as? NSWindow
-            MainActor.assumeIsolated { Self.lift(window) }
+        observeOverlays()
+        observeFontShortcuts()
+    }
+
+    // ⌘+ / ⌘− scale the transcript text in both the panel and the chats window.
+    private func observeFontShortcuts() {
+        fontShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard flags == .command, let characters = event.charactersIgnoringModifiers?.lowercased() else { return event }
+            let step: Double? = switch characters {
+            case "+", "=": 1  // "+" needs Shift on most layouts; "=" is its unshifted key
+            case "-", "_": -1
+            default: nil
+            }
+            guard let step else { return event }
+            let handled = MainActor.assumeIsolated { () -> Bool in
+                guard let self else { return false }
+                // Only when a chat surface is in front; elsewhere the keys keep their usual meaning.
+                let panelVisible = self.panel.isVisible
+                let chatsKey = NSApp.keyWindow?.identifier?.rawValue == WindowManager.ID.chats.rawValue
+                guard panelVisible || chatsKey else { return false }
+                let size = self.container.settings.chatFontSize + step
+                guard size != self.container.settings.chatFontSize else { return true }  // at the limit: swallow the key
+                self.container.settings.chatFontSize = size
+                return true
+            }
+            return handled ? nil : event
+        }
+    }
+
+    // Lift tooltips and popovers above the panel's level as they appear.
+    private func observeOverlays() {
+        // There is no "window became visible" notification; didUpdate fires on every window
+        // flush, which reliably catches a tooltip the moment it shows. `lift` is cheap and idempotent.
+        for name in [NSWindow.didUpdateNotification, NSWindow.didChangeOcclusionStateNotification] {
+            overlayObservers.append(
+                NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { note in
+                    let window = note.object as? NSWindow
+                    MainActor.assumeIsolated { Self.lift(window) }
+                })
         }
     }
 
@@ -66,7 +101,7 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
         panel.standardWindowButton(.closeButton)?.isHidden = true
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
-        panel.isMovableByWindowBackground = true
+        panel.isMovableByWindowBackground = false  // let text selection win; the background has its own drag gesture
         // Screen-saver level: above floating palettes and full-screen windows.
         panel.level = .screenSaver
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
@@ -159,6 +194,8 @@ final class QuickPanelController: NSObject, NSWindowDelegate {
             guard panel.isVisible else { return }
             panel.makeKey()
             installFocusObserver()
+            // Hand the keyboard back to the composer so typing continues right away.
+            self.viewModel.panelDidAppear()
         }
         dialog.orderFrontRegardless()
         dialog.makeKey()  // VERIFY(mac): dialog gets the keyboard while accessory
@@ -331,7 +368,12 @@ final class QuickPanelViewModel: ConversationStreamDelegate, ConversationStreamH
 
     var maxPanelHeight: CGFloat = 480
     var heightLimit: CGFloat = 480
-    private(set) var chat: Chat? { didSet { container.panelChatID = chat?.id } }
+    private(set) var chat: Chat? {
+        didSet {
+            container.panelChatID = chat?.id
+            stream.display(chatID: chat?.id)
+        }
+    }
     private(set) var transcriptToken = 0
     private var storeTask: Task<Void, Never>?
 
@@ -340,8 +382,11 @@ final class QuickPanelViewModel: ConversationStreamDelegate, ConversationStreamH
 
     var activeModel: ModelDescriptor? { container.activeModel }
     var canAttachImages: Bool { activeModel?.kind == .vlm }
+    var quotaBlocked: Bool { activeModel.map { container.isQuotaExhausted($0) } ?? false }
+    private(set) var compacting = false
+    private(set) var isLoadingChat = false
     var contextLimit: Int? { activeModel.flatMap { container.contextTokens(for: $0) } }
-    var contextUsed: Int { stream.contextUsed(systemPrompt: chat?.systemPrompt) }
+    var contextUsed: Int { stream.contextUsed(chat: chat, model: activeModel) }
     var engineState: EngineState { container.engineState }
 
     init(container: AppContainer) {
@@ -377,11 +422,14 @@ final class QuickPanelViewModel: ConversationStreamDelegate, ConversationStreamH
     // Chat
 
     func loadActiveChat() async {
+        isLoadingChat = true
+        defer { isLoadingChat = false }
         do {
             let chat = try await container.conversation.activeChat(origin: .panel)
             self.chat = chat
             container.setActiveChat(chat.id)
             stream.setMessages(try await container.chatStore.messages(chatID: chat.id))
+            await stream.refreshContext(chatID: chat.id)
             transcriptToken += 1
         } catch {
             stream.errorMessage = ConversationService.describe(error)
@@ -397,12 +445,32 @@ final class QuickPanelViewModel: ConversationStreamDelegate, ConversationStreamH
         }
     }
 
-    func stop() {
+    func compact() {
+        guard let chat, !isGenerating, !compacting else { return }
+        compacting = true
+        Task {
+            defer { compacting = false }
+            do {
+                try await container.conversation.compact(chatID: chat.id)
+                await loadActiveChat()
+            } catch {
+                stream.errorMessage = ConversationService.describe(error)
+            }
+        }
+    }
+
+    func retryFailed() {
         guard let chat else { return }
-        Task { await container.conversation.cancel(chatID: chat.id) }
+        // A failure before the run started already returned the question to the composer.
+        if stream.messages.last?.role == .assistant {
+            stream.regenerate(chatID: chat.id)
+        } else if !stream.input.isEmpty {
+            send()
+        }
     }
 
     func send() {
+        guard !quotaBlocked, !compacting else { return }
         guard container.activeModel != nil else {
             stream.errorMessage = String(localized: "No model selected. Download one from the menu.")
             return
@@ -415,6 +483,11 @@ final class QuickPanelViewModel: ConversationStreamDelegate, ConversationStreamH
 
     private func observeStore() {
         storeTask = stream.observeStoreChanges(
+            onChats: { [weak self] in
+                // Chat-level edits (e.g. the compaction mark) refresh the chat without touching a live stream.
+                guard let self, let current = self.chat, !self.isGenerating else { return }
+                self.chat = try? await self.container.chatStore.chat(id: current.id)
+            },
             onMessages: { [weak self] chatID in
                 guard let self, let chat = self.chat, chatID == chat.id, !self.isGenerating else { return }
                 self.stream.setMessages((try? await self.container.chatStore.messages(chatID: chat.id)) ?? self.messages)

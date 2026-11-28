@@ -40,7 +40,9 @@ public enum ModelReference: Sendable, Hashable {
 
     public init?(directoryName: String) {
         var parts = directoryName.components(separatedBy: "--")
-        if parts.first == "remote" { return nil }  // a remote model is reconnected, not downloaded
+        if let first = parts.first,
+            first == ModelSource.remote.rawValue || CloudProvider.allCases.contains(where: { $0.rawValue == first })
+        { return nil }
         let modelScope = parts.first == "modelscope"
         if modelScope { parts.removeFirst() }
         guard parts.count >= 2 else { return nil }
@@ -63,7 +65,7 @@ public enum ModelReference: Sendable, Hashable {
         case .modelScope:
             guard let reference = Self.parse(manifest.repoID) else { return nil }
             self = reference
-        case .remote: return nil
+        case .remote, .kimi, .deepSeek, .alibaba, .openAI: return nil
         }
     }
 }
